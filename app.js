@@ -17,15 +17,17 @@ const TASK_COLS = [
 
 const App = (() => {
   let view = 'projects';
-  let chatOpen = false;
   let archiveOpen = false;
   let searchOpen = false;
   let searchQuery = '';
-  let chatHistory = [];
   let openItemId = null;
   let dragId = null;
   let dragEl = null;
   let placeholder = null;
+
+  // Subtask specific drag tracking
+  let dragStId = null;
+  let dragStEl = null;
 
   // ── Init ──
   function init() {
@@ -33,21 +35,17 @@ const App = (() => {
     updateDateDisplay();
     setInterval(updateDateDisplay, 60000);
     render();
-    checkModel();
 
     // Warn before closing/refreshing if there are unsaved changes
     window.addEventListener('beforeunload', e => {
-      // Auto-save fires immediately so localStorage is always current,
-      // but we still warn so the user knows closing is safe
       Data.saveNow();
-      // Only show native dialog if somehow still dirty
       if (Data.isDirty()) {
         e.preventDefault();
         e.returnValue = '';
       }
     });
 
-    // Also save immediately when page visibility changes (phone switching apps)
+    // Save immediately when switching apps on mobile / backgrounding
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') Data.saveNow();
     });
@@ -298,7 +296,12 @@ const App = (() => {
 
   function buildSubtaskEditor(item) {
     const rows = (item.subtasks || []).map(st => `
-      <div class="st-item" id="sti-${st.id}">
+      <div class="st-item" id="sti-${st.id}" draggable="true" data-st-id="${st.id}"
+        ondragstart="App._onStDragStart(event,'${st.id}')"
+        ondragover="App._onStDragOver(event)"
+        ondragend="App._onStDragEnd(event)"
+        ondrop="App._onStDrop(event,'${item.id}','${st.id}')">
+        <div class="st-drag-handle" style="cursor: grab; margin-right: 6px; color: var(--text-3); font-size: 14px; user-select: none;">⋮⋮</div>
         <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
           onchange="App._toggleSubtask('${item.id}','${st.id}',this.checked)" />
         <span class="st-title ${st.done ? 'done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
@@ -311,7 +314,7 @@ const App = (() => {
       </div>`).join('');
 
     return `<div class="section">
-      <label class="label">Subtasks <span class="label-hint">promote to send to your task board</span></label>
+      <label class="label">Subtasks <span class="label-hint">drag handle to reorder · promote to send to task board</span></label>
       <div class="subtask-list" id="stlist-${item.id}">
         ${rows || '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No subtasks yet</div>'}
       </div>
@@ -420,16 +423,12 @@ const App = (() => {
     proj.subtasks.push(st);
     Data.save();
     input.value = '';
-    const list = document.getElementById('stlist-' + projId);
-    if (list) {
-      const div = document.createElement('div');
-      div.className = 'st-item'; div.id = 'sti-' + st.id;
-      div.innerHTML = `
-        <input type="checkbox" onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
-        <span class="st-title" id="stspan-${st.id}">${esc(st.title)}</span>
-        <button id="promote-${st.id}" class="promote-btn" onclick="App._promoteSubtask('${projId}','${st.id}')">→ task board</button>
-        <button class="st-del" onclick="App._removeSubtask('${projId}','${st.id}')">✕</button>`;
-      list.appendChild(div);
+    
+    // Refresh the complete subtask panel to bind drag listeners correctly
+    const container = document.getElementById(`stlist-${projId}`).parentElement;
+    if (container) {
+      const editorHtml = buildSubtaskEditor(proj);
+      container.outerHTML = editorHtml;
     }
     renderBoard();
   }
@@ -440,6 +439,69 @@ const App = (() => {
     proj.subtasks = proj.subtasks.filter(s => s.id !== stId);
     Data.save();
     document.getElementById('sti-' + stId)?.remove();
+    renderBoard();
+  }
+
+  // ── Subtask Drag and Drop Reordering Handlers ──
+  function _onStDragStart(e, stId) {
+    dragStId = stId;
+    dragStEl = e.currentTarget;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => dragStEl?.classList.add('is-dragging'), 0);
+  }
+
+  function _onStDragOver(e) {
+    e.preventDefault();
+    const bounding = e.currentTarget.getBoundingClientRect();
+    const offset = e.clientY - bounding.top;
+    if (offset > bounding.height / 2) {
+      e.currentTarget.style.borderBottom = '2px dashed var(--blue)';
+      e.currentTarget.style.borderTop = '';
+    } else {
+      e.currentTarget.style.borderTop = '2px dashed var(--blue)';
+      e.currentTarget.style.borderBottom = '';
+    }
+  }
+
+  function _onStDragEnd(e) {
+    dragStEl?.classList.remove('is-dragging');
+    document.querySelectorAll('.st-item').forEach(el => {
+      el.style.borderTop = '';
+      el.style.borderBottom = '';
+    });
+    dragStId = null;
+    dragStEl = null;
+  }
+
+  function _onStDrop(e, projId, targetStId) {
+    e.preventDefault();
+    if (!dragStId || dragStId === targetStId) return;
+
+    const proj = Data.findProject(projId);
+    if (!proj) return;
+
+    const fromIndex = proj.subtasks.findIndex(s => s.id === dragStId);
+    const toIndex = proj.subtasks.findIndex(s => s.id === targetStId);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    const [movedSubtask] = proj.subtasks.splice(fromIndex, 1);
+    
+    const bounding = e.currentTarget.getBoundingClientRect();
+    const offset = e.clientY - bounding.top;
+    const adjustedIndex = offset > bounding.height / 2 ? toIndex + 1 : toIndex;
+
+    // Insert back at calculation point
+    proj.subtasks.splice(adjustedIndex > fromIndex && adjustedIndex > 0 ? adjustedIndex - 1 : adjustedIndex, 0, movedSubtask);
+    Data.save();
+
+    // Dynamically re-render subtask DOM section to retain scroll context
+    const listEl = document.getElementById(`stlist-${projId}`);
+    if (listEl) {
+      const parentSection = listEl.parentElement;
+      if (parentSection) {
+        parentSection.outerHTML = buildSubtaskEditor(proj);
+      }
+    }
     renderBoard();
   }
 
@@ -547,7 +609,7 @@ const App = (() => {
     });
   }
 
-  // ── Drag & drop ──
+  // ── Drag & drop (Main Board Cards) ──
   function _onDragStart(e, id) {
     dragId = id; dragEl = e.currentTarget;
     setTimeout(() => dragEl?.classList.add('is-dragging'), 0);
@@ -591,102 +653,6 @@ const App = (() => {
     renderBoard();
   }
 
-  // ── Chat ──
-  function toggleChat() {
-    chatOpen = !chatOpen;
-    document.getElementById('chat-panel').classList.toggle('open', chatOpen);
-    if (chatOpen) checkModel();
-  }
-
-  async function checkModel() {
-    const dot = document.getElementById('model-dot');
-    try {
-      const r = await fetch('http://localhost:1234/v1/models');
-      dot.className = 'model-dot ' + (r.ok ? 'online' : 'offline');
-    } catch { dot.className = 'model-dot offline'; }
-  }
-
-  function getBoardContext() {
-    const state = Data.get();
-    const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-
-    const ps = PROJECT_COLS.map(col => {
-      const items = state.projects.filter(p => p.status === col.id);
-      if (!items.length) return null;
-      return `${col.label}: ${items.map(p => {
-        let s = p.title;
-        if (p.dueDate) s += ` (due ${p.dueDate}${isOverdue(p.dueDate) ? ' — OVERDUE' : ''})`;
-        if (p.scheduledDate) s += ` (scheduled ${p.scheduledDate})`;
-        if (p.blocked) s += ' [BLOCKED]';
-        if (p.subtasks?.length) s += ` [${p.subtasks.filter(x => x.done).length}/${p.subtasks.length} subtasks done]`;
-        if (p.notes) s += ` — "${p.notes}"`;
-        return s;
-      }).join('; ')}`;
-    }).filter(Boolean).join('\n');
-
-    const ts = TASK_COLS.map(col => {
-      const items = state.tasks.filter(t => t.status === col.id);
-      if (!items.length) return null;
-      return `${col.label}: ${items.map(t => {
-        let s = t.title;
-        if (t.parentProject) s += ` [project: ${Data.findProject(t.parentProject)?.title}]`;
-        if (t.dueDate) s += ` (due ${t.dueDate}${isOverdue(t.dueDate) ? ' — OVERDUE' : ''})`;
-        if (t.scheduledDate) s += ` (scheduled ${t.scheduledDate})`;
-        if (t.blocked) s += ' [BLOCKED]';
-        const age = daysDiff(t.dateAdded);
-        if (age > 14) s += ` [sitting ${age} days]`;
-        return s;
-      }).join('; ')}`;
-    }).filter(Boolean).join('\n');
-
-    return `Today is ${todayStr}.\n\nPROJECTS:\n${ps}\n\nTASKS:\n${ts}`;
-  }
-
-  function sendQuick(prompt) { document.getElementById('chat-input').value = prompt; sendChat(); }
-  function handleChatKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }
-
-  async function sendChat() {
-    const input = document.getElementById('chat-input');
-    const text = input.value.trim();
-    if (!text) return;
-    input.value = '';
-    appendMsg(text, 'user');
-    chatHistory.push({ role: 'user', content: text });
-    const typing = appendMsg('', 'ai', true);
-
-    const system = `You are a focused productivity assistant. The user has a kanban-style project and task board. Help them think through priorities, next steps, and project breakdown. Be concise and direct — 2-4 sentences unless they ask for more. You know today's date and can reference it when discussing deadlines.\n\n${getBoardContext()}`;
-
-    try {
-      const res = await fetch('http://localhost:1234/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'local-model',
-          messages: [{ role: 'system', content: system }, ...chatHistory],
-          max_tokens: 500, stream: false
-        })
-      });
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || 'No response.';
-      typing.remove(); appendMsg(reply, 'ai');
-      chatHistory.push({ role: 'assistant', content: reply });
-    } catch {
-      typing.remove();
-      appendMsg('Could not reach LM Studio. Make sure it\'s running on localhost:1234 with CORS enabled.', 'ai');
-    }
-  }
-
-  function appendMsg(text, role, typing = false) {
-    const msgs = document.getElementById('chat-messages');
-    const div = document.createElement('div');
-    div.className = `msg ${role}`;
-    if (typing) div.innerHTML = `<div class="typing-dots"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>`;
-    else div.textContent = text;
-    msgs.appendChild(div);
-    msgs.scrollTop = msgs.scrollHeight;
-    return div;
-  }
-
   // ── Helpers ──
   function today() { return new Date().toISOString().split('T')[0]; }
   function daysDiff(ds) { if (!ds) return 0; return Math.floor((new Date() - new Date(ds)) / 86400000); }
@@ -699,13 +665,13 @@ const App = (() => {
 
   return {
     init, switchView, toggleArchive, toggleSearch, onSearch,
-    openDetail, openNewModal, toggleChat, sendQuick, handleChatKey, sendChat,
-    exportData, importData, onImportFile, dismissBanner,
+    openDetail, openNewModal, exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _closeDetail, _autoSave, _setBlocked, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleSubtask, _promoteSubtask, _addSubtask, _removeSubtask,
+    _onStDragStart, _onStDragOver, _onStDragEnd, _onStDrop,
     _setNewType, _cancelNew, _saveNew,
   };
 })();
