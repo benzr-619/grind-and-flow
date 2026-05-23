@@ -2,20 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Grind &amp; Flow</title>
-
-  <!-- PWA / Add to Home Screen / Dock -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Grind &amp; Flow">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1e1c19" media="(prefers-color-scheme: dark)">
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grind & Flow</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Grind & Flow">
+  <link rel="icon" type="image/png" href="icon.png" sizes="512x512">
 </head>
 <body>
   <div id="app">
@@ -30,22 +26,10 @@
       </div>
       <div class="topbar-right">
         <button class="btn-icon" id="archive-btn" onclick="App.toggleArchive()" title="Archive">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22V3z"/><path d="M10 12h4"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22V3z"/><path d="M10 12h4"/></svg>
         </button>
         <button class="btn-icon" id="search-btn" onclick="App.toggleSearch()" title="Search">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        </button>
-        <button class="btn-icon" onclick="App.exportData()" title="Export backup">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-        <button class="btn-icon" onclick="App.importData()" title="Import backup">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        </button>
-        <input type="file" id="import-file" accept=".json" style="display:none" onchange="App.onImportFile(event)" />
-        <button class="btn-ghost" id="ai-btn" onclick="App.toggleChat()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          AI
-          <span class="model-dot" id="model-dot"></span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         </button>
         <button class="btn-primary" onclick="App.openNewModal()">+ <span id="add-label">Add project</span></button>
       </div>
@@ -56,43 +40,10 @@
       <button class="search-close" onclick="App.toggleSearch()">✕</button>
     </div>
 
-    <!-- Unsaved changes banner -->
-    <div class="save-banner" id="save-banner" style="display:none">
-      <span>Unsaved changes</span>
-      <button class="save-now-btn" onclick="App.exportData()">Export backup ↓</button>
-      <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
-    </div>
-
     <div class="main-layout">
       <div class="board-wrap" id="board-wrap">
         <div class="board" id="board"></div>
       </div>
-      <aside class="chat-panel" id="chat-panel">
-        <div class="chat-header">
-          <span class="chat-title">AI assistant</span>
-          <button class="btn-icon" onclick="App.toggleChat()">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
-          </button>
-        </div>
-        <div class="chat-messages" id="chat-messages">
-          <div class="msg system">LM Studio · llama 3.1 8B · localhost:1234</div>
-          <div class="msg ai">Hey — I can see your full board including today's date. Ask me what to focus on, what's overdue, how to break down a project, or anything else.</div>
-        </div>
-        <div class="chat-footer">
-          <div class="quick-prompts">
-            <button class="qp" onclick="App.sendQuick('What should I focus on today?')">Focus today ↗</button>
-            <button class="qp" onclick="App.sendQuick('What tasks have been sitting too long?')">Stale items ↗</button>
-            <button class="qp" onclick="App.sendQuick('What is overdue or due this week?')">Due soon ↗</button>
-            <button class="qp" onclick="App.sendQuick('Help me prioritize my Next tasks')">Prioritize ↗</button>
-          </div>
-          <div class="chat-input-row">
-            <textarea class="chat-input" id="chat-input" placeholder="Ask about your tasks..." rows="1" onkeydown="App.handleChatKey(event)"></textarea>
-            <button class="send-btn" onclick="App.sendChat()">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
-            </button>
-          </div>
-        </div>
-      </aside>
     </div>
   </div>
 
