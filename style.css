@@ -894,3 +894,37 @@ textarea {
   :root { --col-w: 240px; }
   .chat-panel.open { width: 100%; min-width: 100%; position: fixed; inset: 0; z-index: 100; }
 }
+
+/* ── Save banner ── */
+.save-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 20px;
+  background: var(--amber-bg);
+  border-bottom: 1px solid var(--amber);
+  font-size: 12px;
+  color: var(--amber);
+  flex-shrink: 0;
+}
+
+.save-now-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--font);
+  background: var(--amber);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.banner-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--amber);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+}

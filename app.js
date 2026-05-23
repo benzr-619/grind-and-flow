@@ -23,31 +23,43 @@ const App = (() => {
   let searchQuery = '';
   let chatHistory = [];
   let openItemId = null;
-
-  // ── Drag state ──
   let dragId = null;
   let dragEl = null;
   let placeholder = null;
 
   // ── Init ──
-  async function init() {
-    await Data.load();
+  function init() {
+    Data.load();
     updateDateDisplay();
     setInterval(updateDateDisplay, 60000);
     render();
     checkModel();
+
+    // Warn before closing/refreshing if there are unsaved changes
+    window.addEventListener('beforeunload', e => {
+      // Auto-save fires immediately so localStorage is always current,
+      // but we still warn so the user knows closing is safe
+      Data.saveNow();
+      // Only show native dialog if somehow still dirty
+      if (Data.isDirty()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    // Also save immediately when page visibility changes (phone switching apps)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') Data.saveNow();
+    });
   }
 
   function updateDateDisplay() {
     const el = document.getElementById('date-display');
     if (!el) return;
-    const now = new Date();
-    el.textContent = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    el.textContent = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
-  function render() {
-    renderBoard();
-  }
+  function render() { renderBoard(); }
 
   // ── View switching ──
   function switchView(v) {
@@ -59,6 +71,54 @@ const App = (() => {
     renderBoard();
   }
 
+  // ── Export / Import ──
+  function exportData() {
+    Data.saveNow();
+    const blob = new Blob([JSON.stringify(Data.get(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const date = new Date().toISOString().split('T')[0];
+    a.href = url;
+    a.download = `gf-backup-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    dismissBanner();
+  }
+
+  function importData() {
+    document.getElementById('import-file').click();
+  }
+
+  function onImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.projects || !data.tasks) throw new Error('Invalid format');
+        showConfirmModal(
+          'Import backup?',
+          'This will replace your current data with the backup file. Your existing data will be overwritten.',
+          'Import',
+          () => {
+            Data.replaceAll(data);
+            renderBoard();
+          }
+        );
+      } catch(err) {
+        alert('Invalid backup file. Please use a file exported from Grind & Flow.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
+  function dismissBanner() {
+    const b = document.getElementById('save-banner');
+    if (b) b.style.display = 'none';
+  }
+
   // ── Board rendering ──
   function renderBoard() {
     const board = document.getElementById('board');
@@ -66,12 +126,11 @@ const App = (() => {
 
     const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
     const state = Data.get();
-    const allItems = view === 'projects' ? state.projects : state.tasks;
+    let items = view === 'projects' ? state.projects : state.tasks;
 
-    let items = allItems;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      items = allItems.filter(i =>
+      items = items.filter(i =>
         i.title.toLowerCase().includes(q) ||
         (i.notes || '').toLowerCase().includes(q) ||
         (i.parentProject && (Data.findProject(i.parentProject)?.title || '').toLowerCase().includes(q))
@@ -80,7 +139,6 @@ const App = (() => {
 
     board.innerHTML = cols.map(col => {
       const colItems = items.filter(i => i.status === col.id);
-      const cards = colItems.map(i => renderCard(i)).join('');
       return `<div class="column" data-col="${col.id}"
         ondragover="App._onDragOver(event,'${col.id}')"
         ondragleave="App._onDragLeave(event)"
@@ -90,7 +148,7 @@ const App = (() => {
           <div class="col-meta">${colItems.length} item${colItems.length !== 1 ? 's' : ''}</div>
         </div>
         <div class="col-body" data-col="${col.id}">
-          ${cards}
+          ${colItems.map(i => renderCard(i)).join('')}
           <button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>
         </div>
       </div>`;
@@ -99,118 +157,88 @@ const App = (() => {
 
   function renderArchive(board) {
     const state = Data.get();
-    const archive = state.archive || [];
-    const filteredView = view === 'projects'
-      ? archive.filter(i => i.type === 'project')
-      : archive.filter(i => i.type === 'task' || i.type === 'standalone');
-
-    if (filteredView.length === 0) {
+    const archive = (state.archive || []).filter(i =>
+      view === 'projects' ? i.type === 'project' : (i.type === 'task' || i.type === 'standalone')
+    );
+    if (!archive.length) {
       board.innerHTML = `<div style="padding:40px;color:var(--text-3);font-size:13px;">No archived ${view} yet.</div>`;
       return;
     }
-
-    const items = filteredView.map(item => `
-      <div class="archive-item">
-        <span class="archive-item-title">${item.title}</span>
-        <span class="archive-item-date">${item.archivedAt || ''}</span>
-        <button class="restore-btn" onclick="App.restoreItem('${item.id}')">restore</button>
-        <button class="st-del" onclick="App.deleteArchiveItem('${item.id}')" title="Delete permanently">✕</button>
-      </div>`).join('');
-
-    board.innerHTML = `<div class="column" style="width:100%;max-width:560px;max-height:calc(100vh - 100px);">
+    board.innerHTML = `<div class="column" style="width:100%;max-width:560px;max-height:calc(100vh - 110px);">
       <div class="archive-header">Archive — ${view}</div>
-      <div class="archive-list">${items}</div>
+      <div class="archive-list">
+        ${archive.map(item => `
+          <div class="archive-item">
+            <span class="archive-item-title">${esc(item.title)}</span>
+            <span class="archive-item-date">${item.archivedAt || ''}</span>
+            <button class="restore-btn" onclick="App.restoreItem('${item.id}')">restore</button>
+            <button class="st-del" onclick="App.deleteArchiveItem('${item.id}')">✕</button>
+          </div>`).join('')}
+      </div>
     </div>`;
   }
 
   function renderCard(item) {
-    const badges = buildBadges(item);
-    const ageDot = buildAgeDot(item);
-    const subtaskRow = buildSubtaskRow(item);
-    const projectLink = (item.parentProject)
-      ? `<div class="project-link">↳ ${Data.findProject(item.parentProject)?.title || ''}</div>` : '';
-
     const allCols = [...PROJECT_COLS, ...TASK_COLS];
     const col = allCols.find(c => c.id === item.status);
     const accentColor = col ? col.color : 'var(--text-3)';
+
+    let badges = '';
+    if (item.blocked) badges += `<span class="badge badge-coral">blocked</span>`;
+    if (item.dueDate) {
+      const over = isOverdue(item.dueDate);
+      badges += `<span class="badge ${over ? 'badge-red' : 'badge-amber'}">${over ? 'overdue' : 'due'} ${fmtDate(item.dueDate)}</span>`;
+    }
+    if (item.scheduledDate) badges += `<span class="badge badge-green">→ ${fmtDate(item.scheduledDate)}</span>`;
+
+    let ageDot = '';
+    if (item.type !== 'project') {
+      const d = daysDiff(item.dateAdded);
+      if (d > 30) ageDot = `<span class="age-dot old" title="${d} days in list"></span>`;
+      else if (d > 14) ageDot = `<span class="age-dot stale" title="${d} days in list"></span>`;
+    }
+
+    let subtaskRow = '';
+    if (item.subtasks && item.subtasks.length) {
+      const done = item.subtasks.filter(s => s.done).length;
+      const pct = Math.round((done / item.subtasks.length) * 100);
+      subtaskRow = `<div class="subtask-row">
+        <span class="subtask-label">${done}/${item.subtasks.length}</span>
+        <div class="subtask-bar"><div class="subtask-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }
+
+    const projectLink = item.parentProject
+      ? `<div class="project-link">↳ ${esc(Data.findProject(item.parentProject)?.title || '')}</div>` : '';
+    const meta = (badges || ageDot) ? `<div class="card-meta">${badges}${ageDot}</div>` : '';
 
     return `<div class="card" style="--card-accent:${accentColor}" draggable="true" data-id="${item.id}"
       ondragstart="App._onDragStart(event,'${item.id}')"
       ondragend="App._onDragEnd(event)"
       onclick="App.openDetail('${item.id}')">
       <div class="card-title">${esc(item.title)}</div>
-      ${projectLink}
-      ${badges || ageDot ? `<div class="card-meta">${badges}${ageDot}</div>` : ''}
-      ${subtaskRow}
+      ${projectLink}${meta}${subtaskRow}
     </div>`;
   }
 
-  function buildBadges(item) {
-    let out = '';
-    if (item.blocked) out += `<span class="badge badge-coral">blocked</span>`;
-    if (item.dueDate) {
-      const over = isOverdue(item.dueDate);
-      out += `<span class="badge ${over ? 'badge-red' : 'badge-amber'}">${over ? 'overdue' : 'due'} ${fmtDate(item.dueDate)}</span>`;
-    }
-    if (item.scheduledDate) {
-      out += `<span class="badge badge-green">→ ${fmtDate(item.scheduledDate)}</span>`;
-    }
-    return out;
-  }
-
-  function buildAgeDot(item) {
-    if (item.type === 'project') return '';
-    const d = daysDiff(item.dateAdded);
-    if (d > 30) return `<span class="age-dot old" title="${d} days in list"></span>`;
-    if (d > 14) return `<span class="age-dot stale" title="${d} days in list"></span>`;
-    return '';
-  }
-
-  function buildSubtaskRow(item) {
-    if (!item.subtasks || !item.subtasks.length) return '';
-    const done = item.subtasks.filter(s => s.done).length;
-    const pct = Math.round((done / item.subtasks.length) * 100);
-    return `<div class="subtask-row">
-      <span class="subtask-label">${done}/${item.subtasks.length}</span>
-      <div class="subtask-bar"><div class="subtask-fill" style="width:${pct}%"></div></div>
-    </div>`;
-  }
-
-  // ── Archive toggle ──
+  // ── Archive ──
   function toggleArchive() {
     archiveOpen = !archiveOpen;
-    const btn = document.getElementById('archive-btn');
-    btn.style.color = archiveOpen ? 'var(--blue)' : '';
+    document.getElementById('archive-btn').style.color = archiveOpen ? 'var(--blue)' : '';
     renderBoard();
   }
-
-  function restoreItem(id) {
-    Data.restoreFromArchive(id);
-    renderBoard();
-  }
-
-  function deleteArchiveItem(id) {
-    Data.deleteFromArchive(id);
-    renderBoard();
-  }
+  function restoreItem(id) { Data.restoreFromArchive(id); renderBoard(); }
+  function deleteArchiveItem(id) { Data.deleteFromArchive(id); renderBoard(); }
 
   // ── Search ──
   function toggleSearch() {
     searchOpen = !searchOpen;
     const wrap = document.getElementById('search-bar-wrap');
     wrap.style.display = searchOpen ? 'flex' : 'none';
-    if (searchOpen) {
-      setTimeout(() => document.getElementById('search-input')?.focus(), 50);
-    } else {
-      searchQuery = '';
-      renderBoard();
-    }
+    if (searchOpen) setTimeout(() => document.getElementById('search-input')?.focus(), 50);
+    else { searchQuery = ''; renderBoard(); }
   }
-
-  function onSearch(val) {
-    searchQuery = val;
-    renderBoard();
-  }
+  function onSearch(val) { searchQuery = val; renderBoard(); }
 
   // ── Detail modal ──
   function openDetail(id) {
@@ -221,11 +249,10 @@ const App = (() => {
     const cols = isProject ? PROJECT_COLS : TASK_COLS;
 
     const moveBtns = cols.map(c =>
-      `<button class="move-btn ${item.status === c.id ? 'current' : ''}" style="${item.status === c.id ? '' : `color:${c.color}`}" onclick="App._moveItem('${id}','${c.id}',this)">${c.label}</button>`
+      `<button class="move-btn ${item.status === c.id ? 'current' : ''}"
+        style="${item.status === c.id ? '' : `color:${c.color}`}"
+        onclick="App._moveItem('${id}','${c.id}',this)">${c.label}</button>`
     ).join('');
-
-    const noClass = !item.blocked ? 'active-no' : '';
-    const yesClass = item.blocked ? 'active-yes' : '';
 
     const projectLinkHtml = (!isProject && item.parentProject)
       ? `<div class="fg"><label class="label">Project</label>
@@ -255,8 +282,8 @@ const App = (() => {
         <div class="fg">
           <label class="label">Blocked?</label>
           <div class="seg blocked-seg">
-            <button class="seg-opt ${noClass}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
-            <button class="seg-opt ${yesClass}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+            <button class="seg-opt ${!item.blocked ? 'active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
+            <button class="seg-opt ${item.blocked ? 'active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
           </div>
         </div>
       </div>
@@ -270,20 +297,18 @@ const App = (() => {
   }
 
   function buildSubtaskEditor(item) {
-    const rows = (item.subtasks || []).map(st => {
-      const promoted = st.promoted;
-      return `<div class="st-item" id="sti-${st.id}">
-        <input type="checkbox" ${st.done ? 'checked' : ''} ${promoted ? 'disabled' : ''}
+    const rows = (item.subtasks || []).map(st => `
+      <div class="st-item" id="sti-${st.id}">
+        <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
           onchange="App._toggleSubtask('${item.id}','${st.id}',this.checked)" />
         <span class="st-title ${st.done ? 'done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
-        <button id="promote-${st.id}" class="promote-btn ${promoted ? 'done-state' : ''}"
-          ${promoted ? 'disabled' : ''}
+        <button id="promote-${st.id}" class="promote-btn ${st.promoted ? 'done-state' : ''}"
+          ${st.promoted ? 'disabled' : ''}
           onclick="App._promoteSubtask('${item.id}','${st.id}')">
-          ${promoted ? '✓ on task board' : '→ task board'}
+          ${st.promoted ? '✓ on task board' : '→ task board'}
         </button>
-        ${!promoted ? `<button class="st-del" onclick="App._removeSubtask('${item.id}','${st.id}')">✕</button>` : ''}
-      </div>`;
-    }).join('');
+        ${!st.promoted ? `<button class="st-del" onclick="App._removeSubtask('${item.id}','${st.id}')">✕</button>` : ''}
+      </div>`).join('');
 
     return `<div class="section">
       <label class="label">Subtasks <span class="label-hint">promote to send to your task board</span></label>
@@ -291,17 +316,15 @@ const App = (() => {
         ${rows || '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No subtasks yet</div>'}
       </div>
       <div class="add-st-row">
-        <input type="text" id="new-st-${item.id}" placeholder="Add subtask..." onkeydown="if(event.key==='Enter')App._addSubtask('${item.id}')" />
+        <input type="text" id="new-st-${item.id}" placeholder="Add subtask..."
+          onkeydown="if(event.key==='Enter')App._addSubtask('${item.id}')" />
         <button onclick="App._addSubtask('${item.id}')">+ add</button>
       </div>
     </div>`;
   }
 
   function _closeDetail() {
-    if (openItemId) {
-      _autoSave(openItemId);
-      openItemId = null;
-    }
+    if (openItemId) { _autoSave(openItemId); openItemId = null; }
     document.getElementById('modal-root').innerHTML = '';
     renderBoard();
   }
@@ -359,13 +382,6 @@ const App = (() => {
     renderBoard();
   }
 
-  function _archiveItem(id) {
-    Data.archiveItem(id);
-    openItemId = null;
-    document.getElementById('modal-root').innerHTML = '';
-    renderBoard();
-  }
-
   // ── Subtask actions ──
   function _toggleSubtask(projId, stId, checked) {
     const proj = Data.findProject(projId);
@@ -383,20 +399,12 @@ const App = (() => {
     const st = proj.subtasks.find(s => s.id === stId);
     if (!st || st.promoted) return;
     st.promoted = true;
-    const newTask = {
-      id: 't' + Date.now(),
-      type: 'task',
-      title: st.title,
-      status: 'inbox',
-      parentProject: projId,
-      dueDate: '',
-      scheduledDate: '',
-      notes: '',
-      dateAdded: today(),
-      blocked: false
-    };
-    Data.upsertTask(newTask);
-    Data.save();
+    Data.upsertTask({
+      id: 't' + Date.now(), type: 'task', title: st.title,
+      status: 'inbox', parentProject: projId,
+      dueDate: '', scheduledDate: '', notes: '',
+      dateAdded: today(), blocked: false
+    });
     const btn = document.getElementById('promote-' + stId);
     if (btn) { btn.textContent = '✓ on task board'; btn.className = 'promote-btn done-state'; btn.disabled = true; btn.nextElementSibling?.remove(); }
     renderBoard();
@@ -416,7 +424,8 @@ const App = (() => {
     if (list) {
       const div = document.createElement('div');
       div.className = 'st-item'; div.id = 'sti-' + st.id;
-      div.innerHTML = `<input type="checkbox" onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
+      div.innerHTML = `
+        <input type="checkbox" onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
         <span class="st-title" id="stspan-${st.id}">${esc(st.title)}</span>
         <button id="promote-${st.id}" class="promote-btn" onclick="App._promoteSubtask('${projId}','${st.id}')">→ task board</button>
         <button class="st-del" onclick="App._removeSubtask('${projId}','${st.id}')">✕</button>`;
@@ -491,9 +500,7 @@ const App = (() => {
     document.getElementById('proj-link-group').style.display = t === 'task' ? '' : 'none';
   }
 
-  function _cancelNew() {
-    document.getElementById('modal-root').innerHTML = '';
-  }
+  function _cancelNew() { document.getElementById('modal-root').innerHTML = ''; }
 
   function _saveNew() {
     const title = document.getElementById('f-title')?.value.trim();
@@ -503,16 +510,28 @@ const App = (() => {
     const sched = document.getElementById('f-sched')?.value || '';
     const notes = document.getElementById('f-notes')?.value || '';
     const id = (view === 'projects' ? 'p' : 't') + Date.now();
-
     if (view === 'projects') {
       Data.upsertProject({ id, type: 'project', title, status, dueDate: due, scheduledDate: sched, notes, dateAdded: today(), subtasks: [], blocked: false });
     } else {
-      const type = _newType;
-      const parent = type === 'task' ? (document.getElementById('f-parent')?.value || null) : null;
-      Data.upsertTask({ id, type, title, status, parentProject: parent, dueDate: due, scheduledDate: sched, notes, dateAdded: today(), blocked: false });
+      const parent = _newType === 'task' ? (document.getElementById('f-parent')?.value || null) : null;
+      Data.upsertTask({ id, type: _newType, title, status, parentProject: parent, dueDate: due, scheduledDate: sched, notes, dateAdded: today(), blocked: false });
     }
     document.getElementById('modal-root').innerHTML = '';
     renderBoard();
+  }
+
+  // ── Confirm modal ──
+  function showConfirmModal(title, message, confirmLabel, onConfirm) {
+    showModal(`
+      <div class="modal-title">${title}</div>
+      <p style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:20px;">${message}</p>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-footer-right">
+          <button class="btn-close" onclick="document.getElementById('modal-root').innerHTML=''">Cancel</button>
+          <button class="btn-primary" onclick="(${onConfirm.toString()})();document.getElementById('modal-root').innerHTML='';">${confirmLabel}</button>
+        </div>
+      </div>`, null);
   }
 
   // ── Modal helper ──
@@ -523,15 +542,14 @@ const App = (() => {
     document.getElementById('moverlay').addEventListener('click', e => {
       if (e.target.id === 'moverlay') {
         if (openItemId) _closeDetail();
-        else { document.getElementById('modal-root').innerHTML = ''; }
+        else document.getElementById('modal-root').innerHTML = '';
       }
     });
   }
 
   // ── Drag & drop ──
   function _onDragStart(e, id) {
-    dragId = id;
-    dragEl = e.currentTarget;
+    dragId = id; dragEl = e.currentTarget;
     setTimeout(() => dragEl?.classList.add('is-dragging'), 0);
     e.dataTransfer.effectAllowed = 'move';
   }
@@ -550,7 +568,7 @@ const App = (() => {
     const body = e.currentTarget.querySelector('.col-body');
     const after = _dragAfterEl(body, e.clientY);
     if (after) body.insertBefore(placeholder, after);
-    else { const btn = body.querySelector('.add-col-btn'); body.insertBefore(placeholder, btn); }
+    else { body.insertBefore(placeholder, body.querySelector('.add-col-btn')); }
   }
 
   function _onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
@@ -567,16 +585,7 @@ const App = (() => {
     e.preventDefault();
     if (!dragId) return;
     const item = Data.findItem(dragId);
-    if (item) {
-      // If dropping into done column on tasks view, offer to archive
-      if (colId === 'done' && item.status !== 'done') {
-        item.status = 'done';
-        Data.save();
-      } else {
-        item.status = colId;
-        Data.save();
-      }
-    }
+    if (item) { item.status = colId; Data.save(); }
     placeholder?.remove(); placeholder = null;
     document.querySelectorAll('.column').forEach(c => c.classList.remove('drag-over'));
     renderBoard();
@@ -599,8 +608,7 @@ const App = (() => {
 
   function getBoardContext() {
     const state = Data.get();
-    const now = new Date();
-    const todayStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 
     const ps = PROJECT_COLS.map(col => {
       const items = state.projects.filter(p => p.status === col.id);
@@ -626,7 +634,7 @@ const App = (() => {
         if (t.scheduledDate) s += ` (scheduled ${t.scheduledDate})`;
         if (t.blocked) s += ' [BLOCKED]';
         const age = daysDiff(t.dateAdded);
-        if (age > 14) s += ` [sitting in list ${age} days]`;
+        if (age > 14) s += ` [sitting ${age} days]`;
         return s;
       }).join('; ')}`;
     }).filter(Boolean).join('\n');
@@ -634,14 +642,8 @@ const App = (() => {
     return `Today is ${todayStr}.\n\nPROJECTS:\n${ps}\n\nTASKS:\n${ts}`;
   }
 
-  function sendQuick(prompt) {
-    document.getElementById('chat-input').value = prompt;
-    sendChat();
-  }
-
-  function handleChatKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
-  }
+  function sendQuick(prompt) { document.getElementById('chat-input').value = prompt; sendChat(); }
+  function handleChatKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }
 
   async function sendChat() {
     const input = document.getElementById('chat-input');
@@ -652,7 +654,7 @@ const App = (() => {
     chatHistory.push({ role: 'user', content: text });
     const typing = appendMsg('', 'ai', true);
 
-    const system = `You are a focused productivity assistant. The user has a kanban-style project and task board. Help them think through priorities, next steps, and project breakdown. Be concise and direct — 2-4 sentences unless they ask for more. You know today's date and can reference it when discussing deadlines and scheduling.\n\n${getBoardContext()}`;
+    const system = `You are a focused productivity assistant. The user has a kanban-style project and task board. Help them think through priorities, next steps, and project breakdown. Be concise and direct — 2-4 sentences unless they ask for more. You know today's date and can reference it when discussing deadlines.\n\n${getBoardContext()}`;
 
     try {
       const res = await fetch('http://localhost:1234/v1/chat/completions', {
@@ -661,18 +663,16 @@ const App = (() => {
         body: JSON.stringify({
           model: 'local-model',
           messages: [{ role: 'system', content: system }, ...chatHistory],
-          max_tokens: 500,
-          stream: false
+          max_tokens: 500, stream: false
         })
       });
       const data = await res.json();
       const reply = data.choices?.[0]?.message?.content || 'No response.';
-      typing.remove();
-      appendMsg(reply, 'ai');
+      typing.remove(); appendMsg(reply, 'ai');
       chatHistory.push({ role: 'assistant', content: reply });
-    } catch (e) {
+    } catch {
       typing.remove();
-      appendMsg('Could not reach LM Studio. Make sure it\'s running on localhost:1234 with CORS enabled in Server settings.', 'ai');
+      appendMsg('Could not reach LM Studio. Make sure it\'s running on localhost:1234 with CORS enabled.', 'ai');
     }
   }
 
@@ -700,11 +700,11 @@ const App = (() => {
   return {
     init, switchView, toggleArchive, toggleSearch, onSearch,
     openDetail, openNewModal, toggleChat, sendQuick, handleChatKey, sendChat,
+    exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem,
-    // internal (called from HTML)
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _closeDetail, _autoSave, _setBlocked, _moveItem,
-    _showDelConfirm, _resetDelZone, _deleteItem, _archiveItem,
+    _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleSubtask, _promoteSubtask, _addSubtask, _removeSubtask,
     _setNewType, _cancelNew, _saveNew,
   };
