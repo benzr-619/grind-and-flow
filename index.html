@@ -5,78 +5,105 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Grind &amp; Flow</title>
 
-  <!-- PWA / Add to Home Screen / Dock -->
+  <!-- PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Grind &amp; Flow">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1e1c19" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ece2cd">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="app">
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="wordmark">Grind &amp; <span class="wordmark-flow">Flow</span></div>
-        <div class="tab-group">
-          <button class="tab active" id="tab-projects" onclick="App.switchView('projects')">Projects</button>
-          <button class="tab" id="tab-tasks" onclick="App.switchView('tasks')">Tasks</button>
-        </div>
-        <div class="date-display" id="date-display"></div>
-      </div>
-      <div class="topbar-right">
-        <button class="btn-icon" id="archive-btn" onclick="App.toggleArchive()" title="Archive">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22V3z"/><path d="M10 12h4"/></svg>
-        </button>
-        <button class="btn-icon" id="search-btn" onclick="App.toggleSearch()" title="Search">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        </button>
-        <button class="btn-icon" onclick="App.exportData()" title="Export backup">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </button>
-        <button class="btn-icon" onclick="App.importData()" title="Import backup">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        </button>
-        <input type="file" id="import-file" accept=".json" style="display:none" onchange="App.onImportFile(event)" />
-        <button class="btn-primary" onclick="App.openNewModal()">+ <span id="add-label">Add project</span></button>
-      </div>
-    </header>
+<div id="app">
 
-    <div class="search-bar-wrap" id="search-bar-wrap" style="display:none">
-      <input class="search-bar" id="search-input" placeholder="Search projects and tasks..." oninput="App.onSearch(this.value)" />
-      <button class="search-close" onclick="App.toggleSearch()">✕</button>
+  <!-- ── Topbar ── -->
+  <header class="topbar">
+    <div class="wordmark">
+      <span class="wordmark-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>
+        </svg>
+      </span>
+      Grind <span class="wordmark-amp">&amp;</span> Flow
     </div>
 
-    <!-- Focus timer bar -->
-    <div class="timer-bar" id="timer-bar"
-      ondragover="App._timerDragOver(event)"
-      ondragleave="App._timerDragLeave(event)"
-      ondrop="App._timerDrop(event)">
-      <div class="timer-fill" id="timer-fill"></div>
-      <div class="timer-inner" id="timer-inner"></div>
+    <nav class="tab-group">
+      <button class="tab" id="tab-projects" onclick="App.switchView('projects')">Projects</button>
+      <button class="tab active" id="tab-tasks" onclick="App.switchView('tasks')">Tasks</button>
+      <button class="tab" id="tab-archive" onclick="App.toggleArchive()">Archive</button>
+    </nav>
+
+    <div class="topbar-spacer"></div>
+
+    <div class="date-display" id="date-display"></div>
+
+    <div class="search-wrap">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input placeholder="search" id="search-input-inline" oninput="App.onSearch(this.value)" />
+      <span class="kbd">⌘K</span>
     </div>
 
-    <!-- Unsaved changes banner -->
-    <div class="save-banner" id="save-banner" style="display:none">
-      <span>Unsaved changes</span>
-      <button class="save-now-btn" onclick="App.exportData()">Export backup ↓</button>
-      <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
+    <div class="topbar-actions">
+      <button class="btn-icon" id="archive-btn" onclick="App.toggleArchive()" title="Archive">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22V3z"/><path d="M10 12h4"/></svg>
+      </button>
+      <button class="btn-icon" onclick="App.exportData()" title="Export backup">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button class="btn-icon" onclick="App.importData()" title="Import backup">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </button>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="App.onImportFile(event)" />
+      <div class="topbar-avatar">AM</div>
+      <button class="btn btn-primary" onclick="App.openNewModal()">
+        + <span id="add-label">Add task</span>
+      </button>
     </div>
+  </header>
 
-    <div class="main-layout">
-      <div class="board-wrap" id="board-wrap">
-        <div class="board" id="board"></div>
-      </div>
-    </div>
+  <!-- Unsaved changes banner -->
+  <div class="save-banner" id="save-banner" style="display:none">
+    <span>Unsaved changes</span>
+    <button class="save-now-btn" onclick="App.exportData()">Export backup ↓</button>
+    <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
   </div>
 
-  <div id="modal-root"></div>
+  <!-- ── Focus / Doing row ── -->
+  <section class="focus-row" id="focus-row">
+    <!-- Rendered by JS -->
+  </section>
 
-  <script src="data.js"></script>
-  <script src="app.js"></script>
+  <!-- ── Timer track ── -->
+  <div class="timer-track" id="timer-track">
+    <!-- Rendered by JS -->
+  </div>
+
+  <!-- ── Board ── -->
+  <main class="board-section">
+    <div class="board-head">
+      <div class="board-head-left">
+        <div class="board-date" id="board-date-label">TUESDAY · MAY 26 · WEEK 22</div>
+        <h1 class="board-title" id="board-title">Tasks</h1>
+      </div>
+      <div class="board-actions">
+        <button class="btn" onclick="App.openNewModal()">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+          new item
+        </button>
+        <button class="btn btn-primary" id="filters-btn">filters</button>
+      </div>
+    </div>
+
+    <div id="board"></div>
+  </main>
+
+</div>
+
+<div id="modal-root"></div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
