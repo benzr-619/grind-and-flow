@@ -21,7 +21,7 @@
   <div id="app">
     <header class="topbar">
       <div class="topbar-left">
-        <div class="wordmark">G&amp;F</div>
+        <div class="wordmark">Grind &amp; <span class="wordmark-flow">Flow</span></div>
         <div class="tab-group">
           <button class="tab active" id="tab-projects" onclick="App.switchView('projects')">Projects</button>
           <button class="tab" id="tab-tasks" onclick="App.switchView('tasks')">Tasks</button>
@@ -56,6 +56,8 @@
       ondragover="App._timerDragOver(event)"
       ondragleave="App._timerDragLeave(event)"
       ondrop="App._timerDrop(event)">
+      <div class="timer-fill" id="timer-fill"></div>
+      <div class="timer-inner" id="timer-inner"></div>
     </div>
 
     <!-- Unsaved changes banner -->
