@@ -11,7 +11,6 @@ const PROJECT_COLS = [
 const TASK_COLS = [
   { id: 'inbox',  label: 'Inbox',  color: 'var(--text-2)' },
   { id: 'next',   label: 'Next',   color: 'var(--green)' },
-  { id: 'doing',  label: 'Doing',  color: 'var(--blue)' },
   { id: 'done',   label: 'Done',   color: 'var(--text-3)' },
 ];
 
@@ -25,9 +24,14 @@ const App = (() => {
   let dragEl = null;
   let placeholder = null;
 
-  // Subtask specific drag tracking
-  let dragStId = null;
-  let dragStEl = null;
+  // ── Timer state ──
+  const SEQUENCE = [5, 10, 25, 50]; // work intervals in minutes
+  const BREAK = 5;
+  let timerTask = null;       // active task object
+  let timerSeqIdx = 0;        // where in sequence (0-3, then stays at 3)
+  let timerPhase = 'idle';    // idle | work | work-paused | break-ready | break | break-done
+  let timerSeconds = 0;
+  let timerInterval = null;
 
   // ── Init ──
   function init() {
@@ -35,17 +39,21 @@ const App = (() => {
     updateDateDisplay();
     setInterval(updateDateDisplay, 60000);
     render();
+    renderTimer();
 
     // Warn before closing/refreshing if there are unsaved changes
     window.addEventListener('beforeunload', e => {
+      // Auto-save fires immediately so localStorage is always current,
+      // but we still warn so the user knows closing is safe
       Data.saveNow();
+      // Only show native dialog if somehow still dirty
       if (Data.isDirty()) {
         e.preventDefault();
         e.returnValue = '';
       }
     });
 
-    // Save immediately when switching apps on mobile / backgrounding
+    // Also save immediately when page visibility changes (phone switching apps)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') Data.saveNow();
     });
@@ -210,12 +218,19 @@ const App = (() => {
       ? `<div class="project-link">↳ ${esc(Data.findProject(item.parentProject)?.title || '')}</div>` : '';
     const meta = (badges || ageDot) ? `<div class="card-meta">${badges}${ageDot}</div>` : '';
 
-    return `<div class="card" style="--card-accent:${accentColor}" draggable="true" data-id="${item.id}"
+    const isActive = timerTask && timerTask.id === item.id;
+    const isNextTask = item.status === 'next' && (item.type === 'task' || item.type === 'standalone');
+    const focusBtn = isNextTask && !isActive
+      ? `<button class="focus-btn" onclick="event.stopPropagation();App.activateTask('${item.id}')">focus →</button>` : '';
+    const activeClass = isActive ? ' card-active' : '';
+
+    return `<div class="card${activeClass}" style="--card-accent:${accentColor}" draggable="true" data-id="${item.id}"
       ondragstart="App._onDragStart(event,'${item.id}')"
       ondragend="App._onDragEnd(event)"
       onclick="App.openDetail('${item.id}')">
       <div class="card-title">${esc(item.title)}</div>
       ${projectLink}${meta}${subtaskRow}
+      ${focusBtn}
     </div>`;
   }
 
@@ -295,27 +310,12 @@ const App = (() => {
   }
 
   function buildSubtaskEditor(item) {
-    const rows = (item.subtasks || []).map(st => `
-      <div class="st-item" id="sti-${st.id}" draggable="true" data-st-id="${st.id}"
-        ondragstart="App._onStDragStart(event,'${st.id}')"
-        ondragover="App._onStDragOver(event)"
-        ondragend="App._onStDragEnd(event)"
-        ondrop="App._onStDrop(event,'${item.id}','${st.id}')">
-        <div class="st-drag-handle" style="cursor: grab; margin-right: 6px; color: var(--text-3); font-size: 14px; user-select: none;">⋮⋮</div>
-        <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
-          onchange="App._toggleSubtask('${item.id}','${st.id}',this.checked)" />
-        <span class="st-title ${st.done ? 'done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
-        <button id="promote-${st.id}" class="promote-btn ${st.promoted ? 'done-state' : ''}"
-          ${st.promoted ? 'disabled' : ''}
-          onclick="App._promoteSubtask('${item.id}','${st.id}')">
-          ${st.promoted ? '✓ on task board' : '→ task board'}
-        </button>
-        ${!st.promoted ? `<button class="st-del" onclick="App._removeSubtask('${item.id}','${st.id}')">✕</button>` : ''}
-      </div>`).join('');
-
+    const rows = (item.subtasks || []).map(st => buildSubtaskRow(st, item.id)).join('');
     return `<div class="section">
-      <label class="label">Subtasks <span class="label-hint">drag handle to reorder · promote to send to task board</span></label>
-      <div class="subtask-list" id="stlist-${item.id}">
+      <label class="label">Subtasks <span class="label-hint">promote to send to your task board · drag to reorder</span></label>
+      <div class="subtask-list" id="stlist-${item.id}"
+        ondragover="App._stListDragOver(event,'${item.id}')"
+        ondrop="App._stListDrop(event,'${item.id}')">
         ${rows || '<div style="font-size:12px;color:var(--text-3);padding:4px 0;">No subtasks yet</div>'}
       </div>
       <div class="add-st-row">
@@ -423,13 +423,11 @@ const App = (() => {
     proj.subtasks.push(st);
     Data.save();
     input.value = '';
-    
-    // Refresh the complete subtask panel to bind drag listeners correctly
-    const container = document.getElementById(`stlist-${projId}`).parentElement;
-    if (container) {
-      const editorHtml = buildSubtaskEditor(proj);
-      container.outerHTML = editorHtml;
+    const list = document.getElementById('stlist-' + projId);
+    if (list) {
+      list.insertAdjacentHTML('beforeend', buildSubtaskRow(st, projId));
     }
+    input.focus();
     renderBoard();
   }
 
@@ -439,69 +437,6 @@ const App = (() => {
     proj.subtasks = proj.subtasks.filter(s => s.id !== stId);
     Data.save();
     document.getElementById('sti-' + stId)?.remove();
-    renderBoard();
-  }
-
-  // ── Subtask Drag and Drop Reordering Handlers ──
-  function _onStDragStart(e, stId) {
-    dragStId = stId;
-    dragStEl = e.currentTarget;
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => dragStEl?.classList.add('is-dragging'), 0);
-  }
-
-  function _onStDragOver(e) {
-    e.preventDefault();
-    const bounding = e.currentTarget.getBoundingClientRect();
-    const offset = e.clientY - bounding.top;
-    if (offset > bounding.height / 2) {
-      e.currentTarget.style.borderBottom = '2px dashed var(--blue)';
-      e.currentTarget.style.borderTop = '';
-    } else {
-      e.currentTarget.style.borderTop = '2px dashed var(--blue)';
-      e.currentTarget.style.borderBottom = '';
-    }
-  }
-
-  function _onStDragEnd(e) {
-    dragStEl?.classList.remove('is-dragging');
-    document.querySelectorAll('.st-item').forEach(el => {
-      el.style.borderTop = '';
-      el.style.borderBottom = '';
-    });
-    dragStId = null;
-    dragStEl = null;
-  }
-
-  function _onStDrop(e, projId, targetStId) {
-    e.preventDefault();
-    if (!dragStId || dragStId === targetStId) return;
-
-    const proj = Data.findProject(projId);
-    if (!proj) return;
-
-    const fromIndex = proj.subtasks.findIndex(s => s.id === dragStId);
-    const toIndex = proj.subtasks.findIndex(s => s.id === targetStId);
-    if (fromIndex === -1 || toIndex === -1) return;
-
-    const [movedSubtask] = proj.subtasks.splice(fromIndex, 1);
-    
-    const bounding = e.currentTarget.getBoundingClientRect();
-    const offset = e.clientY - bounding.top;
-    const adjustedIndex = offset > bounding.height / 2 ? toIndex + 1 : toIndex;
-
-    // Insert back at calculation point
-    proj.subtasks.splice(adjustedIndex > fromIndex && adjustedIndex > 0 ? adjustedIndex - 1 : adjustedIndex, 0, movedSubtask);
-    Data.save();
-
-    // Dynamically re-render subtask DOM section to retain scroll context
-    const listEl = document.getElementById(`stlist-${projId}`);
-    if (listEl) {
-      const parentSection = listEl.parentElement;
-      if (parentSection) {
-        parentSection.outerHTML = buildSubtaskEditor(proj);
-      }
-    }
     renderBoard();
   }
 
@@ -609,7 +544,7 @@ const App = (() => {
     });
   }
 
-  // ── Drag & drop (Main Board Cards) ──
+  // ── Drag & drop ──
   function _onDragStart(e, id) {
     dragId = id; dragEl = e.currentTarget;
     setTimeout(() => dragEl?.classList.add('is-dragging'), 0);
@@ -653,6 +588,344 @@ const App = (() => {
     renderBoard();
   }
 
+  // ── Subtask drag reorder ──
+  // Uses container-level dragover + Y coordinate, same pattern as card drag
+  let stDragId = null;
+  let stProjId = null;
+  let stPlaceholder = null;
+  let stDragEl = null;
+
+  function _stDragStart(e, projId, stId) {
+    stDragId = stId;
+    stProjId = projId;
+    stDragEl = e.currentTarget;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => stDragEl?.classList.add('is-dragging'), 0);
+  }
+
+  function _stDragEnd(e) {
+    stDragEl?.classList.remove('is-dragging');
+    stPlaceholder?.remove(); stPlaceholder = null;
+    stDragId = null; stProjId = null; stDragEl = null;
+  }
+
+  // Called on the list container, not individual items
+  function _stListDragOver(e, projId) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!stPlaceholder) {
+      stPlaceholder = document.createElement('div');
+      stPlaceholder.className = 'st-placeholder';
+    }
+    const list = document.getElementById('stlist-' + projId);
+    if (!list) return;
+    const afterEl = _stAfterElement(list, e.clientY);
+    if (afterEl) list.insertBefore(stPlaceholder, afterEl);
+    else list.appendChild(stPlaceholder);
+  }
+
+  function _stListDrop(e, projId) {
+    e.preventDefault();
+    if (!stDragId) return;
+    const proj = Data.findProject(projId);
+    if (!proj) return;
+    const list = document.getElementById('stlist-' + projId);
+    if (!list) return;
+
+    // Figure out new index from placeholder position
+    const items = [...list.querySelectorAll('.st-item')];
+    const placeholderIdx = [...list.children].indexOf(stPlaceholder);
+    const itemsBefore = [...list.children].slice(0, placeholderIdx).filter(el => el.classList.contains('st-item'));
+    const newIdx = itemsBefore.length;
+
+    const fromIdx = proj.subtasks.findIndex(s => s.id === stDragId);
+    if (fromIdx < 0) { stPlaceholder?.remove(); stPlaceholder = null; return; }
+
+    const [moved] = proj.subtasks.splice(fromIdx, 1);
+    const insertAt = newIdx > fromIdx ? newIdx - 1 : newIdx;
+    proj.subtasks.splice(insertAt, 0, moved);
+    Data.save();
+
+    stPlaceholder?.remove(); stPlaceholder = null;
+    list.innerHTML = proj.subtasks.map(st => buildSubtaskRow(st, projId)).join('');
+  }
+
+  function _stAfterElement(container, y) {
+    const draggables = [...container.querySelectorAll('.st-item:not(.is-dragging)')];
+    return draggables.reduce((closest, el) => {
+      const box = el.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) return { offset, element: el };
+      return closest;
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
+  }
+
+  function buildSubtaskRow(st, projId) {
+    return `<div class="st-item" id="sti-${st.id}" draggable="true"
+      ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
+      ondragend="App._stDragEnd(event)">
+      <span class="st-handle" title="Drag to reorder">⠿</span>
+      <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
+        onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
+      <span class="st-title ${st.done ? 'done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
+      <button id="promote-${st.id}" class="promote-btn ${st.promoted ? 'done-state' : ''}"
+        ${st.promoted ? 'disabled' : ''}
+        onclick="App._promoteSubtask('${projId}','${st.id}')">
+        ${st.promoted ? '✓ on task board' : '→ task board'}
+      </button>
+      ${!st.promoted ? `<button class="st-del" onclick="App._removeSubtask('${projId}','${st.id}')">✕</button>` : ''}
+    </div>`;
+  }
+
+  // ── Timer ──
+  function timerWorkMins() { return SEQUENCE[Math.min(timerSeqIdx, SEQUENCE.length - 1)]; }
+
+  function activateTask(id) {
+    const item = Data.findItem(id);
+    if (!item) return;
+    // If same task already active, just start work interval
+    if (timerTask && timerTask.id === id) {
+      _startWorkInterval();
+      return;
+    }
+    clearInterval(timerInterval); timerInterval = null;
+    timerTask = item;
+    timerSeqIdx = 0;
+    timerSeconds = timerWorkMins() * 60;
+    timerPhase = 'work';
+    timerInterval = setInterval(timerTick, 1000);
+    renderTimer();
+    renderBoard();
+  }
+
+  function endSession(action) {
+    clearInterval(timerInterval); timerInterval = null;
+    if (action === 'done' && timerTask) {
+      const item = Data.findItem(timerTask.id);
+      if (item) { item.status = 'done'; Data.save(); }
+    } else if (action === 'next' && timerTask) {
+      const item = Data.findItem(timerTask.id);
+      if (item && item.status !== 'next') { item.status = 'next'; Data.save(); }
+    }
+    timerTask = null; timerPhase = 'idle';
+    timerSeqIdx = 0; timerSeconds = 0;
+    renderTimer(); renderBoard();
+  }
+
+  // Click a work dot — jump to that interval and start immediately
+  function timerClickWorkDot(idx) {
+    if (!timerTask) return;
+    clearInterval(timerInterval); timerInterval = null;
+    timerSeqIdx = idx;
+    timerSeconds = timerWorkMins() * 60;
+    timerPhase = 'work';
+    timerInterval = setInterval(timerTick, 1000);
+    renderTimer();
+  }
+
+  // Click the break dot — start break immediately
+  function timerClickBreakDot() {
+    if (!timerTask) return;
+    clearInterval(timerInterval); timerInterval = null;
+    timerSeconds = BREAK * 60;
+    timerPhase = 'break';
+    timerInterval = setInterval(timerTick, 1000);
+    renderTimer();
+  }
+
+  function timerTogglePlay() {
+    if (timerPhase === 'work') {
+      clearInterval(timerInterval); timerInterval = null;
+      timerPhase = 'work-paused';
+    } else if (timerPhase === 'work-paused') {
+      timerPhase = 'work';
+      timerInterval = setInterval(timerTick, 1000);
+    } else if (timerPhase === 'break') {
+      clearInterval(timerInterval); timerInterval = null;
+      timerPhase = 'break-paused';
+    } else if (timerPhase === 'break-paused') {
+      timerPhase = 'break';
+      timerInterval = setInterval(timerTick, 1000);
+    }
+    renderTimer();
+  }
+
+  function _startWorkInterval() {
+    clearInterval(timerInterval); timerInterval = null;
+    timerSeconds = timerWorkMins() * 60;
+    timerPhase = 'work';
+    timerInterval = setInterval(timerTick, 1000);
+    renderTimer();
+  }
+
+  function timerTick() {
+    if (timerSeconds > 0) {
+      timerSeconds--;
+      renderTimerDisplay();
+    } else {
+      clearInterval(timerInterval); timerInterval = null;
+      playChime();
+      if (timerPhase === 'work') {
+        timerPhase = 'break-ready';
+      } else if (timerPhase === 'break') {
+        // After break: advance sequence, wait for user to click dot
+        if (timerSeqIdx < SEQUENCE.length - 1) timerSeqIdx++;
+        timerPhase = 'break-done';
+        timerSeconds = timerWorkMins() * 60;
+      }
+      renderTimer();
+    }
+  }
+
+  function playChime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const freqs = [220, 440, 660, 880];
+      freqs.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        const vol = 0.18 / (i + 1);
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 3.5);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 3.5);
+      });
+    } catch(e) {}
+  }
+
+  function fmtTimer(secs) {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  function timerBarClass() {
+    if (timerPhase === 'break' || timerPhase === 'break-paused' || timerPhase === 'break-ready') return 'timer-bar break-active';
+    if (timerPhase === 'break-done') return 'timer-bar break-done';
+    return 'timer-bar';
+  }
+
+  function renderTimerDisplay() {
+    const el = document.getElementById('timer-countdown');
+    if (el) el.textContent = fmtTimer(timerSeconds);
+    const total = (timerPhase === 'break' || timerPhase === 'break-paused') ? BREAK * 60 : timerWorkMins() * 60;
+    const pct = total > 0 ? 1 - (timerSeconds / total) : 0;
+    const arc = document.getElementById('timer-arc');
+    if (arc) {
+      const circ = 2 * Math.PI * 16;
+      arc.style.strokeDashoffset = circ * (1 - pct);
+    }
+  }
+
+  function renderTimer() {
+    const bar = document.getElementById('timer-bar');
+    if (!bar) return;
+
+    const r = 16;
+    const circ = 2 * Math.PI * r;
+    const isBreakPhase = timerPhase === 'break' || timerPhase === 'break-paused' || timerPhase === 'break-ready';
+    const total = isBreakPhase ? BREAK * 60 : timerWorkMins() * 60;
+    const pct = total > 0 ? 1 - (timerSeconds / total) : 0;
+    const offset = circ * (1 - pct);
+
+    // Build interleaved dots: work dot, break dot, work dot, break dot...
+    // Break dot is clickable only when relevant (just finished a work interval)
+    const isRunning = timerPhase === 'work' || timerPhase === 'break' || timerPhase === 'break-paused';
+    const isPaused = timerPhase === 'work-paused';
+
+    let dots = '';
+    SEQUENCE.forEach((m, i) => {
+      const workState = i < timerSeqIdx ? 'done'
+        : i === timerSeqIdx && !isBreakPhase ? 'current'
+        : 'future';
+      dots += `<button class="seq-dot seq-work seq-${workState}" onclick="App.timerClickWorkDot(${i})" title="Start ${m}min work">${m}</button>`;
+      // Break dot after each work dot except the last
+      // Show break dot as active when we're in a break phase and this is the current work idx
+      if (i < SEQUENCE.length) {
+        const breakCurrent = isBreakPhase && i === timerSeqIdx;
+        const breakDone = i < timerSeqIdx;
+        const breakState = breakCurrent ? 'current' : breakDone ? 'done' : 'future';
+        dots += `<button class="seq-dot seq-break seq-break-${breakState}" onclick="App.timerClickBreakDot()" title="Start ${BREAK}min break">·</button>`;
+      }
+    });
+
+    // Play/pause button
+    let playPause = '';
+    if (timerTask) {
+      if (timerPhase === 'work') {
+        playPause = `<button class="tbtn tbtn-playpause" onclick="App.timerTogglePlay()">⏸</button>`;
+      } else if (timerPhase === 'work-paused' || timerPhase === 'break-paused') {
+        playPause = `<button class="tbtn tbtn-playpause tbtn-primary" onclick="App.timerTogglePlay()">▶</button>`;
+      } else if (timerPhase === 'break') {
+        playPause = `<button class="tbtn tbtn-playpause" onclick="App.timerTogglePlay()">⏸</button>`;
+      } else if (timerPhase === 'break-ready') {
+        playPause = `<button class="tbtn tbtn-playpause tbtn-break pulse-btn" onclick="App.timerClickBreakDot()">▶</button>`;
+      } else if (timerPhase === 'break-done') {
+        playPause = `<button class="tbtn tbtn-playpause tbtn-urgent pulse-btn" onclick="App.timerClickWorkDot(${timerSeqIdx})">▶</button>`;
+      }
+    }
+
+    // Phase label
+    let phaseLabel = '';
+    if (!timerTask) {
+      phaseLabel = `<span class="timer-phase idle-label">No active task — start one from Next or drag a card here</span>`;
+    } else {
+      const taskName = `<span class="timer-task-name">${esc(timerTask.title)}</span>`;
+      if (timerPhase === 'work') phaseLabel = `<span class="timer-phase work-label">Working</span> — ${taskName}`;
+      else if (timerPhase === 'work-paused') phaseLabel = `<span class="timer-phase paused-label">Paused</span> — ${taskName}`;
+      else if (timerPhase === 'break-ready') phaseLabel = `<span class="timer-phase break-label">Break time — tap · to start</span>`;
+      else if (timerPhase === 'break' || timerPhase === 'break-paused') phaseLabel = `<span class="timer-phase break-label">Break</span> — ${taskName}`;
+      else if (timerPhase === 'break-done') phaseLabel = `<span class="timer-phase back-label">Back to work — tap a dot to start</span>`;
+    }
+
+    const sessionControls = timerTask ? `
+      <div class="timer-session-actions">
+        <button class="tbtn tbtn-done" onclick="App.endSession('done')">✓ Done</button>
+        <button class="tbtn tbtn-next" onclick="App.endSession('next')">→ Next</button>
+      </div>` : '';
+
+    bar.className = timerBarClass();
+    bar.innerHTML = `
+      <div class="timer-left">
+        <svg class="timer-ring" width="42" height="42" viewBox="0 0 42 42">
+          <circle cx="21" cy="21" r="${r}" fill="none" stroke="var(--timer-ring-bg)" stroke-width="3"/>
+          <circle id="timer-arc" cx="21" cy="21" r="${r}" fill="none" stroke="var(--timer-ring-fg)"
+            stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
+            transform="rotate(-90 21 21)" style="transition:stroke-dashoffset 0.9s linear"/>
+        </svg>
+        <span id="timer-countdown" class="timer-countdown">${fmtTimer(timerSeconds)}</span>
+        ${playPause}
+      </div>
+      <div class="timer-mid">
+        <div class="timer-seq">${dots}</div>
+        <div class="timer-info">${phaseLabel}</div>
+      </div>
+      <div class="timer-right">
+        ${sessionControls}
+      </div>`;
+  }
+
+    // Drop onto timer bar
+  function _timerDragOver(e) {
+    e.preventDefault();
+    document.getElementById('timer-bar')?.classList.add('timer-drop-target');
+  }
+  function _timerDragLeave(e) {
+    document.getElementById('timer-bar')?.classList.remove('timer-drop-target');
+  }
+  function _timerDrop(e) {
+    e.preventDefault();
+    document.getElementById('timer-bar')?.classList.remove('timer-drop-target');
+    if (!dragId) return;
+    const item = Data.findItem(dragId);
+    if (item && (item.type === 'task' || item.type === 'standalone')) {
+      activateTask(dragId);
+    }
+  }
+
   // ── Helpers ──
   function today() { return new Date().toISOString().split('T')[0]; }
   function daysDiff(ds) { if (!ds) return 0; return Math.floor((new Date() - new Date(ds)) / 86400000); }
@@ -665,14 +938,18 @@ const App = (() => {
 
   return {
     init, switchView, toggleArchive, toggleSearch, onSearch,
-    openDetail, openNewModal, exportData, importData, onImportFile, dismissBanner,
+    openDetail, openNewModal,
+    exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem,
+    activateTask, endSession,
+    timerClickWorkDot, timerClickBreakDot, timerTogglePlay,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
+    _timerDragOver, _timerDragLeave, _timerDrop,
     _closeDetail, _autoSave, _setBlocked, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleSubtask, _promoteSubtask, _addSubtask, _removeSubtask,
-    _onStDragStart, _onStDragOver, _onStDragEnd, _onStDrop,
     _setNewType, _cancelNew, _saveNew,
+    _stDragStart, _stDragEnd, _stListDragOver, _stListDrop,
   };
 })();
 
