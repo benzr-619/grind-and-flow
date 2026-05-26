@@ -1,16 +1,16 @@
 // app.js — all UI and interaction logic
 
 const PROJECT_COLS = [
-  { id: 'active',   label: 'Active',   color: 'var(--blue)' },
-  { id: 'up-next',  label: 'Up next',  color: 'var(--green)' },
-  { id: 'on-deck',  label: 'On deck',  color: 'var(--text-2)' },
+  { id: 'active',   label: 'Active',   color: 'var(--sage-deep)' },
+  { id: 'up-next',  label: 'Up next',  color: 'var(--sage)' },
+  { id: 'on-deck',  label: 'On deck',  color: 'var(--steel)' },
   { id: 'on-hold',  label: 'On hold',  color: 'var(--amber)' },
   { id: 'someday',  label: 'Someday',  color: 'var(--purple)' },
 ];
 
 const TASK_COLS = [
-  { id: 'inbox',  label: 'Inbox',  color: 'var(--text-2)' },
-  { id: 'next',   label: 'Next',   color: 'var(--green)' },
+  { id: 'inbox',  label: 'Inbox',  color: 'var(--steel)' },
+  { id: 'next',   label: 'Next',   color: 'var(--sage-deep)' },
   { id: 'done',   label: 'Done',   color: 'var(--text-3)' },
 ];
 
@@ -195,7 +195,7 @@ const App = (() => {
       const over = isOverdue(item.dueDate);
       badges += `<span class="badge ${over ? 'badge-red' : 'badge-amber'}">${over ? 'overdue' : 'due'} ${fmtDate(item.dueDate)}</span>`;
     }
-    if (item.scheduledDate) badges += `<span class="badge badge-green">→ ${fmtDate(item.scheduledDate)}</span>`;
+    if (item.scheduledDate) badges += `<span class="badge badge-sage">→ ${fmtDate(item.scheduledDate)}</span>`;
 
     let ageDot = '';
     if (item.type !== 'project') {
@@ -746,6 +746,14 @@ const App = (() => {
     } else if (timerPhase === 'break-paused') {
       timerPhase = 'break';
       timerInterval = setInterval(timerTick, 1000);
+    } else if (timerPhase === 'break-ready') {
+      // Clicking play during break-ready starts the break
+      timerClickBreakDot();
+      return;
+    } else if (timerPhase === 'break-done') {
+      // Clicking play after break starts next work interval
+      timerClickWorkDot(timerSeqIdx);
+      return;
     }
     renderTimer();
   }
@@ -767,11 +775,17 @@ const App = (() => {
       playChime();
       if (timerPhase === 'work') {
         timerPhase = 'break-ready';
+        timerSeconds = 0;
+        // Pulse the whole bar
+        const bar = document.getElementById('timer-bar');
+        if (bar) { bar.classList.add('pulsing-break'); setTimeout(() => bar.classList.remove('pulsing-break'), 6000); }
       } else if (timerPhase === 'break') {
-        // After break: advance sequence, wait for user to click dot
         if (timerSeqIdx < SEQUENCE.length - 1) timerSeqIdx++;
         timerPhase = 'break-done';
         timerSeconds = timerWorkMins() * 60;
+        // Pulse the whole bar amber
+        const bar = document.getElementById('timer-bar');
+        if (bar) { bar.classList.add('pulsing-work'); setTimeout(() => bar.classList.remove('pulsing-work'), 6000); }
       }
       renderTimer();
     }
@@ -801,111 +815,96 @@ const App = (() => {
     return `${m}:${s}`;
   }
 
-  function timerBarClass() {
-    if (timerPhase === 'break' || timerPhase === 'break-paused' || timerPhase === 'break-ready') return 'timer-bar break-active';
-    if (timerPhase === 'break-done') return 'timer-bar break-done';
-    return 'timer-bar';
-  }
-
   function renderTimerDisplay() {
+    // Update countdown text
     const el = document.getElementById('timer-countdown');
     if (el) el.textContent = fmtTimer(timerSeconds);
-    const total = (timerPhase === 'break' || timerPhase === 'break-paused') ? BREAK * 60 : timerWorkMins() * 60;
-    const pct = total > 0 ? 1 - (timerSeconds / total) : 0;
-    const arc = document.getElementById('timer-arc');
-    if (arc) {
-      const circ = 2 * Math.PI * 16;
-      arc.style.strokeDashoffset = circ * (1 - pct);
-    }
+    // Update fill bar width
+    const isBreakPhase = timerPhase === 'break' || timerPhase === 'break-paused';
+    const total = isBreakPhase ? BREAK * 60 : timerWorkMins() * 60;
+    const pct = total > 0 ? (timerSeconds / total) * 100 : 0;
+    const fill = document.getElementById('timer-fill');
+    if (fill) fill.style.width = pct + '%';
   }
 
   function renderTimer() {
     const bar = document.getElementById('timer-bar');
-    if (!bar) return;
+    const inner = document.getElementById('timer-inner');
+    if (!bar || !inner) return;
 
-    const r = 16;
-    const circ = 2 * Math.PI * r;
     const isBreakPhase = timerPhase === 'break' || timerPhase === 'break-paused' || timerPhase === 'break-ready';
     const total = isBreakPhase ? BREAK * 60 : timerWorkMins() * 60;
-    const pct = total > 0 ? 1 - (timerSeconds / total) : 0;
-    const offset = circ * (1 - pct);
+    const pct = total > 0 ? (timerSeconds / total) * 100 : 0;
 
-    // Build interleaved dots: work dot, break dot, work dot, break dot...
-    // Break dot is clickable only when relevant (just finished a work interval)
-    const isRunning = timerPhase === 'work' || timerPhase === 'break' || timerPhase === 'break-paused';
-    const isPaused = timerPhase === 'work-paused';
+    // Fill bar
+    const fill = document.getElementById('timer-fill');
+    if (fill) fill.style.width = pct + '%';
 
+    // Bar class
+    let barClass = 'timer-bar';
+    if (timerPhase === 'break' || timerPhase === 'break-paused' || timerPhase === 'break-ready') barClass += ' break-active';
+    if (timerPhase === 'break-ready') barClass += ' pulsing-break';
+    if (timerPhase === 'break-done') barClass += ' pulsing-amber';
+    bar.className = barClass;
+
+    // Idle state
+    if (!timerTask) {
+      inner.innerHTML = `<div class="timer-idle">No active task — hit "focus →" on a card in Next, or drag a card here</div>`;
+      return;
+    }
+
+    // Build sequence dots
     let dots = '';
     SEQUENCE.forEach((m, i) => {
       const workState = i < timerSeqIdx ? 'done'
-        : i === timerSeqIdx && !isBreakPhase ? 'current'
-        : 'future';
-      dots += `<button class="seq-dot seq-work seq-${workState}" onclick="App.timerClickWorkDot(${i})" title="Start ${m}min work">${m}</button>`;
-      // Break dot after each work dot except the last
-      // Show break dot as active when we're in a break phase and this is the current work idx
-      if (i < SEQUENCE.length) {
-        const breakCurrent = isBreakPhase && i === timerSeqIdx;
-        const breakDone = i < timerSeqIdx;
-        const breakState = breakCurrent ? 'current' : breakDone ? 'done' : 'future';
-        dots += `<button class="seq-dot seq-break seq-break-${breakState}" onclick="App.timerClickBreakDot()" title="Start ${BREAK}min break">·</button>`;
-      }
+        : i === timerSeqIdx && !isBreakPhase ? 'current' : 'future';
+      dots += `<button class="seq-dot seq-work seq-${workState}" onclick="App.timerClickWorkDot(${i})">${m}</button>`;
+      const breakCurrent = isBreakPhase && i === timerSeqIdx;
+      const breakDone = i < timerSeqIdx;
+      const bState = breakCurrent ? 'current' : breakDone ? 'done' : 'future';
+      dots += `<button class="seq-dot seq-break seq-break-${bState}" onclick="App.timerClickBreakDot()">·</button>`;
     });
 
     // Play/pause button
-    let playPause = '';
-    if (timerTask) {
-      if (timerPhase === 'work') {
-        playPause = `<button class="tbtn tbtn-playpause" onclick="App.timerTogglePlay()">⏸</button>`;
-      } else if (timerPhase === 'work-paused' || timerPhase === 'break-paused') {
-        playPause = `<button class="tbtn tbtn-playpause tbtn-primary" onclick="App.timerTogglePlay()">▶</button>`;
-      } else if (timerPhase === 'break') {
-        playPause = `<button class="tbtn tbtn-playpause" onclick="App.timerTogglePlay()">⏸</button>`;
-      } else if (timerPhase === 'break-ready') {
-        playPause = `<button class="tbtn tbtn-playpause tbtn-break pulse-btn" onclick="App.timerClickBreakDot()">▶</button>`;
-      } else if (timerPhase === 'break-done') {
-        playPause = `<button class="tbtn tbtn-playpause tbtn-urgent pulse-btn" onclick="App.timerClickWorkDot(${timerSeqIdx})">▶</button>`;
-      }
+    let ppClass = 'tbtn-playpause';
+    let ppIcon = '⏸';
+    let ppExtra = '';
+    if (timerPhase === 'work-paused') { ppClass += ' active'; ppIcon = '▶'; }
+    else if (timerPhase === 'work') { ppIcon = '⏸'; }
+    else if (timerPhase === 'break') { ppIcon = '⏸'; }
+    else if (timerPhase === 'break-paused') { ppClass += ' active'; ppIcon = '▶'; }
+    else if (timerPhase === 'break-ready') { ppClass += ' break-play pulse-blue'; ppIcon = '▶'; }
+    else if (timerPhase === 'break-done') { ppClass += ' urgent-play pulse-amber'; ppIcon = '▶'; }
+
+    const playPause = `<button class="${ppClass}" onclick="App.timerTogglePlay()">${ppIcon}</button>`;
+
+    // Task card — mini version of kanban card
+    const taskItem = Data.findItem(timerTask.id) || timerTask;
+    let cardMeta = '';
+    if (taskItem.blocked) cardMeta += `<span class="badge badge-coral">blocked</span>`;
+    if (taskItem.dueDate) {
+      const over = isOverdue(taskItem.dueDate);
+      cardMeta += `<span class="badge ${over ? 'badge-red' : 'badge-amber'}">${over ? 'overdue' : 'due'} ${fmtDate(taskItem.dueDate)}</span>`;
+    }
+    if (taskItem.parentProject) {
+      const pt = Data.findProject(taskItem.parentProject)?.title;
+      if (pt) cardMeta += `<div class="project-link" style="margin-top:4px;">↳ ${esc(pt)}</div>`;
     }
 
-    // Phase label
-    let phaseLabel = '';
-    if (!timerTask) {
-      phaseLabel = `<span class="timer-phase idle-label">No active task — start one from Next or drag a card here</span>`;
-    } else {
-      const taskName = `<span class="timer-task-name">${esc(timerTask.title)}</span>`;
-      if (timerPhase === 'work') phaseLabel = `<span class="timer-phase work-label">Working</span> — ${taskName}`;
-      else if (timerPhase === 'work-paused') phaseLabel = `<span class="timer-phase paused-label">Paused</span> — ${taskName}`;
-      else if (timerPhase === 'break-ready') phaseLabel = `<span class="timer-phase break-label">Break time — tap · to start</span>`;
-      else if (timerPhase === 'break' || timerPhase === 'break-paused') phaseLabel = `<span class="timer-phase break-label">Break</span> — ${taskName}`;
-      else if (timerPhase === 'break-done') phaseLabel = `<span class="timer-phase back-label">Back to work — tap a dot to start</span>`;
-    }
-
-    const sessionControls = timerTask ? `
-      <div class="timer-session-actions">
-        <button class="tbtn tbtn-done" onclick="App.endSession('done')">✓ Done</button>
-        <button class="tbtn tbtn-next" onclick="App.endSession('next')">→ Next</button>
-      </div>` : '';
-
-    bar.className = timerBarClass();
-    bar.innerHTML = `
-      <div class="timer-left">
-        <svg class="timer-ring" width="42" height="42" viewBox="0 0 42 42">
-          <circle cx="21" cy="21" r="${r}" fill="none" stroke="var(--timer-ring-bg)" stroke-width="3"/>
-          <circle id="timer-arc" cx="21" cy="21" r="${r}" fill="none" stroke="var(--timer-ring-fg)"
-            stroke-width="3" stroke-linecap="round"
-            stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
-            transform="rotate(-90 21 21)" style="transition:stroke-dashoffset 0.9s linear"/>
-        </svg>
-        <span id="timer-countdown" class="timer-countdown">${fmtTimer(timerSeconds)}</span>
-        ${playPause}
+    inner.innerHTML = `
+      <button class="timer-back-btn" onclick="App.endSession('next')">← <span>Back to Next</span></button>
+      <div class="timer-card">
+        <div class="timer-card-title">${esc(timerTask.title)}</div>
+        ${cardMeta ? `<div class="timer-card-meta">${cardMeta}</div>` : ''}
       </div>
-      <div class="timer-mid">
+      <div class="timer-center">
         <div class="timer-seq">${dots}</div>
-        <div class="timer-info">${phaseLabel}</div>
+        <div class="timer-countdown-row">
+          <span id="timer-countdown" class="timer-countdown">${fmtTimer(timerSeconds)}</span>
+          ${playPause}
+        </div>
       </div>
-      <div class="timer-right">
-        ${sessionControls}
-      </div>`;
+      <button class="timer-done-btn" onclick="App.endSession('done')">✓ Done</button>`;
   }
 
     // Drop onto timer bar
