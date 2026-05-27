@@ -632,8 +632,7 @@ const App = (() => {
     state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; Data.upsertTask(t); });
     item.status = 'doing';
     Data.upsertTask(item);
-    _renderFocusRow();
-    renderBoard();
+    activateTask(item.id);
   }
 
   function removeFromDoing(id) {
