@@ -26,7 +26,6 @@ const Data = (() => {
     return {
       id:             p.id,
       user_id:        uid,
-      type:           p.type           || 'project',
       title:          p.title,
       status:         p.status,
       due_date:       p.dueDate        || null,
