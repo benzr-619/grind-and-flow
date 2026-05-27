@@ -16,28 +16,36 @@ const Auth = (() => {
 
   // ── Init: connect to Supabase and resolve the current session ──
   async function init() {
-    _client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    Data.setClient(_client); // inject into data.js before any load call
+    try {
+      _client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      Data.setClient(_client); // inject into data.js before any load call
 
-    const { data: { session } } = await _client.auth.getSession();
-    _session = session;
-
-    if (session) {
-      _showApp();
-    } else {
-      _showAuthOverlay();
-    }
-
-    // Listen for session changes — covers token refresh, cross-tab sign-out, etc.
-    _client.auth.onAuthStateChange((_event, session) => {
+      const { data: { session }, error } = await _client.auth.getSession();
+      if (error) throw error;
       _session = session;
+
       if (session) {
         _showApp();
       } else {
-        _hideApp();
         _showAuthOverlay();
       }
-    });
+
+      // Listen for session changes — covers token refresh, cross-tab sign-out, etc.
+      _client.auth.onAuthStateChange((_event, session) => {
+        _session = session;
+        if (session) {
+          _showApp();
+        } else {
+          _hideApp();
+          _showAuthOverlay();
+        }
+      });
+    } catch (err) {
+      console.error('Auth.init failed:', err);
+      // Always show the auth overlay so the page is never blank
+      _showAuthOverlay();
+      _showMessage('Connection error — please check your network and try again.', 'error');
+    }
   }
 
   // ── Public session accessors ──
