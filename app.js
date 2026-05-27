@@ -17,13 +17,13 @@ const TASK_COLS = [
 // ── Timer sequence ──
 const TIMER_SEQ = [
   { kind:'work',  m:5,  label:'5m'  },
-  { kind:'break', m:4,  label:'4'   },
+  { kind:'break', m:5,  label:'5'   },
   { kind:'work',  m:10, label:'10m' },
-  { kind:'break', m:4,  label:'4'   },
+  { kind:'break', m:5,  label:'5'   },
   { kind:'work',  m:25, label:'25m' },
-  { kind:'break', m:4,  label:'4'   },
+  { kind:'break', m:5,  label:'5'   },
   { kind:'work',  m:50, label:'50m' },
-  { kind:'break', m:4,  label:'4'   },
+  { kind:'break', m:5,  label:'5'   },
   { kind:'work',  m:50, label:'50m' },
 ];
 
@@ -53,6 +53,7 @@ const App = (() => {
   let timerSegIdx = 0;
   let timerSecsRemaining = 0;
   let timerRunning = false;
+  let timerAtBoundary = false; // true when a segment just ended and the next hasn't started yet
   let timerInterval = null;
   let timerElapsedInterval = null;
 
@@ -299,7 +300,7 @@ const App = (() => {
 
     const isActive = timerTask && timerTask.id === item.id;
     const focusBtn = colId === 'next' && !isActive
-      ? `<button class="focus-btn" onclick="event.stopPropagation();App.activateTask('${item.id}')">focus →</button>` : '';
+      ? `<button class="focus-btn" onclick="event.stopPropagation();App.startTask('${item.id}')">start →</button>` : '';
 
     return `<div class="card ${tagClass}${isActive ? ' card-active' : ''}" draggable="true" data-id="${item.id}"
       ondragstart="App._onDragStart(event,'${item.id}')"
@@ -504,69 +505,142 @@ const App = (() => {
   function _renderFocusRow() {
     const sec = document.getElementById('doing-section');
     if (!sec) return;
-    const committedCount = timerTask ? 1 : 0;
-    sec.innerHTML = `
-      <div class="doing-left">
-        <div class="doing-head">
-          <span class="doing-label">Doing</span>
-          <span class="doing-count">(${committedCount})</span>
-          <span class="doing-quip">commit to fewer things</span>
-        </div>
-        <div class="doing-cards">
-          ${_renderDoingNow()}
-          ${_renderDoingNext()}
-          <button class="commit-btn" onclick="App.switchView('tasks')">+ commit</button>
-        </div>
-      </div>
-      <div class="focus-clock">
-        <div class="focus-clock-label">Focus</div>
-        <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
-        <span class="focus-clock-remaining">remaining</span>
-      </div>`;
+    const state = Data.get();
+    const doingTasks = state.tasks.filter(t => t.status === 'doing');
+    const task = doingTasks[0] || null;
+
+    if (!task) {
+      sec.innerHTML = `
+        <div class="doing-label-row"><span class="doing-label">Doing</span></div>
+        <div class="doing-strip">
+          <div class="doing-drop-hint" id="doing-cards-row"
+            ondragover="App._onDoingDragOver(event)"
+            ondragleave="App._onDoingDragLeave(event)"
+            ondrop="App._onDoingDrop(event)">
+            drag a task here to commit
+          </div>
+        </div>`;
+    } else {
+      const isActive = timerTask && timerTask.id === task.id;
+      const isRunning = isActive && timerRunning;
+      const isCalm  = timerAtBoundary && isActive && TIMER_SEQ[timerSegIdx].kind === 'break';
+      const isPushy = timerAtBoundary && isActive && TIMER_SEQ[timerSegIdx].kind !== 'break';
+      const tags = task.tags || [];
+      sec.innerHTML = `
+        <div class="doing-label-row"><span class="doing-label">Doing</span></div>
+        <div class="doing-strip">
+          <button class="doing-flank doing-flank-left"
+            onclick="event.stopPropagation();App.removeFromDoing('${task.id}')"
+            title="Back to Next">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            <span>next</span>
+          </button>
+          <div class="doing-band${isActive ? ' now' : ''}${isCalm ? ' boundary-calm' : ''}${isPushy ? ' boundary-pushy' : ''}"
+            id="doing-cards-row" data-id="${task.id}"
+            ondragover="App._onDoingDragOver(event)"
+            ondragleave="App._onDoingDragLeave(event)"
+            ondrop="App._onDoingDrop(event)">
+            <button class="doing-play-btn${isRunning ? ' running' : ''}"
+              onclick="${isRunning ? 'App.timerTogglePlay()' : `App.activateTask('${task.id}')`}">
+              ${isRunning
+                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+                : `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>`}
+            </button>
+            <div class="doing-identity">
+              <div class="doing-meta-top">
+                ${isActive ? `<span class="tag-pill" style="font-size:8px;padding:1px 5px;background:var(--sage-pale);border-color:var(--sage-deep);color:var(--sage-deep)">● NOW</span>` : ''}
+                ${tags.slice(0,1).map(t => `<span class="tag-pill tag-${t}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
+              </div>
+              <div class="doing-task-title">${esc(task.title)}</div>
+            </div>
+            <div class="doing-divider"></div>
+            <div class="doing-timer-zone">
+              <div class="focus-clock">
+                <div class="focus-clock-label">Focus</div>
+                <div class="focus-clock-time-row">
+                  <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
+                  <span class="focus-clock-remaining">remaining</span>
+                </div>
+              </div>
+              ${isActive ? `<div class="doing-elapsed">
+                <div class="doing-elapsed-lbl">Elapsed</div>
+                <div class="doing-elapsed-val">${timerTask._elapsed || 0}<span style="font-size:11px;color:var(--muted);font-style:normal;margin-left:1px">m</span></div>
+              </div>` : ''}
+            </div>
+          </div>
+          <button class="doing-flank doing-flank-right"
+            onclick="event.stopPropagation();App.markDoingDone('${task.id}')"
+            title="Mark Done">
+            <span>done</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>`;
+    }
     _renderClock();
   }
 
-  function _renderDoingNow() {
-    if (!timerTask) return `<div class="doing-card idle">nothing committed</div>`;
-    const item = Data.findItem(timerTask.id) || timerTask;
-    const tags = item.tags || [];
-    return `<div class="doing-card now${timerRunning ? ' ticking' : ''}">
-      <button class="doing-play-btn${timerRunning ? ' running' : ''}" onclick="App.timerTogglePlay()">
-        ${timerRunning
-          ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
-          : `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>`}
-      </button>
-      <div class="doing-meta">
-        <div class="doing-meta-top">
-          <span class="tag-pill tag-${tags[0] || 'work'}" style="font-size:8px;padding:1px 5px">● NOW</span>
-          ${tags.slice(0,1).map(t => `<span class="tag-pill tag-${t}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
-        </div>
-        <div class="doing-task-title">${esc(item.title)}</div>
-      </div>
-      <div class="doing-elapsed">
-        <div class="doing-elapsed-lbl">Elapsed</div>
-        <div class="doing-elapsed-val">${timerTask._elapsed || 0}<span style="font-size:12px;color:var(--muted);font-style:normal;margin-left:1px">m</span></div>
-      </div>
-    </div>`;
+  // ── Doing drop zone handlers ──
+  function _onDoingDragOver(e) {
+    e.preventDefault();
+    // Always allow drop — existing task will be bumped back to next
+    document.getElementById('doing-cards-row')?.classList.add('doing-drag-over');
   }
 
-  function _renderDoingNext() {
+  function _onDoingDragLeave(e) {
+    if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
+      document.getElementById('doing-cards-row')?.classList.remove('doing-drag-over');
+    }
+  }
+
+  function _onDoingDrop(e) {
+    e.preventDefault();
+    const row = document.getElementById('doing-cards-row');
+    row?.classList.remove('doing-drag-over');
+    placeholder?.remove(); placeholder = null;
+    if (!dragId) return;
     const state = Data.get();
-    const nextItem = state.tasks.find(t => t.status === 'next' && (!timerTask || t.id !== timerTask.id));
-    if (!nextItem) return `<div class="doing-card idle">nothing queued</div>`;
-    const tags = nextItem.tags || [];
-    return `<div class="doing-card">
-      <button class="doing-play-btn" onclick="App.activateTask('${nextItem.id}')">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>
-      </button>
-      <div class="doing-meta">
-        <div class="doing-meta-top">
-          <span class="doing-next-label">next</span>
-          ${tags.slice(0,1).map(t => `<span class="tag-pill tag-${t}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
-        </div>
-        <div class="doing-stub-title">${esc(nextItem.title)}</div>
-      </div>
-    </div>`;
+    const item = Data.findItem(dragId);
+    if (!item || item.type === 'project' || item.status === 'doing') return;
+    // Bump any existing doing task back to next
+    state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; });
+    item.status = 'doing';
+    Data.save();
+    _renderFocusRow();
+    renderBoard();
+  }
+
+  function removeFromDoing(id) {
+    const item = Data.findItem(id);
+    if (!item) return;
+    if (timerTask && timerTask.id === id) {
+      clearInterval(timerInterval);
+      clearInterval(timerElapsedInterval);
+      timerTask = null;
+      timerRunning = false;
+      timerSecsRemaining = 0;
+      _renderTimerTrack();
+    }
+    item.status = 'next';
+    Data.save();
+    _renderFocusRow();
+    renderBoard();
+  }
+
+  function markDoingDone(id) {
+    const item = Data.findItem(id);
+    if (!item) return;
+    if (timerTask && timerTask.id === id) {
+      clearInterval(timerInterval);
+      clearInterval(timerElapsedInterval);
+      timerTask = null;
+      timerRunning = false;
+      timerSecsRemaining = 0;
+      _renderTimerTrack();
+    }
+    item.status = 'done';
+    Data.save();
+    _renderFocusRow();
+    renderBoard();
   }
 
   // ── Timer track ──
@@ -589,6 +663,25 @@ const App = (() => {
       const w = seg.kind === 'break' ? 'tl-brk' : `tseg-${seg.m}`;
       return `<div class="tl-seg ${w}${i === timerSegIdx ? ' active' : ''}">${seg.kind !== 'break' ? seg.label : ''}</div>`;
     }).join('');
+    // Boundary state banner (shown when a segment just finished and user must start the next)
+    let boundaryBanner = '';
+    if (timerAtBoundary && timerTask) {
+      const nextSeg = TIMER_SEQ[timerSegIdx];
+      if (nextSeg.kind === 'break') {
+        // Calm: work just ended — gentle nudge toward a break
+        boundaryBanner = `<div class="timer-boundary calm">
+          <span class="timer-boundary-msg">✓ Focus block done. Take five — you earned it.</span>
+          <button class="timer-boundary-btn" onclick="App.startNextSegment()">START ${nextSeg.m}-MIN BREAK</button>
+        </div>`;
+      } else {
+        // Pushy: break just ended — firm call back to work
+        boundaryBanner = `<div class="timer-boundary pushy">
+          <span class="timer-boundary-msg">Break's over. Time to get back to it.</span>
+          <button class="timer-boundary-btn" onclick="App.startNextSegment()">START ${nextSeg.m}-MIN WORK ›</button>
+        </div>`;
+      }
+    }
+
     track.innerHTML = `
       <div class="timer-segments">
         ${segs}
@@ -601,7 +694,8 @@ const App = (() => {
           <span class="timer-loops-lbl">loops</span>
         </div>
       </div>
-      <div class="timer-labels">${labels}<div style="width:56px"></div></div>`;
+      <div class="timer-labels">${labels}<div style="width:56px"></div></div>
+      ${boundaryBanner}`;
   }
 
   // ── Timer logic ──
@@ -626,13 +720,27 @@ const App = (() => {
     }
   }
 
+  function startTask(id) {
+    const item = Data.findItem(id);
+    if (!item || item.type === 'project') return;
+    const state = Data.get();
+    if (item.status !== 'doing') {
+      // Bump any existing doing task back to next
+      state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; });
+      item.status = 'doing';
+      Data.save();
+    }
+    activateTask(id);
+  }
+
   function activateTask(id) {
     const item = Data.findItem(id); if (!item) return;
-    if (timerTask && timerTask.id === id) { _startTimer(); return; }
+    if (timerTask && timerTask.id === id) { timerAtBoundary = false; _startTimer(); return; }
     clearInterval(timerInterval); clearInterval(timerElapsedInterval);
     timerTask = { ...item, _elapsed: 0 };
     timerSegIdx = 0;
     timerSecsRemaining = TIMER_SEQ[0].m * 60;
+    timerAtBoundary = false;
     timerRunning = true;
     _startTimer();
     _renderFocusRow(); _renderTimerTrack(); renderBoard();
@@ -641,15 +749,21 @@ const App = (() => {
   function _startTimer() {
     clearInterval(timerInterval);
     timerRunning = true;
+    timerAtBoundary = false;
     timerInterval = setInterval(() => {
       if (timerSecsRemaining > 0) {
         timerSecsRemaining--;
         _renderClock();
         _updateSegFill();
       } else {
-        const nextIdx = Math.min(timerSegIdx + 1, TIMER_SEQ.length - 1);
-        timerSegIdx = nextIdx;
-        timerSecsRemaining = TIMER_SEQ[nextIdx].m * 60;
+        // Segment complete — stop and wait for user to start the next one
+        clearInterval(timerInterval);
+        clearInterval(timerElapsedInterval);
+        timerRunning = false;
+        timerAtBoundary = true;
+        // Advance index to the next segment (loop back to 0 at the end)
+        timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
+        timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
         _playChime();
         _renderTimerTrack(); _renderFocusRow();
       }
@@ -674,8 +788,16 @@ const App = (() => {
 
   function _timerJump(idx) {
     timerSegIdx = idx; timerSecsRemaining = TIMER_SEQ[idx].m * 60;
+    timerAtBoundary = false;
     if (timerTask && timerRunning) _startTimer();
     _renderTimerTrack(); _renderClock();
+  }
+
+  function startNextSegment() {
+    if (!timerTask) return;
+    timerAtBoundary = false;
+    _startTimer();
+    _renderTimerTrack(); _renderFocusRow();
   }
 
   function _updateSegFill() {
@@ -688,14 +810,19 @@ const App = (() => {
   function _playChime() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [220,440,660,880].forEach((freq, i) => {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = 'sine'; osc.frequency.setValueAtTime(freq, ctx.currentTime);
-        gain.gain.setValueAtTime(0.16/(i+1), ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 3);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 3);
-      });
+      const chimeDur = 1.5;  // seconds each chime fades over
+      const chimeGap = 2.0;  // seconds between chime starts
+      for (let rep = 0; rep < 3; rep++) {
+        const t = ctx.currentTime + rep * chimeGap;
+        [220, 440, 660, 880].forEach((freq, i) => {
+          const osc = ctx.createOscillator(); const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.type = 'sine'; osc.frequency.setValueAtTime(freq, t);
+          gain.gain.setValueAtTime(0.16 / (i + 1), t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + chimeDur);
+          osc.start(t); osc.stop(t + chimeDur);
+        });
+      }
     } catch(e) {}
   }
 
@@ -1144,8 +1271,10 @@ const App = (() => {
     openDetail, openNewModal, toggleFilter, clearFilters,
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem,
-    activateTask, timerTogglePlay, _timerJump,
+    startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
+    _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
+    removeFromDoing, markDoingDone,
     _closeDetail, _saveDetail, _setBlocked, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleSubtask, _promoteSubtask, _addSubtask, _removeSubtask,
