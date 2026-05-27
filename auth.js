@@ -7,7 +7,7 @@
 // Configuration — fill in your Supabase project values
 // ─────────────────────────────────────────────
 const SUPABASE_URL      = 'https://copzqbnjoakvcrvmedev.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_TY5kq56dLCyx963UGdQkpw_DyePssyd';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNvcHpxYm5qb2FrdmNydm1lZGV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NzYzNTAsImV4cCI6MjA5NTI1MjM1MH0._2TOsZiSQtuC_neDFOjxZNbR7_lkKw9baxeKTGN1Amo';
 
 const Auth = (() => {
   let _client      = null;
