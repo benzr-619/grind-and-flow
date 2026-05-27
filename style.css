@@ -830,7 +830,8 @@ input, textarea, select { font: inherit; color: inherit; }
   color: var(--sage-deep); background: var(--card); white-space: nowrap; flex-shrink: 0; transition: all 120ms;
 }
 .st-promote:hover { background: var(--sage); color: var(--ink); border-color: var(--sage-deep); }
-.st-promote.promoted { border-color: var(--line-md); color: var(--muted); cursor: default; }
+.st-promote.promoted { border-color: var(--line-md); color: var(--muted); cursor: pointer; }
+.st-promote.promoted:hover { border-color: var(--amber); color: var(--amber); background: var(--amber-pale); }
 .st-del { color: var(--muted); font-size: 12px; padding: 0 2px; flex-shrink: 0; }
 .st-del:hover { color: var(--red); }
 .st-placeholder { height: 34px; border: 1.5px dashed var(--sage); border-radius: var(--r-xs); background: rgba(127,168,136,0.08); }
