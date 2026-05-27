@@ -38,6 +38,8 @@ function _saveTags(tags) {
 }
 
 const App = (() => {
+  let _initialized = false;  // guarded by auth.js — prevents double-init on token refresh
+
   let view = 'tasks';
   let archiveOpen = false;
   let searchQuery = '';
@@ -77,12 +79,13 @@ const App = (() => {
       // Seed tags array
       if (!item.tags) { item.tags = []; dirty = true; }
     });
-    if (dirty) Data.save();
+    if (dirty) Data.syncAll(); // push any migrated status/tag fixes to Supabase
   }
 
   // ── Init ──
-  function init() {
-    Data.load();
+  async function init() {
+    _initialized = true;
+    await Data.load();   // async: fetches from Supabase
     _migrateData();
     _updateTopbarDate();
     setInterval(_updateTopbarDate, 60000);
@@ -424,7 +427,7 @@ const App = (() => {
     const proj = Data.findProject(projId); if (!proj) return;
     proj.subtasks = proj.subtasks || [];
     proj.subtasks.push({ id: 'st' + Date.now(), title, done: false, promoted: false, loc: 'backlog' });
-    Data.save(); renderBoard();
+    Data.upsertProject(proj); renderBoard();
   }
 
   // ── Archive ──
@@ -602,9 +605,9 @@ const App = (() => {
     const item = Data.findItem(dragId);
     if (!item || item.type === 'project' || item.status === 'doing') return;
     // Bump any existing doing task back to next
-    state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; });
+    state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; Data.upsertTask(t); });
     item.status = 'doing';
-    Data.save();
+    Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
   }
@@ -621,7 +624,7 @@ const App = (() => {
       _renderTimerTrack();
     }
     item.status = 'next';
-    Data.save();
+    Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
   }
@@ -638,7 +641,7 @@ const App = (() => {
       _renderTimerTrack();
     }
     item.status = 'done';
-    Data.save();
+    Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
   }
@@ -726,9 +729,9 @@ const App = (() => {
     const state = Data.get();
     if (item.status !== 'doing') {
       // Bump any existing doing task back to next
-      state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; });
+      state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; Data.upsertTask(t); });
       item.status = 'doing';
-      Data.save();
+      Data.upsertTask(item);
     }
     activateTask(id);
   }
@@ -867,7 +870,7 @@ const App = (() => {
       } else if (colId !== 'backlog') {
         // Don't clear it — reset happens when re-entering backlog
       }
-      Data.save();
+      item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
     placeholder?.remove(); placeholder = null;
     document.querySelectorAll('.col-body').forEach(c => c.classList.remove('drag-over'));
@@ -902,7 +905,7 @@ const App = (() => {
     if (fromIdx >= 0) {
       const [moved] = proj.subtasks.splice(fromIdx, 1);
       proj.subtasks.splice(newIdx > fromIdx ? newIdx - 1 : newIdx, 0, moved);
-      Data.save();
+      Data.upsertProject(proj);
     }
     stPlaceholder?.remove(); stPlaceholder = null;
     list.innerHTML = proj.subtasks.map(st => _renderSubtaskRow(st, projId)).join('');
@@ -920,7 +923,7 @@ const App = (() => {
   function _toggleSubtask(projId, stId, checked) {
     const proj = Data.findProject(projId); if (!proj) return;
     const st = proj.subtasks.find(s => s.id === stId);
-    if (st) { st.done = checked; Data.save(); }
+    if (st) { st.done = checked; Data.upsertProject(proj); }
     const span = document.getElementById('stspan-' + stId);
     if (span) span.className = 'st-title' + (checked ? ' done' : '');
     renderBoard();
@@ -930,6 +933,7 @@ const App = (() => {
     const st = proj.subtasks.find(s => s.id === stId);
     if (!st || st.promoted) return;
     st.promoted = true; st.loc = 'this-week';
+    Data.upsertProject(proj); // persist the updated promoted flag on the subtask
     Data.upsertTask({ id:'t'+Date.now(), type:'task', title:st.title, status:'this-week',
       parentProject:projId, dueDate:'', scheduledDate:'', notes:'', dateAdded:_today(), blocked:false, tags:[] });
     renderBoard();
@@ -940,7 +944,7 @@ const App = (() => {
     const proj = Data.findProject(projId); if (!proj) return;
     proj.subtasks = proj.subtasks || [];
     const st = { id:'st'+Date.now(), title, done:false, promoted:false, loc:'backlog' };
-    proj.subtasks.push(st); Data.save();
+    proj.subtasks.push(st); Data.upsertProject(proj);
     input.value = '';
     const list = document.getElementById('stlist-' + projId);
     if (list) list.insertAdjacentHTML('beforeend', _buildModalSubtaskRow(st, projId));
@@ -948,7 +952,7 @@ const App = (() => {
   }
   function _removeSubtask(projId, stId) {
     const proj = Data.findProject(projId); if (!proj) return;
-    proj.subtasks = proj.subtasks.filter(s => s.id !== stId); Data.save();
+    proj.subtasks = proj.subtasks.filter(s => s.id !== stId); Data.upsertProject(proj);
     document.getElementById('sti-' + stId)?.remove(); renderBoard();
   }
 
@@ -1060,7 +1064,7 @@ const App = (() => {
     if (item.tags.includes(tag)) item.tags = item.tags.filter(t => t !== tag);
     else item.tags.push(tag);
     btn.classList.toggle('active');
-    Data.save();
+    item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
   }
 
   function _addCustomTag(itemId) {
@@ -1070,7 +1074,7 @@ const App = (() => {
     const allTags = _loadTags();
     if (!allTags.includes(tag)) { allTags.push(tag); _saveTags(allTags); }
     const item = Data.findItem(itemId);
-    if (item) { item.tags = item.tags || []; if (!item.tags.includes(tag)) item.tags.push(tag); Data.save(); }
+    if (item) { item.tags = item.tags || []; if (!item.tags.includes(tag)) item.tags.push(tag); item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item); }
     // Refresh tags row
     const row = document.getElementById('modal-tags-row');
     if (row) {
@@ -1085,7 +1089,7 @@ const App = (() => {
 
   function _setBlocked(id, val) {
     const item = Data.findItem(id);
-    if (item) { item.blocked = val; Data.save(); }
+    if (item) { item.blocked = val; item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item); }
     document.getElementById('bno')?.classList.toggle('active-no', !val);
     document.getElementById('byes')?.classList.toggle('active-yes', val);
     const reasonInput = document.getElementById('d-blocked-reason');
@@ -1097,7 +1101,7 @@ const App = (() => {
     if (item) {
       const old = item.status; item.status = status;
       if (status === 'backlog' && old !== 'backlog') item.backlogEnteredAt = _today();
-      Data.save();
+      item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
     document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('current'));
     btn?.classList.add('current');
@@ -1267,6 +1271,8 @@ const App = (() => {
   }
 
   return {
+    get _initialized() { return _initialized; },
+    set _initialized(v) { _initialized = v; },
     init, switchView, toggleArchive, onSearch,
     openDetail, openNewModal, toggleFilter, clearFilters,
     exportData, importData, onImportFile, dismissBanner,
@@ -1286,4 +1292,5 @@ const App = (() => {
   };
 })();
 
-document.addEventListener('DOMContentLoaded', () => App.init());
+// App.init() is called by auth.js once a valid session is confirmed.
+// Do NOT add a DOMContentLoaded auto-init here — auth.js owns that gate.
