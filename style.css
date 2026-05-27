@@ -3,16 +3,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400;1,8..60,500&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
-  --paper:      #ece8df;
-  --paper-deep: #e4dfd4;
-  --card:       #faf8f3;
-  --card-warm:  #f5f0e6;
+  /* ── Paper tones — warmed to match artboard #ece2cd spec ── */
+  --paper:      #ece2cd;
+  --paper-deep: #dfd8c2;
+  --card:       #fbf7ec;
+  --card-warm:  #f2ebda;
+  /* ── Ink & Steel — aligned to Design.md #2a2c30 / #3a3d42 ── */
   --ink:        #2a2c30;
-  --steel:      #4a4d54;
-  --steel-soft: #6b6e76;
-  --muted:      rgba(42,44,48,0.48);
-  --line:       rgba(42,44,48,0.11);
-  --line-md:    rgba(42,44,48,0.20);
+  --steel:      #3a3d42;
+  --steel-soft: #5a5e64;
+  --muted:      rgba(42,44,48,0.46);
+  /* ── Lines — bumped to match rgba(0,0,0,0.18) card border spec ── */
+  --line:       rgba(42,44,48,0.15);
+  --line-md:    rgba(42,44,48,0.26);
 
   --sage:       #7fa888;
   --sage-deep:  #4e7a58;
@@ -26,15 +29,17 @@
 
   --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-body:    'Source Serif 4', Georgia, serif;
-  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+  --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
 
+  /* ── Radii — angular minimalism: 2px cards, 5px modal max ── */
   --r-xs: 2px;
-  --r-sm: 3px;
-  --r-md: 4px;
-  --r-lg: 8px;
+  --r-sm: 2px;
+  --r-md: 3px;
+  --r-lg: 5px;
 
-  --shadow-card: 0 1px 0 rgba(42,44,48,0.05), 0 1px 3px rgba(42,44,48,0.07);
-  --shadow-lift: 0 2px 8px rgba(42,44,48,0.10), 0 1px 2px rgba(42,44,48,0.06);
+  /* ── Shadows — sharper, low-spread card-deck feel ── */
+  --shadow-card: 0 1px 3px rgba(42,44,48,0.10), 0 1px 0 rgba(42,44,48,0.06);
+  --shadow-lift: 0 4px 12px rgba(42,44,48,0.14), 0 1px 3px rgba(42,44,48,0.08);
   --shadow-modal: 0 8px 32px rgba(42,44,48,0.18), 0 2px 8px rgba(42,44,48,0.10);
 }
 
@@ -61,7 +66,7 @@ input, textarea, select { font: inherit; color: inherit; }
   padding: 0 24px;
   height: 50px;
   background: var(--paper);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-md);
   position: sticky; top: 0; z-index: 100;
   flex-shrink: 0;
   gap: 0;
@@ -320,7 +325,7 @@ input, textarea, select { font: inherit; color: inherit; }
   border-top: 1px solid var(--line-md); padding-top: 18px; margin-bottom: 16px;
 }
 .board-title {
-  font-family: var(--font-display); font-size: 40px; font-weight: 500;
+  font-family: var(--font-display); font-size: 42px; font-weight: 500;
   letter-spacing: -0.025em; color: var(--ink); line-height: 1;
 }
 .board-actions { display: flex; gap: 10px; align-items: center; }
@@ -352,9 +357,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .col-head {
   display: flex; align-items: baseline; justify-content: space-between;
   padding: 0 2px 8px; margin-bottom: 0;
-  border-bottom: 2px solid var(--line);
+  border-bottom: 1.5px solid var(--line-md);
 }
-.col-head.this-week { border-bottom-color: var(--line-md); }
 
 .col-name {
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
