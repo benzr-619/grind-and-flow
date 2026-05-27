@@ -59,6 +59,10 @@ const App = (() => {
   let timerAtBoundary = false; // true when a segment just ended and the next hasn't started yet
   let timerInterval = null;
   let timerElapsedInterval = null;
+  // Wall-clock references — used to correct for browser background throttling
+  let _timerStartedAt = 0;   // Date.now() when current segment was started/resumed
+  let _timerStartSecs = 0;   // timerSecsRemaining at that moment
+  let _notifPermissionAsked = false; // only prompt once per session
 
   // Clock
   let clockInterval = null;
@@ -97,7 +101,13 @@ const App = (() => {
 
     window.addEventListener('beforeunload', () => Data.saveNow());
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') Data.saveNow();
+      if (document.visibilityState === 'hidden') {
+        Data.saveNow();
+      } else if (timerRunning) {
+        // Tab came back into view — re-sync from wall clock so any time that passed
+        // while the browser throttled setInterval is applied at once
+        _timerTick();
+      }
     });
   }
 
@@ -768,6 +778,7 @@ const App = (() => {
     timerSecsRemaining = TIMER_SEQ[0].m * 60;
     timerAtBoundary = false;
     timerRunning = true;
+    _requestNotifPermission();
     _startTimer();
     _renderFocusRow(); _renderTimerTrack(); renderBoard();
   }
@@ -776,24 +787,10 @@ const App = (() => {
     clearInterval(timerInterval);
     timerRunning = true;
     timerAtBoundary = false;
-    timerInterval = setInterval(() => {
-      if (timerSecsRemaining > 0) {
-        timerSecsRemaining--;
-        _renderClock();
-        _updateSegFill();
-      } else {
-        // Segment complete — stop and wait for user to start the next one
-        clearInterval(timerInterval);
-        clearInterval(timerElapsedInterval);
-        timerRunning = false;
-        timerAtBoundary = true;
-        // Advance index to the next segment (loop back to 0 at the end)
-        timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
-        timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
-        _playChime();
-        _renderTimerTrack(); _renderFocusRow();
-      }
-    }, 1000);
+    // Snapshot wall-clock so background throttling can't cause drift
+    _timerStartedAt = Date.now();
+    _timerStartSecs = timerSecsRemaining;
+    timerInterval = setInterval(_timerTick, 1000);
     clearInterval(timerElapsedInterval);
     timerElapsedInterval = setInterval(() => {
       if (timerTask) {
@@ -802,6 +799,27 @@ const App = (() => {
         if (el) el.innerHTML = `${timerTask._elapsed}<span style="font-size:12px;color:var(--muted);font-style:normal;margin-left:1px">m</span>`;
       }
     }, 60000);
+  }
+
+  function _timerTick() {
+    // Derive remaining time from wall clock — immune to interval throttling in background tabs
+    const wallElapsed = Math.floor((Date.now() - _timerStartedAt) / 1000);
+    timerSecsRemaining = Math.max(0, _timerStartSecs - wallElapsed);
+    if (timerSecsRemaining > 0) {
+      _renderClock();
+      _updateSegFill();
+    } else {
+      // Segment complete — stop and wait for user to start the next one
+      clearInterval(timerInterval);
+      clearInterval(timerElapsedInterval);
+      timerRunning = false;
+      timerAtBoundary = true;
+      // Advance index to the next segment (loop back to 0 at the end)
+      timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
+      timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
+      _fireSegmentNotification();
+      _renderTimerTrack(); _renderFocusRow();
+    }
   }
 
   function timerTogglePlay() {
@@ -833,22 +851,24 @@ const App = (() => {
     fillEl.style.transform = `scaleX(${Math.max(0, 1 - timerSecsRemaining / (seg.m * 60))})`;
   }
 
-  function _playChime() {
+  function _requestNotifPermission() {
+    if (_notifPermissionAsked || !('Notification' in window)) return;
+    _notifPermissionAsked = true;
+    if (Notification.permission === 'default') Notification.requestPermission();
+  }
+
+  function _fireSegmentNotification() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    // timerSegIdx has already advanced — if the next seg is a break, work just finished (calm);
+    // if it's a work seg, the break just finished (pushy)
+    const nextKind = TIMER_SEQ[timerSegIdx].kind;
+    const isBreakNext = nextKind === 'break';
+    const title = 'Grind & Flow';
+    const body  = isBreakNext
+      ? '✓ Focus block done. Take five — you earned it.'
+      : "Break's over. Time to get back to it.";
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const chimeDur = 1.5;  // seconds each chime fades over
-      const chimeGap = 2.0;  // seconds between chime starts
-      for (let rep = 0; rep < 3; rep++) {
-        const t = ctx.currentTime + rep * chimeGap;
-        [220, 440, 660, 880].forEach((freq, i) => {
-          const osc = ctx.createOscillator(); const gain = ctx.createGain();
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.type = 'sine'; osc.frequency.setValueAtTime(freq, t);
-          gain.gain.setValueAtTime(0.16 / (i + 1), t);
-          gain.gain.exponentialRampToValueAtTime(0.001, t + chimeDur);
-          osc.start(t); osc.stop(t + chimeDur);
-        });
-      }
+      new Notification(title, { body, icon: 'icon-192.png' });
     } catch(e) {}
   }
 
