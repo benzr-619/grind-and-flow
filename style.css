@@ -217,31 +217,31 @@ input, textarea, select { font: inherit; color: inherit; }
 /* Calm boundary — work ended, break is next: slow breathing sage pulse */
 .doing-band.now.boundary-calm {
   border-color: var(--sage);
-  animation: pulse-calm 4.2s ease-in-out infinite;
-}
-@keyframes pulse-calm {
-  0%,100% { background: var(--card); box-shadow: 0 0 0 2px rgba(127,168,136,0.14), var(--shadow-card); }
-  50%      { background: rgba(127,168,136,0.12); box-shadow: 0 0 0 6px rgba(127,168,136,0.28), var(--shadow-card); }
-}
-.doing-section:has(.doing-band.boundary-calm) { animation: pulse-calm-section 4.2s ease-in-out infinite; }
-@keyframes pulse-calm-section {
-  0%,100% { background: transparent; }
-  50%      { background: rgba(127,168,136,0.08); }
+  box-shadow: 0 0 0 2px rgba(127,168,136,0.18), var(--shadow-card);
 }
 /* Pushy boundary — break ended, work is next: faster amber pulse */
 .doing-band.now.boundary-pushy {
   border-color: var(--amber);
   box-shadow: 0 0 0 2px rgba(183,111,46,0.22), var(--shadow-card);
-  animation: pulse-pushy 1.3s ease-in-out infinite;
 }
-@keyframes pulse-pushy {
-  0%,100% { background: var(--card); box-shadow: 0 0 0 2px rgba(183,111,46,0.22), var(--shadow-card); }
-  50%      { background: rgba(183,111,46,0.12); box-shadow: 0 0 0 6px rgba(183,111,46,0.42), var(--shadow-card); }
+
+/* ── Full focus-zone pulse (doing row + timer track together) ── */
+.focus-zone {
+  flex-shrink: 0;
 }
-.doing-section:has(.doing-band.boundary-pushy) { animation: pulse-pushy-section 1.3s ease-in-out infinite; }
-@keyframes pulse-pushy-section {
+.focus-zone:has(.doing-band.boundary-calm) {
+  animation: pulse-calm-zone 4.2s ease-in-out infinite;
+}
+@keyframes pulse-calm-zone {
   0%,100% { background: transparent; }
-  50%      { background: rgba(183,111,46,0.09); }
+  50%      { background: rgba(127,168,136,0.10); }
+}
+.focus-zone:has(.doing-band.boundary-pushy) {
+  animation: pulse-pushy-zone 1.3s ease-in-out infinite;
+}
+@keyframes pulse-pushy-zone {
+  0%,100% { background: transparent; }
+  50%      { background: rgba(183,111,46,0.10); }
 }
 .doing-band.doing-drag-over {
   outline: 1.5px dashed var(--sage-deep);
