@@ -45,6 +45,7 @@ const App = (() => {
   let searchQuery = '';
   let openItemId = null;
   let dragId = null, dragEl = null, placeholder = null;
+  let _pendingFade = false;
 
   // Filter state
   let filterTags = [];       // active tag filters
@@ -115,6 +116,7 @@ const App = (() => {
     if (v === 'archive') { toggleArchive(); return; }
     view = v;
     archiveOpen = false;
+    _pendingFade = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById('tab-' + v)?.classList.add('active');
     document.getElementById('tab-archive')?.classList.remove('active');
@@ -123,6 +125,7 @@ const App = (() => {
 
   function toggleArchive() {
     archiveOpen = !archiveOpen;
+    _pendingFade = true;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     if (archiveOpen) document.getElementById('tab-archive')?.classList.add('active');
     else document.getElementById('tab-' + view)?.classList.add('active');
@@ -176,61 +179,71 @@ const App = (() => {
       }
     }
 
-    if (archiveOpen) { _renderArchive(board); return; }
+    if (archiveOpen) {
+      _renderArchive(board);
+    } else {
+      const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
+      const state = Data.get();
+      let items = view === 'projects' ? state.projects : state.tasks;
 
-    const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
-    const state = Data.get();
-    let items = view === 'projects' ? state.projects : state.tasks;
+      // Apply search
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        items = items.filter(i =>
+          i.title.toLowerCase().includes(q) ||
+          (i.notes || '').toLowerCase().includes(q)
+        );
+      }
 
-    // Apply search
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      items = items.filter(i =>
-        i.title.toLowerCase().includes(q) ||
-        (i.notes || '').toLowerCase().includes(q)
-      );
-    }
-
-    // Apply tag filter
-    if (filterTags.length) {
-      items = items.filter(i => {
-        const itags = i.tags || [];
-        return filterTags.some(ft => itags.includes(ft));
-      });
-    }
-
-    // Apply date filter
-    if (filterDate) {
-      items = items.filter(i => i.scheduledDate === filterDate);
-    }
-
-    board.innerHTML = `<div class="columns">${cols.map(col => {
-      let colItems = items.filter(i => i.status === col.id);
-      // Backlog: sort oldest first
-      if (col.id === 'backlog') {
-        colItems = [...colItems].sort((a, b) => {
-          const ad = a.backlogEnteredAt || a.dateAdded || '';
-          const bd = b.backlogEnteredAt || b.dateAdded || '';
-          return ad.localeCompare(bd);
+      // Apply tag filter
+      if (filterTags.length) {
+        items = items.filter(i => {
+          const itags = i.tags || [];
+          return filterTags.some(ft => itags.includes(ft));
         });
       }
-      return `<div class="col-wrap">
-        <div class="col-head${col.id === 'this-week' ? ' this-week' : ''}">
-          <span class="col-name">
-            ${col.label.toUpperCase()} <span class="col-count">${String(colItems.length).padStart(2,'0')}</span>
-          </span>
-          <span class="col-hint">${col.hint}</span>
-        </div>
-        <div class="col-body" data-col="${col.id}"
-          ondragover="App._onDragOver(event,'${col.id}')"
-          ondragleave="App._onDragLeave(event)"
-          ondrop="App._onDrop(event,'${col.id}')">
-          ${colItems.map(i => view === 'projects' ? _renderProjCard(i) : _renderTaskCard(i, col.id)).join('')}
-          ${colItems.length === 0 ? `<div class="col-empty">empty</div>` : ''}
-          ${col.id !== 'done' ? `<button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>` : ''}
-        </div>
-      </div>`;
-    }).join('')}</div>`;
+
+      // Apply date filter
+      if (filterDate) {
+        items = items.filter(i => i.scheduledDate === filterDate);
+      }
+
+      board.innerHTML = `<div class="columns">${cols.map(col => {
+        let colItems = items.filter(i => i.status === col.id);
+        // Backlog: sort oldest first
+        if (col.id === 'backlog') {
+          colItems = [...colItems].sort((a, b) => {
+            const ad = a.backlogEnteredAt || a.dateAdded || '';
+            const bd = b.backlogEnteredAt || b.dateAdded || '';
+            return ad.localeCompare(bd);
+          });
+        }
+        return `<div class="col-wrap">
+          <div class="col-head${col.id === 'this-week' ? ' this-week' : ''}">
+            <span class="col-name">
+              ${col.label.toUpperCase()} <span class="col-count">${String(colItems.length).padStart(2,'0')}</span>
+            </span>
+            <span class="col-hint">${col.hint}</span>
+          </div>
+          <div class="col-body" data-col="${col.id}"
+            ondragover="App._onDragOver(event,'${col.id}')"
+            ondragleave="App._onDragLeave(event)"
+            ondrop="App._onDrop(event,'${col.id}')">
+            ${colItems.map(i => view === 'projects' ? _renderProjCard(i) : _renderTaskCard(i, col.id)).join('')}
+            ${colItems.length === 0 ? `<div class="col-empty">empty</div>` : ''}
+            ${col.id !== 'done' ? `<button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Board crossfade — only fires on explicit tab/view switches
+    if (_pendingFade) {
+      _pendingFade = false;
+      board.classList.remove('board-fade-in');
+      void board.offsetWidth; // force reflow to restart animation
+      board.classList.add('board-fade-in');
+    }
   }
 
   // ── Task card ──
@@ -418,7 +431,18 @@ const App = (() => {
 
   function _toggleProjOpen(id) {
     const item = Data.findProject(id);
-    if (item) { item._open = !item._open; renderBoard(); }
+    if (!item) return;
+    if (item._open) {
+      // Animate collapse before removing from DOM
+      const subtasksEl = document.querySelector(`[data-id="${id}"] .proj-subtasks`);
+      if (subtasksEl) {
+        subtasksEl.classList.add('collapsing');
+        setTimeout(() => { item._open = false; renderBoard(); }, 130);
+        return;
+      }
+    }
+    item._open = !item._open;
+    renderBoard();
   }
 
   function _inlineAddSubtask(projId) {
@@ -935,7 +959,7 @@ const App = (() => {
     st.promoted = true; st.loc = 'this-week';
     Data.upsertProject(proj); // persist the updated promoted flag on the subtask
     Data.upsertTask({ id:'t'+Date.now(), type:'task', title:st.title, status:'this-week',
-      parentProject:projId, dueDate:'', scheduledDate:'', notes:'', dateAdded:_today(), blocked:false, tags:[] });
+      parentProject:projId, dueDate:'', scheduledDate:'', notes:'', dateAdded:_today(), blocked:false, tags:[...(proj.tags||[])] });
     renderBoard();
   }
   function _addSubtask(projId) {
@@ -1226,7 +1250,13 @@ const App = (() => {
       const backlogEnteredAt = status === 'backlog' ? _today() : '';
       Data.upsertTask({ id, type:_newType, title, status, tags, parentProject:parent, dueDate:due, scheduledDate:sched, scheduledTime:schedTime, notes, dateAdded:_today(), backlogEnteredAt, blocked:false });
     }
-    document.getElementById('modal-root').innerHTML = ''; renderBoard();
+    document.getElementById('modal-root').innerHTML = '';
+    renderBoard();
+    // Animate the new card's entrance
+    setTimeout(() => {
+      const el = document.querySelector(`[data-id="${id}"]`);
+      if (el) el.classList.add('card-entering');
+    }, 16);
   }
 
   // ── Confirm modal ──
