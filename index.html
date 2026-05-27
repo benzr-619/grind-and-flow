@@ -16,7 +16,6 @@
   <header class="topbar">
     <div class="topbar-left">
       <div class="wordmark">
-        <img src="Gemini_Generated_Image_2rrvtk2rrvtk2rrv.png" class="logo-img" alt="Grind &amp; Flow" />
         <span class="wordmark-text">Grind <span class="wordmark-amp">&amp;</span> Flow</span>
       </div>
       <span class="topbar-divider">|</span>
@@ -26,16 +25,8 @@
         <button class="tab"        id="tab-archive"  onclick="App.switchView('archive')">Archive</button>
       </nav>
     </div>
-    <div class="topbar-center">
-      <div class="topbar-date" id="topbar-date"></div>
-    </div>
     <div class="topbar-right">
-      <div class="search-wrap">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
-        <input placeholder="search" id="search-input" oninput="App.onSearch(this.value)" />
-        <span class="kbd">⌘K</span>
-      </div>
-      <button class="btn-icon" onclick="App.exportData()" title="Export backup">
+<button class="btn-icon" onclick="App.exportData()" title="Export backup">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
       <button class="btn-icon" onclick="App.importData()" title="Import backup">
@@ -66,6 +57,7 @@
   <main class="board-section">
     <div class="board-head">
       <div class="board-head-left">
+        <div class="topbar-date" id="topbar-date"></div>
         <h1 class="board-title" id="board-title">Tasks</h1>
       </div>
       <div class="board-actions" id="board-actions">

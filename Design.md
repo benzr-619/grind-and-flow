@@ -15,8 +15,12 @@ The interface follows a tactile, minimalist "analog paper meets dark steel" aest
     * *Usage*: Project cards, active workspace panels, modal surfaces, and interactive containers.
 * **Ink (Primary Typography/Icons)**: `#2a2c30` (or `rgb(42, 44, 48)`)
     * *Usage*: High-contrast text, major headings, explicit labels, and main structural iconography.
-* **Steel (Muted Elements/Borders)**: `#3a3d42` (or `rgb(58, 61, 66)`) / `#5a5e64` / `#8a8d92`
-    * *Usage*: Grid division lines, borders, helper indicators, subtext, meta-labels, and placeholder text.
+* **Steel (Muted Elements/Borders)**: `#3a3d42` (or `rgb(58, 61, 66)`) / `#5a5e64`
+    * *Usage*: Grid division lines, borders, helper indicators, subtext, and placeholder text.
+* **Muted Label**: `#8a8d92` (or `rgb(138, 141, 146)`)
+    * *Usage*: Secondary UI labels throughout the focus bar — ELAPSED, NEXT, FOCUS, REMAINING, LOOPS, + COMMIT, the `:00` colon on the clock, and the "commit to fewer things" quip. This is the canonical muted-text color; the CSS approximates it via `rgba(42,44,48,0.46)` which resolves close but is not identical.
+* **Interval Inactive**: `#b8bac0` (or `rgb(184, 186, 192)`)
+    * *Usage*: Inactive/upcoming interval bar segments on the timer track. Distinct from Muted Label — lighter and used only for the unfilled progress track fill.
 * **Sage (Focus & Accent)**: `#7fa888` (or `rgb(127, 168, 136)`)
     * *Usage*: "Flow" status indicators, active timer progress tracks, success markers, and positive progress accents.
 * **Amber (Warning / Blocked State)**: `#b76f2e` (or `rgb(183, 111, 46)`)
@@ -43,7 +47,8 @@ Typography utilizes a distinct juxtaposition of geometric display fonts, hyper-l
     * *Usage*: Abstract callouts, hand-drawn utility nuances, and system state transitions.
 
 ### 2.2 Sizing and Weights Scale
-* **Artboard Title / Large Numerical Timer**: `42px` / `36px` / `32px` — Bold (`700`) or Semi-Bold (`600`) using `'Bricolage Grotesque'` or `'Source Serif 4'`.
+* **Focus Clock Timer**: `34px` — Medium (`500`) using `'Source Serif 4'` upright (not italic). Letter-spacing `-0.01em`, line-height `1`.
+* **Artboard Title / Large Display Numbers**: `42px` / `36px` / `32px` — Bold (`700`) or Semi-Bold (`600`) using `'Bricolage Grotesque'`.
 * **Section Subheaders**: `18px` / `16px` — Regular/Medium weights using `'Bricolage Grotesque'`.
 * **Standard Content / Body**: `14px` / `12px` / `12.5px` — Regular (`400`) weight using `'Source Serif 4'`.
 * **Micro Labels / Technical Badges**: `11px` / `9.5px` / `9px` / `8px` — Constant width using `'JetBrains Mono'`.
@@ -83,7 +88,8 @@ The canvas adheres to an explicit modular grid system that replicates tactile ph
 
 ### 4.4 The Timer Bar & Control Strip
 * **Layout**: Displays an asymmetric linear progress timeline split into sequence loops (`WARM-UP → DEEP LOOP`).
-* **Time Labels**: Rendered in `'Source Serif 4 Italic'` or `'JetBrains Mono'`.
+* **Clock Display**: Rendered in `'Source Serif 4'` upright at `34px / weight 500`. The colon and seconds digits use the Muted Label color (`#8a8d92`); the hours/minutes digits use Ink (`#2a2c30`).
+* **Interval Tick Labels** (`5m`, `10m`, `25m`, `50m`): `'JetBrains Mono'` at `9.5px / weight 500`. Active interval label uses Sage (`#7fa888`); inactive uses Muted Label (`#8a8d92`).
 * **Interactive Markers**: Incremental loop triggers (`5m`, `↳5`, `10m`) mapped to a progress engine using Sage or Amber indicator dots.
 
 ### 4.5 Blocked / Interrupt State Flags
