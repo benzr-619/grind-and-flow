@@ -1,0 +1,23 @@
+id,title,status,due_date,scheduled_date,notes,date_added,blocked,tags,subtasks
+p1,EDBA | COVID Research,active,,,Mike said few weeks for 2025 data,2026-04-10,false,[],[]
+p2,NO WAIT ED,someday,,,,2026-03-15,false,[],[]
+p3,Pebbles/APEX,active,,,,2026-04-01,false,[],"[{""id"": ""st6"", ""title"": ""Sketchout plan"", ""done"": false, ""promoted"": false}, {""id"": ""st7"", ""title"": ""Read IHI pebbles frame"", ""done"": false, ""promoted"": false}]"
+p4,LLM Research Project,on-hold,,,,2026-05-01,true,[],[]
+p5,QA Re-design,up-next,,,,2026-04-20,false,[],[]
+p6,Leadership Development Plan,up-next,2026-06-12,,,2026-05-10,false,[],[]
+p7,PEDS RVP TAT,someday,,,,2026-04-05,false,[],"[{""id"": ""st9"", ""title"": ""Follow-up after Strike"", ""done"": false, ""promoted"": false}, {""id"": ""st10"", ""title"": ""1st meeting agenda"", ""done"": false, ""promoted"": false}]"
+p8,YPS Committee,someday,,,,2026-03-20,false,[],[]
+p9,HS-Trop,on-hold,,,Shared report - no rush from Chris,2026-02-10,true,[],[]
+p10,BBF Exposure,up-next,,,Tell Vjay he can stop?,2026-01-15,true,[],"[{""id"": ""st11"", ""title"": ""Review monthly data"", ""done"": false, ""promoted"": false}]"
+p11,Triage mis-match idea,someday,,,,2026-03-01,false,[],[]
+p12,Anti-fragility,someday,,,,2026-02-20,false,[],[]
+p13,Bronxville/Westchester Outreach,someday,,,,2026-01-10,false,[],"[{""id"": ""st12"", ""title"": ""SDOH Alignment"", ""done"": false, ""promoted"": false}, {""id"": ""st13"", ""title"": ""Bystander CPR"", ""done"": false, ""promoted"": false}]"
+p1779507737869,EDBA | Member Survey,up-next,,,,2026-05-23,false,[],[]
+p1779507835423,Neurology Consult TAT,on-hold,,,,2026-05-23,true,[],[]
+p1779507852929,Marketing,active,,,,2026-05-23,false,[],[]
+p1779507857596,Strategy,active,,,,2026-05-23,false,[],[]
+p1779507863047,Yuna Collab,active,,,,2026-05-23,true,[],[]
+p1779507877583,Leadership Development Plan,active,2026-06-12,,,2026-05-23,false,[],[]
+p1779507882184,Pharma,active,,,,2026-05-23,false,[],[]
+p1779507886263,Innovation,active,,,,2026-05-23,false,[],[]
+p1779507964246,SAEM Ops,someday,,,,2026-05-23,false,[],[]

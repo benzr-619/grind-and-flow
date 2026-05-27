@@ -1,192 +1,390 @@
-// data.js — localStorage persistence for GitHub Pages
+// data.js — Supabase persistence for Grind & Flow
+//
+// Strategy: optimistic updates.
+// Every mutation updates the in-memory _state immediately (so the UI stays
+// instant), then fires a background Supabase call.  app.js call sites that
+// previously called Data.save() now call the appropriate upsert function
+// directly — see the change log at the bottom of this file.
+//
+// One-time migration: on first load for a user with an empty Supabase
+// account, any existing localStorage data is automatically imported.
 
-const STORAGE_KEY = 'gf-data';
-
-const DEFAULT_DATA = {
-  "projects": [
-    {"id":"p1","type":"project","title":"EDBA | COVID Research","status":"active","dueDate":"","scheduledDate":"","notes":"Mike said few weeks for 2025 data","dateAdded":"2026-04-10","subtasks":[],"blocked":false},
-    {"id":"p2","type":"project","title":"NO WAIT ED","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-03-15","subtasks":[],"blocked":false},
-    {"id":"p3","type":"project","title":"Pebbles/APEX","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-04-01","subtasks":[{"id":"st6","title":"Sketchout plan","done":false,"promoted":false},{"id":"st7","title":"Read IHI pebbles frame","done":false,"promoted":false}],"blocked":false},
-    {"id":"p4","type":"project","title":"LLM Research Project","status":"on-hold","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-01","subtasks":[],"blocked":true},
-    {"id":"p5","type":"project","title":"QA Re-design","status":"up-next","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-04-20","subtasks":[],"blocked":false},
-    {"id":"p6","type":"project","title":"Leadership Development Plan","status":"on-deck","dueDate":"2026-06-12","scheduledDate":"","notes":"","dateAdded":"2026-05-10","subtasks":[],"blocked":false},
-    {"id":"p7","type":"project","title":"PEDS RVP TAT","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-04-05","subtasks":[{"id":"st9","title":"Follow-up after Strike","done":false,"promoted":false},{"id":"st10","title":"1st meeting agenda","done":false,"promoted":false}],"blocked":false},
-    {"id":"p8","type":"project","title":"YPS Committee","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-03-20","subtasks":[],"blocked":false},
-    {"id":"p9","type":"project","title":"HS-Trop","status":"on-hold","dueDate":"","scheduledDate":"","notes":"Shared report – no rush from Chris","dateAdded":"2026-02-10","subtasks":[],"blocked":true},
-    {"id":"p10","type":"project","title":"BBF Exposure","status":"on-deck","dueDate":"","scheduledDate":"","notes":"Tell Vjay he can stop?","dateAdded":"2026-01-15","subtasks":[{"id":"st11","title":"Review monthly data","done":false,"promoted":false}],"blocked":true},
-    {"id":"p11","type":"project","title":"Triage mis-match idea","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-03-01","subtasks":[],"blocked":false},
-    {"id":"p12","type":"project","title":"Anti-fragility","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-02-20","subtasks":[],"blocked":false},
-    {"id":"p13","type":"project","title":"Bronxville/Westchester Outreach","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-01-10","subtasks":[{"id":"st12","title":"SDOH Alignment","done":false,"promoted":false},{"id":"st13","title":"Bystander CPR","done":false,"promoted":false}],"blocked":false},
-    {"id":"p1779507737869","type":"project","title":"EDBA | Member Survey","status":"up-next","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507835423","type":"project","title":"Neurology Consult TAT","status":"on-hold","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":true},
-    {"id":"p1779507852929","type":"project","title":"Marketing","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507857596","type":"project","title":"Strategy","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507863047","type":"project","title":"Yuna Collab","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":true},
-    {"id":"p1779507877583","type":"project","title":"Leadership Development Plan","status":"active","dueDate":"2026-06-12","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507882184","type":"project","title":"Pharma","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507886263","type":"project","title":"Innovation","status":"active","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false},
-    {"id":"p1779507964246","type":"project","title":"SAEM Ops","status":"someday","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","subtasks":[],"blocked":false}
-  ],
-  "tasks": [
-    {"id":"t1","type":"task","title":"Build out EDBA research plan","status":"next","parentProject":"p1","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-15","blocked":false},
-    {"id":"t2","type":"task","title":"Build out Pebble Plan","status":"next","parentProject":"p3","dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-18","blocked":false},
-    {"id":"t3","type":"standalone","title":"Spoonfeed subscription","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-03-10","blocked":false},
-    {"id":"t4","type":"standalone","title":"Buy top 5 books","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-04-01","blocked":false},
-    {"id":"t6","type":"standalone","title":"Neonatal Resuscitation","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-04-15","blocked":false},
-    {"id":"t7","type":"standalone","title":"Sodastream Bottles","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-03-05","blocked":false},
-    {"id":"t1779508082996","type":"standalone","title":"Bathroom Wire","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","blocked":false},
-    {"id":"t1779508097669","type":"standalone","title":"Danny Meyer Chat","status":"inbox","parentProject":null,"dueDate":"","scheduledDate":"","notes":"","dateAdded":"2026-05-23","blocked":false}
-  ],
-  "archive": []
-};
+const LEGACY_STORAGE_KEY = 'gf-data'; // read-only — used once for migration
 
 const Data = (() => {
-  let _state = null;
-  let _dirty = false;
+  let _state  = null;
+  let _client = null;  // injected by auth.js via Data.setClient()
 
-  function load() {
+  // ── Client injection ──
+  function setClient(client) { _client = client; }
+
+  // ─────────────────────────────────────────────
+  // Field mappers: JS camelCase  ↔  DB snake_case
+  // ─────────────────────────────────────────────
+
+  function _projToDb(p, uid) {
+    return {
+      id:             p.id,
+      user_id:        uid,
+      type:           p.type           || 'project',
+      title:          p.title,
+      status:         p.status,
+      due_date:       p.dueDate        || null,
+      scheduled_date: p.scheduledDate  || null,
+      scheduled_time: p.scheduledTime  || null,
+      notes:          p.notes          || '',
+      date_added:     p.dateAdded      || null,
+      blocked:        !!p.blocked,
+      blocked_reason: p.blockedReason  || null,
+      tags:           p.tags           || [],
+      subtasks:       p.subtasks       || [],
+    };
+  }
+
+  function _projFromDb(r) {
+    return {
+      id:            r.id,
+      type:          r.type            || 'project',
+      title:         r.title,
+      status:        r.status,
+      dueDate:       r.due_date        || '',
+      scheduledDate: r.scheduled_date  || '',
+      scheduledTime: r.scheduled_time  || '',
+      notes:         r.notes           || '',
+      dateAdded:     r.date_added      || '',
+      blocked:       !!r.blocked,
+      blockedReason: r.blocked_reason  || '',
+      tags:          r.tags            || [],
+      subtasks:      r.subtasks        || [],
+    };
+  }
+
+  function _taskToDb(t, uid) {
+    return {
+      id:                 t.id,
+      user_id:            uid,
+      type:               t.type,
+      title:              t.title,
+      status:             t.status,
+      parent_project:     t.parentProject      || null,
+      due_date:           t.dueDate            || null,
+      scheduled_date:     t.scheduledDate      || null,
+      scheduled_time:     t.scheduledTime      || null,
+      notes:              t.notes              || '',
+      date_added:         t.dateAdded          || null,
+      blocked:            !!t.blocked,
+      blocked_reason:     t.blockedReason      || null,
+      tags:               t.tags               || [],
+      backlog_entered_at: t.backlogEnteredAt   || null,
+    };
+  }
+
+  function _taskFromDb(r) {
+    return {
+      id:               r.id,
+      type:             r.type,
+      title:            r.title,
+      status:           r.status,
+      parentProject:    r.parent_project       || null,
+      dueDate:          r.due_date             || '',
+      scheduledDate:    r.scheduled_date       || '',
+      scheduledTime:    r.scheduled_time       || '',
+      notes:            r.notes                || '',
+      dateAdded:        r.date_added           || '',
+      blocked:          !!r.blocked,
+      blockedReason:    r.blocked_reason       || '',
+      tags:             r.tags                 || [],
+      backlogEnteredAt: r.backlog_entered_at   || '',
+    };
+  }
+
+  function _archToDb(a, uid) {
+    return {
+      id:              a.id,
+      user_id:         uid,
+      type:            a.type,
+      title:           a.title,
+      status:          a.status,
+      original_status: a.originalStatus        || a.status,
+      archived_at:     a.archivedAt            || null,
+      parent_project:  a.parentProject         || null,
+      due_date:        a.dueDate               || null,
+      scheduled_date:  a.scheduledDate         || null,
+      notes:           a.notes                 || '',
+      date_added:      a.dateAdded             || null,
+      blocked:         !!a.blocked,
+      blocked_reason:  a.blockedReason         || null,
+      tags:            a.tags                  || [],
+      subtasks:        a.subtasks              || [],
+    };
+  }
+
+  function _archFromDb(r) {
+    return {
+      id:             r.id,
+      type:           r.type,
+      title:          r.title,
+      status:         r.original_status        || r.status,
+      originalStatus: r.original_status        || '',
+      archivedAt:     r.archived_at            || '',
+      parentProject:  r.parent_project         || null,
+      dueDate:        r.due_date               || '',
+      scheduledDate:  r.scheduled_date         || '',
+      notes:          r.notes                  || '',
+      dateAdded:      r.date_added             || '',
+      blocked:        !!r.blocked,
+      blockedReason:  r.blocked_reason         || '',
+      tags:           r.tags                   || [],
+      subtasks:       r.subtasks               || [],
+    };
+  }
+
+  // ─────────────────────────────────────────────
+  // Auth helper
+  // ─────────────────────────────────────────────
+
+  async function _uid() {
+    const { data: { user } } = await _client.auth.getUser();
+    return user?.id;
+  }
+
+  // ─────────────────────────────────────────────
+  // One-time localStorage → Supabase migration
+  // Runs on first load for any user whose Supabase tables are empty.
+  // ─────────────────────────────────────────────
+
+  async function _migrateFromLocalStorage() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        _state = JSON.parse(raw);
-        if (!_state.archive) _state.archive = [];
-      } else {
-        // First load — seed with real data
-        _state = JSON.parse(JSON.stringify(DEFAULT_DATA));
-        _persist(); // Write to localStorage immediately
-      }
-    } catch(e) {
-      console.warn('localStorage parse error, using defaults', e);
-      _state = JSON.parse(JSON.stringify(DEFAULT_DATA));
+      const uid = await _uid();
+      // Skip if this user already has Supabase data
+      const { data: existing } = await _client
+        .from('projects').select('id').eq('user_id', uid).limit(1);
+      if (existing && existing.length > 0) return;
+
+      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (!raw) return;
+      const ls = JSON.parse(raw);
+      if (!ls?.projects?.length && !ls?.tasks?.length) return;
+
+      console.log('[Data] Migrating localStorage → Supabase…');
+      const ops = [];
+      if (ls.projects?.length)
+        ops.push(_client.from('projects').insert(ls.projects.map(p => _projToDb(p, uid))));
+      if (ls.tasks?.length)
+        ops.push(_client.from('tasks').insert(ls.tasks.map(t => _taskToDb(t, uid))));
+      if (ls.archive?.length)
+        ops.push(_client.from('archive').insert(ls.archive.map(a => _archToDb(a, uid))));
+
+      const results = await Promise.all(ops);
+      results.forEach(({ error }) => {
+        if (error) console.error('[Data] Migration insert error:', error.message);
+      });
+      console.log('[Data] Migration complete.');
+    } catch (e) {
+      console.warn('[Data] localStorage migration skipped:', e.message);
     }
-    _dirty = false;
+  }
+
+  // ─────────────────────────────────────────────
+  // Load — async, called from App.init()
+  // ─────────────────────────────────────────────
+
+  async function load() {
+    if (!_client) {
+      console.error('[Data] load called before setClient()');
+      _state = { projects: [], tasks: [], archive: [] };
+      return _state;
+    }
+    await _migrateFromLocalStorage();
+    try {
+      const uid = await _uid();
+      const [pr, tr, ar] = await Promise.all([
+        _client.from('projects').select('*').eq('user_id', uid),
+        _client.from('tasks').select('*').eq('user_id', uid),
+        _client.from('archive').select('*').eq('user_id', uid),
+      ]);
+      if (pr.error) throw pr.error;
+      if (tr.error) throw tr.error;
+      if (ar.error) console.warn('[Data] archive load error:', ar.error.message);
+      _state = {
+        projects: (pr.data || []).map(_projFromDb),
+        tasks:    (tr.data || []).map(_taskFromDb),
+        archive:  (ar.data || []).map(_archFromDb),
+      };
+    } catch (e) {
+      console.error('[Data] load failed:', e.message);
+      _state = { projects: [], tasks: [], archive: [] };
+    }
     return _state;
   }
 
-  function _persist() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(_state));
-      _dirty = false;
-    } catch(e) {
-      console.error('localStorage write failed', e);
+  // ─────────────────────────────────────────────
+  // Background sync helpers (fire-and-forget)
+  // ─────────────────────────────────────────────
+
+  async function _syncP(item) {
+    if (!_client) return;
+    const { error } = await _client.from('projects').upsert(_projToDb(item, await _uid()));
+    if (error) console.error('[Data] sync project:', error.message);
+  }
+
+  async function _syncT(item) {
+    if (!_client) return;
+    const { error } = await _client.from('tasks').upsert(_taskToDb(item, await _uid()));
+    if (error) console.error('[Data] sync task:', error.message);
+  }
+
+  async function _syncA(item) {
+    if (!_client) return;
+    const { error } = await _client.from('archive').upsert(_archToDb(item, await _uid()));
+    if (error) console.error('[Data] sync archive:', error.message);
+  }
+
+  async function _del(table, id) {
+    if (!_client) return;
+    const { error } = await _client.from(table).delete().eq('id', id);
+    if (error) console.error(`[Data] delete ${table}:`, error.message);
+  }
+
+  // ─────────────────────────────────────────────
+  // Getters
+  // ─────────────────────────────────────────────
+
+  function get()            { return _state; }
+  function getAllItems()    { return [..._state.projects, ..._state.tasks]; }
+  function findItem(id)    { return getAllItems().find(i => i.id === id); }
+  function findProject(id) { return _state.projects.find(p => p.id === id); }
+
+  // ─────────────────────────────────────────────
+  // Mutations — sync _state immediately, sync Supabase in background
+  // ─────────────────────────────────────────────
+
+  function upsertProject(item) {
+    const idx = _state.projects.findIndex(p => p.id === item.id);
+    if (idx >= 0) _state.projects[idx] = item; else _state.projects.push(item);
+    _syncP(item);
+  }
+
+  function upsertTask(item) {
+    const idx = _state.tasks.findIndex(t => t.id === item.id);
+    if (idx >= 0) _state.tasks[idx] = item; else _state.tasks.push(item);
+    _syncT(item);
+  }
+
+  function deleteItem(id) {
+    const item = findItem(id); if (!item) return;
+    // If a promoted subtask is deleted, un-promote it on the parent project
+    if (item.type === 'task' && item.parentProject) {
+      const proj = findProject(item.parentProject);
+      if (proj) {
+        const st = proj.subtasks.find(s => s.title === item.title && s.promoted);
+        if (st) { st.promoted = false; _syncP(proj); }
+      }
     }
+    _state.projects = _state.projects.filter(i => i.id !== id);
+    _state.tasks    = _state.tasks.filter(i => i.id !== id);
+    _del(item.type === 'project' ? 'projects' : 'tasks', id);
   }
 
-  // Debounced auto-save — writes 800ms after last change
-  let _saveTimer = null;
-  function save() {
-    _dirty = true;
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => {
-      _persist();
-      _dirty = false;
-      hideSaveBanner();
-    }, 800);
-    showSaveBanner();
+  function archiveItem(id) {
+    const item = findItem(id); if (!item) return;
+    const archived = {
+      ...item,
+      archivedAt:     new Date().toISOString().split('T')[0],
+      originalStatus: item.status,
+    };
+    _state.archive.push(archived);
+    _state.projects = _state.projects.filter(i => i.id !== id);
+    _state.tasks    = _state.tasks.filter(i => i.id !== id);
+    _syncA(archived);
+    _del(item.type === 'project' ? 'projects' : 'tasks', id);
   }
 
-  // Force immediate save (before export, before unload)
-  function saveNow() {
-    clearTimeout(_saveTimer);
-    _persist();
+  function restoreFromArchive(id) {
+    const item = _state.archive.find(i => i.id === id); if (!item) return;
+    const restored = { ...item };
+    delete restored.archivedAt;
+    delete restored.originalStatus;
+    if (restored.type === 'project') { _state.projects.push(restored); _syncP(restored); }
+    else                             { _state.tasks.push(restored);    _syncT(restored); }
+    _state.archive = _state.archive.filter(i => i.id !== id);
+    _del('archive', id);
   }
 
-  function isDirty() { return _dirty; }
+  function deleteFromArchive(id) {
+    _state.archive = _state.archive.filter(i => i.id !== id);
+    _del('archive', id);
+  }
+
+  // ─────────────────────────────────────────────
+  // syncAll — pushes entire in-memory state to Supabase.
+  // Called by _migrateData() in app.js after fixing legacy status values.
+  // ─────────────────────────────────────────────
+
+  async function syncAll() {
+    if (!_client || !_state) return;
+    const uid = await _uid();
+    await Promise.all([
+      ..._state.projects.map(p => _client.from('projects').upsert(_projToDb(p, uid))),
+      ..._state.tasks.map(t => _client.from('tasks').upsert(_taskToDb(t, uid))),
+    ]);
+  }
+
+  // ─────────────────────────────────────────────
+  // replaceAll (import backup) — updates _state immediately,
+  // wipes + re-inserts in Supabase in the background.
+  // ─────────────────────────────────────────────
+
+  function replaceAll(newState) {
+    _state = newState;
+    if (!_state.archive) _state.archive = [];
+    _replaceAllAsync(newState); // fire-and-forget
+  }
+
+  async function _replaceAllAsync(newState) {
+    if (!_client) return;
+    const uid = await _uid();
+    // Wipe existing rows for this user
+    await Promise.all([
+      _client.from('projects').delete().eq('user_id', uid),
+      _client.from('tasks').delete().eq('user_id', uid),
+      _client.from('archive').delete().eq('user_id', uid),
+    ]);
+    const ops = [];
+    if (newState.projects?.length) ops.push(_client.from('projects').insert(newState.projects.map(p => _projToDb(p, uid))));
+    if (newState.tasks?.length)    ops.push(_client.from('tasks').insert(newState.tasks.map(t => _taskToDb(t, uid))));
+    if (newState.archive?.length)  ops.push(_client.from('archive').insert(newState.archive.map(a => _archToDb(a, uid))));
+    const results = await Promise.all(ops);
+    results.forEach(({ error }) => { if (error) console.error('[Data] replaceAll insert error:', error.message); });
+  }
+
+  // ─────────────────────────────────────────────
+  // Compat shims — save() is now a no-op.
+  // All former call sites in app.js have been updated to call the
+  // appropriate upsert function directly (see app.js change log).
+  // showSaveBanner/hideSaveBanner kept for the export button UI.
+  // ─────────────────────────────────────────────
+
+  function save()    { /* no-op: mutations sync individually via upsert* */ }
+  function saveNow() { /* no-op */ }
+  function isDirty() { return false; }
 
   function showSaveBanner() {
     const b = document.getElementById('save-banner');
     if (b) b.style.display = 'flex';
   }
-
   function hideSaveBanner() {
     const b = document.getElementById('save-banner');
     if (b) b.style.display = 'none';
   }
 
-  function get() { return _state; }
-
-  function getAllItems() {
-    return [..._state.projects, ..._state.tasks];
-  }
-
-  function findItem(id) {
-    return getAllItems().find(i => i.id === id);
-  }
-
-  function findProject(id) {
-    return _state.projects.find(p => p.id === id);
-  }
-
-  function upsertProject(item) {
-    const idx = _state.projects.findIndex(p => p.id === item.id);
-    if (idx >= 0) _state.projects[idx] = item;
-    else _state.projects.push(item);
-    save();
-  }
-
-  function upsertTask(item) {
-    const idx = _state.tasks.findIndex(t => t.id === item.id);
-    if (idx >= 0) _state.tasks[idx] = item;
-    else _state.tasks.push(item);
-    save();
-  }
-
-  function deleteItem(id) {
-    const item = findItem(id);
-    if (!item) return;
-    if (item.type === 'task' && item.parentProject) {
-      const proj = findProject(item.parentProject);
-      if (proj) {
-        const st = proj.subtasks.find(s => s.title === item.title && s.promoted);
-        if (st) st.promoted = false;
-      }
-    }
-    _state.projects = _state.projects.filter(i => i.id !== id);
-    _state.tasks = _state.tasks.filter(i => i.id !== id);
-    save();
-  }
-
-  function archiveItem(id) {
-    const item = findItem(id);
-    if (!item) return;
-    _state.archive.push({
-      ...item,
-      archivedAt: new Date().toISOString().split('T')[0],
-      originalStatus: item.status
-    });
-    _state.projects = _state.projects.filter(i => i.id !== id);
-    _state.tasks = _state.tasks.filter(i => i.id !== id);
-    save();
-  }
-
-  function restoreFromArchive(id) {
-    const item = _state.archive.find(i => i.id === id);
-    if (!item) return;
-    const restored = { ...item };
-    delete restored.archivedAt;
-    delete restored.originalStatus;
-    if (restored.type === 'project') _state.projects.push(restored);
-    else _state.tasks.push(restored);
-    _state.archive = _state.archive.filter(i => i.id !== id);
-    save();
-  }
-
-  function deleteFromArchive(id) {
-    _state.archive = _state.archive.filter(i => i.id !== id);
-    save();
-  }
-
-  function replaceAll(newState) {
-    _state = newState;
-    if (!_state.archive) _state.archive = [];
-    _persist();
-  }
-
   return {
-    load, save, saveNow, isDirty, get,
-    getAllItems, findItem, findProject,
+    setClient,
+    load, get, getAllItems, findItem, findProject,
     upsertProject, upsertTask, deleteItem,
     archiveItem, restoreFromArchive, deleteFromArchive,
-    replaceAll
+    syncAll, replaceAll,
+    save, saveNow, isDirty,
+    showSaveBanner, hideSaveBanner,
   };
 })();

@@ -1019,3 +1019,126 @@ select.modal-input { cursor: pointer; }
   .columns { grid-template-columns: 1fr; }
   .doing-timer-zone { display: none; }
 }
+
+/* ════════════════════════════════════════
+   AUTH OVERLAY
+════════════════════════════════════════ */
+#auth-overlay {
+  position: fixed; inset: 0;
+  background: var(--paper);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+
+.auth-card {
+  background: var(--card);
+  border: 1px solid var(--line-md);
+  width: 380px;
+  padding: 40px 44px;
+  box-shadow: var(--shadow-modal);
+  border-radius: var(--r-sm);
+}
+
+.auth-wordmark {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-align: center;
+  margin-bottom: 36px;
+}
+.auth-amp {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--sage-deep);
+}
+
+/* Tab row — mirrors the topbar .tab pattern */
+.auth-tabs {
+  display: flex;
+  gap: 22px;
+  border-bottom: 1px solid var(--line-md);
+  margin-bottom: 28px;
+}
+.auth-tab {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 4px 0 9px;
+  border-bottom: 1.5px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms;
+}
+.auth-tab:hover  { color: var(--steel); }
+.auth-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* Form fields */
+.auth-field { margin-bottom: 18px; }
+.auth-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.auth-input {
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--line-md);
+  padding: 9px 11px;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  color: var(--ink);
+  outline: none;
+  border-radius: var(--r-xs);
+  transition: border-color 130ms;
+}
+.auth-input:focus { border-color: var(--steel); }
+.auth-input::placeholder { color: var(--muted); }
+
+/* Submit button — full-width ink block */
+.auth-submit {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 16px;
+  background: var(--ink);
+  color: var(--card);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  border-radius: var(--r-xs);
+  transition: opacity 130ms;
+}
+.auth-submit:hover    { opacity: 0.82; }
+.auth-submit:disabled { opacity: 0.45; cursor: default; }
+
+/* Feedback messages */
+.auth-message {
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  line-height: 1.55;
+}
+.auth-message.error { color: var(--red); }
+.auth-message.note  { color: var(--sage-deep); }
+
+/* Logout button in topbar — inherits .btn-icon, just dims it */
+.btn-logout {
+  opacity: 0.5;
+  transition: opacity 130ms;
+}
+.btn-logout:hover { opacity: 1; }
