@@ -133,6 +133,7 @@ input, textarea, select { font: inherit; color: inherit; }
   color: var(--muted); border-radius: var(--r-sm); transition: all 0.12s;
 }
 .btn-icon:hover { background: var(--card); color: var(--ink); }
+.btn-icon:active { transform: scale(0.90); }
 
 /* ════════════════════════════════════════
    SAVE BANNER
@@ -194,6 +195,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .doing-flank-right { border-radius: 0 var(--r-sm) var(--r-sm) 0; border-left: none; }
 .doing-flank-left:hover  { color: var(--steel); background: var(--card-warm); }
 .doing-flank-right:hover { color: var(--sage-deep); background: var(--sage-pale); }
+.doing-flank:active { transform: scale(0.97); }
 
 /* Main task band */
 .doing-band {
@@ -415,6 +417,7 @@ input, textarea, select { font: inherit; color: inherit; }
   transition: opacity 120ms;
 }
 .timer-boundary-btn:hover { opacity: 0.72; }
+.timer-boundary-btn:active { transform: scale(0.97); }
 
 /* Calm — work ended, break is next */
 .timer-boundary.calm .timer-boundary-msg {
@@ -442,6 +445,13 @@ input, textarea, select { font: inherit; color: inherit; }
    BOARD HEADER
 ════════════════════════════════════════ */
 .board-section { flex: 1; padding: 0 24px 80px; }
+
+/* Board view crossfade — triggered by JS on tab switches */
+@keyframes board-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+.board-fade-in { animation: board-fade 140ms ease; }
 .board-head {
   display: flex; align-items: flex-end; justify-content: space-between;
   border-top: 1px solid var(--line-md); padding-top: 18px; margin-bottom: 16px;
@@ -463,8 +473,10 @@ input, textarea, select { font: inherit; color: inherit; }
   transition: all 130ms; white-space: nowrap;
 }
 .btn:hover { background: var(--card-warm); border-color: var(--ink); }
+.btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--ink); color: var(--card); border-color: var(--ink); }
 .btn-primary:hover { background: var(--steel); border-color: var(--steel); }
+.btn-primary:active { transform: scale(0.97); }
 
 /* ════════════════════════════════════════
    COLUMNS
@@ -691,6 +703,15 @@ input, textarea, select { font: inherit; color: inherit; }
   height: 42px; background: rgba(127,168,136,0.08); flex-shrink: 0;
 }
 
+/* Card entrance — applied by JS when a new card is created */
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}
+.card-entering {
+  animation: card-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 /* ════════════════════════════════════════
    PROJECT CARD
 ════════════════════════════════════════ */
@@ -762,6 +783,20 @@ input, textarea, select { font: inherit; color: inherit; }
   padding: 10px 12px 12px 16px;
   display: flex; flex-direction: column; gap: 5px;
   background: var(--card-warm); border-top: 1px solid var(--line);
+  animation: subtask-expand 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top;
+}
+.proj-subtasks.collapsing {
+  animation: subtask-collapse 140ms ease forwards;
+  pointer-events: none;
+}
+@keyframes subtask-expand {
+  from { opacity: 0; transform: scaleY(0.92) translateY(-4px); }
+  to   { opacity: 1; transform: scaleY(1)    translateY(0);    }
+}
+@keyframes subtask-collapse {
+  from { opacity: 1; transform: scaleY(1)    translateY(0);    }
+  to   { opacity: 0; transform: scaleY(0.92) translateY(-4px); }
 }
 .proj-subtasks-head {
   font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.14em;
@@ -859,6 +894,11 @@ input, textarea, select { font: inherit; color: inherit; }
   background: var(--card); border: 1px solid var(--line-md);
   border-radius: var(--r-md); box-shadow: var(--shadow-modal);
   padding: 14px; min-width: 220px;
+  animation: popover-enter 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes popover-enter {
+  from { opacity: 0; transform: scale(0.96) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
 }
 .filter-section-title {
   font-family: var(--font-mono); font-size: 9px; font-weight: 700;
@@ -884,12 +924,22 @@ input, textarea, select { font: inherit; color: inherit; }
   position: fixed; inset: 0; background: rgba(42,44,48,0.30);
   display: flex; align-items: center; justify-content: center;
   z-index: 300; padding: 20px;
+  animation: overlay-fade 180ms ease;
+}
+@keyframes overlay-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .modal {
   background: var(--card); border: 1px solid var(--line-md);
   border-radius: var(--r-lg); padding: 22px;
   width: 500px; max-width: 100%; max-height: 88vh; overflow-y: auto;
   box-shadow: var(--shadow-modal);
+  animation: modal-enter 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-enter {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
 }
 .modal::-webkit-scrollbar { width: 3px; }
 .modal::-webkit-scrollbar-thumb { background: var(--line-md); border-radius: 2px; }
@@ -980,6 +1030,7 @@ select.modal-input { cursor: pointer; }
   border-radius: var(--r-xs); color: var(--steel); cursor: pointer; transition: all 0.12s;
 }
 .btn-close:hover { background: var(--card-warm); color: var(--ink); border-color: var(--ink); }
+.btn-close:active { transform: scale(0.97); }
 .btn-save {
   padding: 7px 14px; font-size: 9.5px; font-family: var(--font-mono);
   letter-spacing: 0.10em; text-transform: uppercase;
@@ -987,6 +1038,7 @@ select.modal-input { cursor: pointer; }
   border-radius: var(--r-xs); cursor: pointer; transition: all 0.12s;
 }
 .btn-save:hover { background: var(--steel); border-color: var(--steel); }
+.btn-save:active { transform: scale(0.97); }
 .btn-danger {
   padding: 7px 12px; font-size: 9.5px; font-family: var(--font-mono);
   letter-spacing: 0.10em; text-transform: uppercase;
