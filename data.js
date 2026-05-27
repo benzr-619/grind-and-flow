@@ -26,6 +26,7 @@ const Data = (() => {
     return {
       id:             p.id,
       user_id:        uid,
+      type:           p.type           || 'project',
       title:          p.title,
       status:         p.status,
       due_date:       p.dueDate        || null,
@@ -153,32 +154,49 @@ const Data = (() => {
   // ─────────────────────────────────────────────
 
   async function _migrateFromLocalStorage() {
-    try {
-      const uid = await _uid();
-      // Skip if this user already has Supabase data
-      const { data: existing } = await _client
-        .from('projects').select('id').eq('user_id', uid).limit(1);
-      if (existing && existing.length > 0) return;
+    // Only attempt if there is legacy data to migrate
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return;
 
-      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (!raw) return;
+    try {
       const ls = JSON.parse(raw);
-      if (!ls?.projects?.length && !ls?.tasks?.length) return;
+      if (!ls?.projects?.length && !ls?.tasks?.length) {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        return;
+      }
+
+      const uid = await _uid();
+      if (!uid) return; // no authenticated user yet — skip silently
+
+      // Skip if this user already has Supabase data.
+      // Guard checks both data AND error: if the query itself fails, bail out
+      // rather than accidentally re-running migration.
+      const { data: existing, error: guardError } = await _client
+        .from('projects').select('id').eq('user_id', uid).limit(1);
+      if (guardError || (existing && existing.length > 0)) return;
 
       console.log('[Data] Migrating localStorage → Supabase…');
       const ops = [];
       if (ls.projects?.length)
-        ops.push(_client.from('projects').insert(ls.projects.map(p => _projToDb(p, uid))));
+        ops.push(_client.from('projects').upsert(ls.projects.map(p => _projToDb(p, uid))));
       if (ls.tasks?.length)
-        ops.push(_client.from('tasks').insert(ls.tasks.map(t => _taskToDb(t, uid))));
+        ops.push(_client.from('tasks').upsert(ls.tasks.map(t => _taskToDb(t, uid))));
       if (ls.archive?.length)
-        ops.push(_client.from('archive').insert(ls.archive.map(a => _archToDb(a, uid))));
+        ops.push(_client.from('archive').upsert(ls.archive.map(a => _archToDb(a, uid))));
 
       const results = await Promise.all(ops);
-      results.forEach(({ error }) => {
-        if (error) console.error('[Data] Migration insert error:', error.message);
+      const hasError = results.some(({ error }) => {
+        if (error) { console.error('[Data] Migration upsert error:', error.message); return true; }
+        return false;
       });
-      console.log('[Data] Migration complete.');
+
+      if (!hasError) {
+        // Remove legacy key so migration never runs again for this browser
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        console.log('[Data] Migration complete — localStorage cleared.');
+      } else {
+        console.warn('[Data] Migration had errors; localStorage preserved for retry.');
+      }
     } catch (e) {
       console.warn('[Data] localStorage migration skipped:', e.message);
     }
