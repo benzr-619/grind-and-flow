@@ -904,7 +904,7 @@ const App = (() => {
 
   function activateTask(id) {
     const item = Data.findItem(id); if (!item) return;
-    if (timerTask && timerTask.id === id) { timerAtBoundary = false; _startTimer(); return; }
+    if (timerTask && timerTask.id === id) { timerAtBoundary = false; _startTimer(); _renderFocusRow(); _renderTimerTrack(); return; }
     clearInterval(timerInterval); clearInterval(timerElapsedInterval);
     timerTask = { ...item, _elapsed: 0 };
     timerSegIdx = 0;
