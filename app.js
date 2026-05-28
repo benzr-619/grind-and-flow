@@ -1253,8 +1253,6 @@ const App = (() => {
     if (item.notes) parts.push('## Notes\n' + item.notes);
     if (item.dueDate) parts.push('**Due date:** ' + item.dueDate);
     if (item.tags && item.tags.length) parts.push('**Tags:** ' + item.tags.join(', '));
-    const deepLink = location.origin + location.pathname + '#' + item.id;
-    parts.push('[Open in Grind & Flow →](' + deepLink + ')');
     return parts.join('\n\n');
   }
 
