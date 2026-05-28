@@ -316,6 +316,29 @@ const Data = (() => {
     _del(item.type === 'project' ? 'projects' : 'tasks', id);
   }
 
+  // archiveItemWithDate — like archiveItem but lets the caller specify archivedAt.
+  // Used by the midnight auto-archive to stamp items with their completion date.
+  function archiveItemWithDate(id, dateStr) {
+    const item = findItem(id); if (!item) return;
+    const archived = {
+      ...item,
+      archivedAt:     dateStr || new Date().toISOString().split('T')[0],
+      originalStatus: item.status,
+    };
+    _state.archive.push(archived);
+    _state.projects = _state.projects.filter(i => i.id !== id);
+    _state.tasks    = _state.tasks.filter(i => i.id !== id);
+    _syncA(archived);
+    _del(item.type === 'project' ? 'projects' : 'tasks', id);
+  }
+
+  // clearArchive — permanently deletes all items from the archive.
+  function clearArchive() {
+    const ids = _state.archive.map(i => i.id);
+    _state.archive = [];
+    ids.forEach(id => _del('archive', id));
+  }
+
   function restoreFromArchive(id) {
     const item = _state.archive.find(i => i.id === id); if (!item) return;
     const restored = { ...item };
@@ -398,7 +421,7 @@ const Data = (() => {
     setClient,
     load, get, getAllItems, findItem, findProject,
     upsertProject, upsertTask, deleteItem,
-    archiveItem, restoreFromArchive, deleteFromArchive,
+    archiveItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive, clearArchive,
     syncAll, replaceAll,
     save, saveNow, isDirty,
     showSaveBanner, hideSaveBanner,

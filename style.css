@@ -856,26 +856,58 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ════════════════════════════════════════
    ARCHIVE
 ════════════════════════════════════════ */
-.archive-section { display: grid; gap: 12px; padding: 4px 0; }
-.archive-group { display: grid; gap: 7px; }
+.archive-section { display: grid; gap: 24px; padding: 4px 0; }
+.archive-group { display: grid; gap: 0; }
+
+/* Section header: TODAY / THIS WEEK / LAST WEEK / EARLIER */
 .archive-group-head {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--muted);
-  display: flex; justify-content: space-between;
-  padding: 3px 2px 6px; border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 2px 8px; border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
 }
+
+/* Archive row: dot · title · [tag chip] [date] · [hover actions] */
 .archive-row {
   background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm);
-  padding: 8px 12px; display: flex; align-items: center; gap: 12px;
-  box-shadow: var(--shadow-card);
+  padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+  box-shadow: var(--shadow-card); margin-bottom: 6px; overflow: hidden;
 }
-.archive-dot { width: 6px; height: 6px; background: var(--steel-soft); border-radius: 99px; flex-shrink: 0; }
-.archive-row.is-project .archive-dot { background: var(--ink); }
+.archive-row:last-child { margin-bottom: 0; }
+
+/* Dot — colour driven by the task's first tag */
+.archive-dot { width: 7px; height: 7px; background: var(--steel-soft); border-radius: 99px; flex-shrink: 0; }
+.archive-row.is-project .archive-dot           { background: var(--ink); }
+.archive-row.tag-work .archive-dot             { background: var(--ink); }
+.archive-row.tag-personal .archive-dot         { background: var(--sage-deep); }
+.archive-row.tag-school .archive-dot           { background: var(--teal); }
+.archive-row.tag-learn .archive-dot            { background: var(--teal); }
+.archive-row.tag-custom .archive-dot           { background: var(--amber); }
+.archive-row.tag-admin .archive-dot            { background: var(--amber); }
+
+/* Title — no strikethrough; occupies remaining space */
 .archive-name {
   font-family: var(--font-display); font-size: 13.5px; color: var(--ink); flex: 1;
-  text-decoration: line-through; text-decoration-color: var(--line-md);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.archive-date { font-family: var(--font-mono); font-size: 9.5px; color: var(--muted); letter-spacing: 0.05em; }
+
+/* Right-side meta: tag chip + date label */
+.archive-row-meta {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.arch-tag {
+  font-size: 8px !important; padding: 2px 6px !important;
+  letter-spacing: 0.09em; line-height: 1.4;
+}
+.archive-date {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--muted);
+  letter-spacing: 0.05em; white-space: nowrap; min-width: 38px; text-align: right;
+}
+
+/* Restore / delete — hidden until row is hovered */
+.archive-actions { display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 0.12s; flex-shrink: 0; }
+.archive-row:hover .archive-actions { opacity: 1; }
 .archive-restore {
   font-size: 9.5px; padding: 3px 7px;
   font-family: var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
@@ -883,9 +915,17 @@ input, textarea, select { font: inherit; color: inherit; }
   background: transparent; color: var(--steel);
 }
 .archive-restore:hover { background: var(--card-warm); color: var(--ink); border-color: var(--ink); }
-.archive-del { color: var(--muted); font-size: 12px; padding: 0 2px; }
+.archive-del { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .archive-del:hover { color: var(--red); }
 .archive-empty { padding: 40px 0; text-align: center; font-family: var(--font-body); font-style: italic; font-size: 13px; color: var(--muted); }
+
+/* Clear Archive button in board-actions */
+.btn-archive-clear {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase;
+  padding: 5px 13px; border: 1px solid var(--line-md); border-radius: var(--r-xs);
+  background: transparent; color: var(--steel);
+}
+.btn-archive-clear:hover { border-color: var(--red); color: var(--red); background: var(--red-pale); }
 
 /* ════════════════════════════════════════
    FILTER DROPDOWN

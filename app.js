@@ -29,6 +29,10 @@ const TIMER_SEQ = [
 
 // ── Default + user-defined tags stored in localStorage ──
 const TAG_STORAGE_KEY = 'gf-tags';
+// ── Completion-date map stored in localStorage ──
+// Maps taskId → YYYY-MM-DD string of when that task was marked done.
+// This lets the midnight auto-archive know which "done" tasks belong to a previous day.
+const COMPLETION_DATES_KEY = 'gf-completion-dates';
 function _loadTags() {
   try { return JSON.parse(localStorage.getItem(TAG_STORAGE_KEY)) || ['work','personal','school']; }
   catch { return ['work','personal','school']; }
@@ -87,16 +91,63 @@ const App = (() => {
     if (dirty) Data.syncAll(); // push any migrated status/tag fixes to Supabase
   }
 
+  // ── Completion-date helpers ──
+  function _loadCompletionDates() {
+    try { return JSON.parse(localStorage.getItem(COMPLETION_DATES_KEY)) || {}; }
+    catch { return {}; }
+  }
+  function _saveCompletionDate(id) {
+    const map = _loadCompletionDates();
+    map[id] = _today();
+    localStorage.setItem(COMPLETION_DATES_KEY, JSON.stringify(map));
+  }
+  function _clearCompletionDate(id) {
+    const map = _loadCompletionDates();
+    delete map[id];
+    localStorage.setItem(COMPLETION_DATES_KEY, JSON.stringify(map));
+  }
+
+  // ── Midnight auto-archive ──
+  // Scans all tasks with status "done". Any task whose completion date is before
+  // today gets archived and removed from the done column.
+  function _autoArchiveStaleDoneTasks() {
+    const today = _today();
+    const dates = _loadCompletionDates();
+    const state = Data.get();
+    const toArchive = state.tasks.filter(t =>
+      t.status === 'done' && dates[t.id] && dates[t.id] < today
+    );
+    toArchive.forEach(t => {
+      Data.archiveItemWithDate(t.id, dates[t.id]); // stamp with completion date
+      _clearCompletionDate(t.id);
+    });
+    return toArchive.length;
+  }
+
+  // Schedules auto-archive to fire at the next midnight, then re-schedules itself.
+  function _scheduleMidnightArchive() {
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    const ms = midnight - now;
+    setTimeout(() => {
+      _autoArchiveStaleDoneTasks();
+      renderBoard();
+      _scheduleMidnightArchive(); // reschedule for the next midnight
+    }, ms);
+  }
+
   // ── Init ──
   async function init() {
     _initialized = true;
     await Data.load();   // async: fetches from Supabase
     _migrateData();
+    _autoArchiveStaleDoneTasks(); // move any stale done tasks into archive on load
     _updateTopbarDate();
     setInterval(_updateTopbarDate, 60000);
     _renderFocusRow();
     _renderTimerTrack();
     _startClock();
+    _scheduleMidnightArchive(); // auto-archive at midnight without needing a page reload
     renderBoard();
 
     window.addEventListener('beforeunload', () => Data.saveNow());
@@ -185,7 +236,10 @@ const App = (() => {
           <button class="btn" onclick="App.openNewModal()">+ New ${view === 'projects' ? 'Project' : 'Task'}</button>
           <button class="btn btn-primary" id="filter-btn" onclick="App.toggleFilter(event)">Filters${filterTags.length || filterDate ? ' · ' + (filterTags.length + (filterDate ? 1 : 0)) : ''}</button>`;
       } else {
-        actEl.innerHTML = '';
+        const archiveCount = Data.get().archive?.length || 0;
+        actEl.innerHTML = archiveCount > 0
+          ? `<button class="btn btn-archive-clear" onclick="App.confirmClearArchive()">Clear Archive</button>`
+          : '';
       }
     }
 
@@ -465,22 +519,100 @@ const App = (() => {
   }
 
   // ── Archive ──
+
+  // Returns the Monday of the week containing `date`.
+  function _weekStart(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const day = d.getDay(); // 0 = Sunday
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    return d;
+  }
+
   function _renderArchive(board) {
-    const archive = (Data.get().archive || []);
-    if (!archive.length) { board.innerHTML = `<div class="archive-empty">No archived items yet.</div>`; return; }
-    board.innerHTML = `<div class="archive-section">
-      <div class="archive-group">
-        <div class="archive-group-head"><span>Archive</span><span>${archive.length} items</span></div>
-        ${archive.map(item => `
-          <div class="archive-row ${item.type === 'project' ? 'is-project' : ''}">
-            <span class="archive-dot"></span>
-            <span class="archive-name">${esc(item.title)}</span>
-            <span class="archive-date">${item.archivedAt || ''}</span>
-            <button class="archive-restore" onclick="App.restoreItem('${item.id}')">restore</button>
-            <button class="archive-del" onclick="App.deleteArchiveItem('${item.id}')">✕</button>
-          </div>`).join('')}
-      </div>
-    </div>`;
+    const archive = (Data.get().archive || []).slice().reverse(); // newest first
+
+    if (!archive.length) {
+      board.innerHTML = `<div class="archive-empty">Nothing archived yet.</div>`;
+      return;
+    }
+
+    const now = new Date(); now.setHours(0, 0, 0, 0);
+    const yesterdayDate = new Date(now); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterday = yesterdayDate.toISOString().split('T')[0];
+    const thisWeekStart = _weekStart(now);
+    const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+    function _archiveGroup(item) {
+      const d = item.archivedAt;
+      if (!d) return 'earlier';
+      if (d === yesterday) return 'yesterday';
+      const dt = new Date(d + 'T00:00:00');
+      if (dt >= thisWeekStart && d !== yesterday) return 'this-week';
+      if (dt >= lastWeekStart) return 'last-week';
+      return 'earlier';
+    }
+
+    function _archiveDateLabel(item) {
+      const d = item.archivedAt;
+      if (!d) return '';
+      if (d === yesterday) return 'yesterday';
+      const dt = new Date(d + 'T00:00:00');
+      if (dt >= thisWeekStart) return dt.toLocaleDateString('en-US', { weekday: 'short' });
+      return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    const GROUPS = [
+      { key: 'yesterday', label: 'Yesterday'  },
+      { key: 'this-week', label: 'This Week'  },
+      { key: 'last-week', label: 'Last Week'  },
+      { key: 'earlier',   label: 'Earlier'    },
+    ];
+
+    let html = '<div class="archive-section">';
+    GROUPS.forEach(g => {
+      const items = archive.filter(i => _archiveGroup(i) === g.key);
+      if (!items.length) return;
+      html += `
+        <div class="archive-group">
+          <div class="archive-group-head">
+            <span>${g.label.toUpperCase()}</span>
+            <span>${items.length} DONE</span>
+          </div>
+          ${items.map(item => {
+            const tags = item.tags || [];
+            const firstTag = tags[0] || '';
+            const tagClass = firstTag ? ` tag-${firstTag}` : '';
+            const tagPill  = firstTag
+              ? `<span class="tag-pill arch-tag tag-${firstTag}">${firstTag.toUpperCase()}</span>`
+              : '';
+            return `
+              <div class="archive-row${item.type === 'project' ? ' is-project' : ''}${tagClass}">
+                <span class="archive-dot"></span>
+                <span class="archive-name">${esc(item.title)}</span>
+                <div class="archive-row-meta">
+                  ${tagPill}
+                  <span class="archive-date">${_archiveDateLabel(item)}</span>
+                </div>
+                <div class="archive-actions">
+                  <button class="archive-restore" onclick="App.restoreItem('${item.id}')">restore</button>
+                  <button class="archive-del" onclick="App.deleteArchiveItem('${item.id}')">✕</button>
+                </div>
+              </div>`;
+          }).join('')}
+        </div>`;
+    });
+    html += '</div>';
+    board.innerHTML = html;
+  }
+
+  function confirmClearArchive() {
+    _showConfirm(
+      'Clear archive?',
+      'This permanently deletes all archived items and cannot be undone.',
+      'Clear all',
+      () => { Data.clearArchive(); renderBoard(); }
+    );
   }
 
   function restoreItem(id) { Data.restoreFromArchive(id); renderBoard(); }
@@ -674,6 +806,7 @@ const App = (() => {
       _renderTimerTrack();
     }
     item.status = 'done';
+    _saveCompletionDate(item.id);
     Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
@@ -910,9 +1043,10 @@ const App = (() => {
       // Backlog date tracking
       if (colId === 'backlog' && oldStatus !== 'backlog') {
         item.backlogEnteredAt = _today();
-      } else if (colId !== 'backlog') {
-        // Don't clear it — reset happens when re-entering backlog
       }
+      // Completion date tracking
+      if (colId === 'done') _saveCompletionDate(item.id);
+      else _clearCompletionDate(item.id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
     placeholder?.remove(); placeholder = null;
@@ -1219,6 +1353,8 @@ const App = (() => {
     if (item) {
       const old = item.status; item.status = status;
       if (status === 'backlog' && old !== 'backlog') item.backlogEnteredAt = _today();
+      if (status === 'done') _saveCompletionDate(id);
+      else _clearCompletionDate(id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
     document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('current'));
@@ -1422,7 +1558,7 @@ const App = (() => {
     init, switchView, toggleArchive, onSearch,
     openDetail, openNewModal, toggleFilter, clearFilters,
     exportData, importData, onImportFile, dismissBanner,
-    restoreItem, deleteArchiveItem,
+    restoreItem, deleteArchiveItem, confirmClearArchive,
     startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
