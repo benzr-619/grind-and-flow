@@ -1271,7 +1271,7 @@ const App = (() => {
       <div class="modal-section" id="cap-section">
         <label class="modal-label">Capacities</label>
         <div class="fg" style="margin-bottom:8px">
-          <button class="btn-cap-create" onclick="App._openCapacitiesCreate('${item.id}')">Create Capacities page ↗</button>
+          <button class="btn-cap-create" onclick="App._openCapacitiesCreate('${item.id}')">Create Capacities project ↗</button>
         </div>
         <div class="fg">
           <label class="modal-label">Capacities object reference</label>
@@ -1283,7 +1283,7 @@ const App = (() => {
 
   function _openCapacitiesCreate(id) {
     const item = Data.findProject(id); if (!item) return;
-    const url = `capacities://x-callback-url/createNewObject?title=${encodeURIComponent(item.title)}&content=${encodeURIComponent(_buildCapacitiesContent(item))}`;
+    const url = `capacities://x-callback-url/createNewObject?type=Project&title=${encodeURIComponent(item.title)}&content=${encodeURIComponent(_buildCapacitiesContent(item))}`;
     window.open(url);
   }
 
