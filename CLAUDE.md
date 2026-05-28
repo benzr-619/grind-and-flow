@@ -76,6 +76,7 @@ Three Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
 | blockedReason | blocked_reason | text or null |
 | tags | tags | jsonb array of strings |
 | subtasks | subtasks | jsonb array of subtask objects |
+| capacitiesUrl | capacities_url | text or null — deep link to the linked Capacities object |
 | — | user_id | injected by `_projToDb()` |
 
 Subtask object shape: `{ id, title, done, promoted, loc, promotedTaskId? }`
@@ -176,6 +177,7 @@ Do not add new localStorage keys without a strong reason.
 - **Auth**: Email/password sign-in and sign-up. Session persistence across tabs. Cross-tab sign-out via `onAuthStateChange`.
 - **localStorage migration**: One-time automatic migration of legacy data into Supabase on first login for existing users.
 - **PWA**: Installable on desktop and mobile, theme color, app icons.
+- **Capacities integration**: One-way bootstrap integration with Capacities.io. Project detail modal exposes a "Create Capacities page" button (fires an X-callback URL that opens the Capacities desktop app and pre-populates a new object with project title, notes, due date, and tags) and a paste field for the returned deep link. Once linked, a bookmark icon appears on the project card as a persistent shortcut to open the linked Capacities object. The linked state shows an "Open in Capacities" link and a "remove link" action. Stored as `capacitiesUrl` / `capacities_url` on the projects table.
 
 ### Not yet built / known gaps
 - **Timer loop button**: The loop icon is rendered in the timer track but is not wired up — clicking it does nothing.

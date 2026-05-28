@@ -150,6 +150,10 @@ const App = (() => {
     _scheduleMidnightArchive(); // auto-archive at midnight without needing a page reload
     renderBoard();
 
+    // Deep-link: if the URL contains a project/task hash, open its detail modal
+    const hashId = location.hash.slice(1);
+    if (hashId && Data.findItem(hashId)) openDetail(hashId);
+
     window.addEventListener('beforeunload', () => Data.saveNow());
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -426,6 +430,15 @@ const App = (() => {
     const tagPills = tags.map(t => `<span class="tag-pill tag-${t}">${t.toUpperCase()}</span>`).join('');
     const isOpen = !!item._open;
 
+    const capacitiesIcon = item.capacitiesUrl ? `
+      <button class="proj-cap-icon" title="Open in Capacities"
+        onclick="event.stopPropagation();window.open('${esc(item.capacitiesUrl)}')">
+        <svg width="14" height="16" viewBox="0 0 14 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M1 1h12v14l-6-3.5L1 15V1z" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linejoin="round"/>
+          <text x="7" y="10" text-anchor="middle" dominant-baseline="middle" font-family="'JetBrains Mono',monospace" font-size="5.5" font-weight="600" fill="currentColor">c</text>
+        </svg>
+      </button>` : '';
+
     return `<div class="proj-card ${tagClass}${item.status === 'on-hold' ? ' on-hold' : ''}${isOpen ? ' open' : ''}"
       draggable="true" data-id="${item.id}"
       ondragstart="App._onDragStart(event,'${item.id}')"
@@ -457,6 +470,7 @@ const App = (() => {
               <span>${pct}%</span>
             </div>
             <div class="proj-bar"><div class="proj-bar-fill" style="width:${pct}%"></div></div>`}
+        ${capacitiesIcon}
       </div>
       ${isOpen ? `
         <div class="proj-subtasks">
@@ -1225,9 +1239,61 @@ const App = (() => {
   }
 
   // ── Detail modal ──
+  // ── Capacities integration helpers ──
+
+  function _buildCapacitiesContent(item) {
+    const parts = [];
+    if (item.notes) parts.push('## Notes\n' + item.notes);
+    if (item.dueDate) parts.push('**Due date:** ' + item.dueDate);
+    if (item.tags && item.tags.length) parts.push('**Tags:** ' + item.tags.join(', '));
+    const deepLink = location.origin + location.pathname + '#' + item.id;
+    parts.push('[Open in Grind & Flow →](' + deepLink + ')');
+    return parts.join('\n\n');
+  }
+
+  function _buildCapacitiesSection(item) {
+    if (item.capacitiesUrl) {
+      return `
+        <div class="modal-section" id="cap-section">
+          <label class="modal-label">Capacities</label>
+          <div class="cap-linked">
+            <a class="cap-open-link" href="#" onclick="event.preventDefault();window.open('${esc(item.capacitiesUrl)}')">Open in Capacities ↗</a>
+            <button class="cap-remove-link" onclick="App._removeCapacitiesUrl('${item.id}')">× remove link</button>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="modal-section" id="cap-section">
+        <label class="modal-label">Capacities</label>
+        <div class="fg" style="margin-bottom:8px">
+          <button class="btn-cap-create" onclick="App._openCapacitiesCreate('${item.id}')">Create Capacities page ↗</button>
+        </div>
+        <div class="fg">
+          <label class="modal-label">Capacities object reference</label>
+          <input type="text" class="modal-input" id="d-capacities-url"
+            placeholder="Paste capacities:// link here..." />
+        </div>
+      </div>`;
+  }
+
+  function _openCapacitiesCreate(id) {
+    const item = Data.findProject(id); if (!item) return;
+    const url = `capacities://x-callback-url/createNewObject?title=${encodeURIComponent(item.title)}&content=${encodeURIComponent(_buildCapacitiesContent(item))}`;
+    window.open(url);
+  }
+
+  function _removeCapacitiesUrl(id) {
+    const item = Data.findProject(id); if (!item) return;
+    item.capacitiesUrl = null;
+    Data.upsertProject(item);
+    renderBoard();
+    openDetail(id);
+  }
+
   function openDetail(id) {
     const item = Data.findItem(id); if (!item) return;
     openItemId = id;
+    history.replaceState(null, '', '#' + id);
     const isProject = item.type === 'project';
     const cols = isProject ? PROJECT_COLS : TASK_COLS;
     const allTags = _loadTags();
@@ -1247,6 +1313,8 @@ const App = (() => {
       `<button class="modal-tag-pill tag-${t}${itemTags.includes(t) ? ' active' : ''}"
         onclick="App._toggleItemTag('${id}','${t}',this)">${t.toUpperCase()}</button>`
     ).join('');
+
+    const capacitiesHtml = isProject ? _buildCapacitiesSection(item) : '';
 
     const subtaskHtml = isProject ? `
       <div class="modal-section">
@@ -1301,6 +1369,7 @@ const App = (() => {
         </div>
       </div>
       ${subtaskHtml}
+      ${capacitiesHtml}
       <div class="modal-footer">
         <div id="del-zone"><button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button></div>
         <div class="modal-footer-right">
@@ -1376,12 +1445,20 @@ const App = (() => {
     if (tm) item.scheduledTime = tm.value || '';
     if (n) item.notes = n.value || '';
     if (r) item.blockedReason = r.value || '';
-    if (item.type === 'project') Data.upsertProject(item);
-    else Data.upsertTask(item);
+    if (item.type === 'project') {
+      const capInput = document.getElementById('d-capacities-url');
+      if (capInput && capInput.value.trim().startsWith('capacities://')) {
+        item.capacitiesUrl = capInput.value.trim();
+      }
+      Data.upsertProject(item);
+    } else {
+      Data.upsertTask(item);
+    }
   }
 
   function _closeDetail() {
     openItemId = null;
+    history.replaceState(null, '', location.pathname);
     document.getElementById('modal-root').innerHTML = '';
     renderBoard();
   }
@@ -1571,6 +1648,7 @@ const App = (() => {
     _toggleProjOpen, _inlineAddSubtask,
     _toggleItemTag, _addCustomTag,
     _filterToggleTag, _filterSetDate,
+    _openCapacitiesCreate, _removeCapacitiesUrl,
   };
 })();
 

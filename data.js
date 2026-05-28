@@ -37,6 +37,7 @@ const Data = (() => {
       blocked_reason: p.blockedReason  || null,
       tags:           p.tags           || [],
       subtasks:       p.subtasks       || [],
+      capacities_url: p.capacitiesUrl  || null,
     };
   }
 
@@ -55,6 +56,7 @@ const Data = (() => {
       blockedReason: r.blocked_reason  || '',
       tags:          r.tags            || [],
       subtasks:      r.subtasks        || [],
+      capacitiesUrl: r.capacities_url  || null,
     };
   }
 

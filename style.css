@@ -853,6 +853,19 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .add-inline-st button:hover { background: var(--card-warm); color: var(--ink); border-color: var(--ink); }
 
+/* Capacities bookmark icon on project card */
+.proj-progress { position: relative; }
+.proj-cap-icon {
+  position: absolute; bottom: 8px; right: 8px;
+  width: 16px; height: 18px;
+  display: grid; place-items: center;
+  color: var(--ink); opacity: 0.28;
+  padding: 0; background: none; border: none; cursor: pointer;
+  transition: opacity 0.12s;
+}
+.proj-cap-icon:hover { opacity: 1; }
+.proj-cap-icon svg { display: block; }
+
 /* ════════════════════════════════════════
    ARCHIVE
 ════════════════════════════════════════ */
@@ -1098,6 +1111,32 @@ select.modal-input { cursor: pointer; }
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-thumb { background: var(--line-md); border-radius: 2px; }
+
+/* ── Capacities integration — modal section ── */
+.btn-cap-create {
+  padding: 6px 11px; font-size: 9.5px; font-family: var(--font-mono);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  background: var(--paper-deep); border: 1px solid var(--line-md);
+  border-radius: var(--r-xs); color: var(--steel);
+  cursor: pointer; transition: all 0.12s; display: inline-block;
+}
+.btn-cap-create:hover { background: var(--card-warm); color: var(--ink); border-color: var(--line-md); }
+.cap-linked {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 0;
+}
+.cap-open-link {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  color: var(--ink); text-decoration: none;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.cap-open-link:hover { color: var(--steel); }
+.cap-remove-link {
+  font-family: var(--font-body); font-size: 11px; color: var(--muted);
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  transition: color 0.12s; padding: 0; background: none; border: none;
+}
+.cap-remove-link:hover { color: var(--ink); }
 
 /* ════════════════════════════════════════
    RESPONSIVE
