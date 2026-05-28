@@ -22,9 +22,11 @@
   --sage-pale:  #d0e4d4;
   --teal:       #5b9ea8;
   --teal-pale:  #c8dfe3;
-  --amber:      #b76f2e;
-  --amber-pale: #e8cfa8;
-  --red:        #a83232;
+  --amber:        #b76f2e;
+  --amber-pale:   #e8cfa8;
+  --waiting:      #c49a2a;
+  --waiting-pale: #eedfa0;
+  --red:          #a83232;
   --red-pale:   #f0d4d4;
 
   --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
@@ -585,6 +587,14 @@ input, textarea, select { font: inherit; color: inherit; }
   padding: 2px 5px; border-radius: var(--r-xs);
 }
 
+/* WAITING badge */
+.waiting-badge {
+  font-family: var(--font-mono); font-size: 8px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  background: var(--waiting); color: #fff;
+  padding: 2px 5px; border-radius: var(--r-xs);
+}
+
 /* Days-in-backlog */
 .age-counter {
   font-family: var(--font-mono); font-size: 10px;
@@ -605,6 +615,13 @@ input, textarea, select { font: inherit; color: inherit; }
   margin-bottom: 4px;
 }
 .card-blocked-arrow { font-style: normal; opacity: 0.7; }
+
+/* Waiting reason row */
+.card-waiting-reason {
+  font-family: var(--font-body); font-style: italic; font-size: 12px;
+  color: var(--waiting); display: flex; align-items: center; gap: 5px;
+  margin-bottom: 4px;
+}
 
 /* Parent project row */
 .card-project {
@@ -763,6 +780,10 @@ input, textarea, select { font: inherit; color: inherit; }
 .proj-blocked-reason {
   font-family: var(--font-body); font-style: italic; font-size: 11.5px;
   color: var(--amber); display: flex; align-items: center; gap: 4px;
+}
+.proj-waiting-reason {
+  font-family: var(--font-body); font-style: italic; font-size: 11.5px;
+  color: var(--waiting); display: flex; align-items: center; gap: 4px;
 }
 
 .proj-progress {
@@ -1038,8 +1059,9 @@ select.modal-input { cursor: pointer; }
   cursor: pointer; transition: all 0.12s; text-align: center;
 }
 .blocked-opt + .blocked-opt { border-left: 1px solid var(--line-md); }
-.blocked-opt.active-no  { background: rgba(95,138,104,0.12); color: var(--sage-deep); font-weight: 600; }
-.blocked-opt.active-yes { background: rgba(183,111,46,0.14); color: var(--amber); font-weight: 600; }
+.blocked-opt.active-no   { background: rgba(95,138,104,0.12); color: var(--sage-deep); font-weight: 600; }
+.blocked-opt.active-wait { background: rgba(196,154,42,0.14); color: var(--waiting); font-weight: 600; }
+.blocked-opt.active-yes  { background: rgba(183,111,46,0.14); color: var(--amber); font-weight: 600; }
 
 .type-toggle { display: flex; border: 1px solid var(--line-md); border-radius: var(--r-xs); overflow: hidden; }
 .type-opt {

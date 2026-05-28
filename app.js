@@ -424,9 +424,16 @@ const App = (() => {
     const firstTag = tags[0] || '';
     const tagClass = firstTag ? `tag-${firstTag}` : '';
 
-    const blockedBadge = item.blocked ? `<span class="blocked-badge">Blocked</span>` : '';
+    const blockedBadge = item.blocked
+      ? `<span class="blocked-badge">Blocked</span>`
+      : item.waiting
+        ? `<span class="waiting-badge">Waiting</span>`
+        : '';
     const blockedReason = item.blocked && item.blockedReason
-      ? `<div class="proj-blocked-reason"><span>↳</span> ${esc(item.blockedReason)}</div>` : '';
+      ? `<div class="proj-blocked-reason"><span>↳</span> ${esc(item.blockedReason)}</div>`
+      : item.waiting && item.waitingReason
+        ? `<div class="proj-waiting-reason"><span>↳</span> ${esc(item.waitingReason)}</div>`
+        : '';
     const tagPills = tags.map(t => `<span class="tag-pill tag-${t}">${t.toUpperCase()}</span>`).join('');
     const isOpen = !!item._open;
 
@@ -1331,6 +1338,30 @@ const App = (() => {
         </div>
       </div>` : '';
 
+    const blockedSection = isProject
+      ? `<div class="fg"><label class="modal-label">Blocked?</label>
+          <div class="blocked-toggle">
+            <button class="blocked-opt${!item.blocked && !item.waiting ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
+            <button class="blocked-opt${item.waiting ? ' active-wait' : ''}" id="bwait" onclick="App._setBlocked('${id}','waiting')">⏳ Waiting On</button>
+            <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+          </div>
+          <input type="text" class="modal-input" id="d-waiting-reason"
+            placeholder="Waiting on..." value="${esc(item.waitingReason || '')}"
+            style="margin-top:7px;display:${item.waiting ? 'block' : 'none'}" />
+          <input type="text" class="modal-input" id="d-blocked-reason"
+            placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
+            style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
+        </div>`
+      : `<div class="fg"><label class="modal-label">Blocked?</label>
+          <div class="blocked-toggle">
+            <button class="blocked-opt${!item.blocked ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
+            <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+          </div>
+          <input type="text" class="modal-input" id="d-blocked-reason"
+            placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
+            style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
+        </div>`;
+
     _showModal(`
       <div class="modal-title">${esc(item.title)}</div>
       <div class="modal-section">
@@ -1358,15 +1389,7 @@ const App = (() => {
           <input type="date" class="modal-input" id="d-due" value="${item.dueDate || ''}" /></div>
         <div class="fg"><label class="modal-label">Notes</label>
           <textarea class="modal-input" id="d-notes">${esc(item.notes || '')}</textarea></div>
-        <div class="fg"><label class="modal-label">Blocked?</label>
-          <div class="blocked-toggle">
-            <button class="blocked-opt${!item.blocked ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
-            <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
-          </div>
-          <input type="text" class="modal-input" id="d-blocked-reason"
-            placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
-            style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
-        </div>
+        ${blockedSection}
       </div>
       ${subtaskHtml}
       ${capacitiesHtml}
@@ -1410,11 +1433,23 @@ const App = (() => {
 
   function _setBlocked(id, val) {
     const item = Data.findItem(id);
-    if (item) { item.blocked = val; item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item); }
-    document.getElementById('bno')?.classList.toggle('active-no', !val);
-    document.getElementById('byes')?.classList.toggle('active-yes', val);
+    if (item) {
+      item.blocked = (val === true);
+      if (item.type === 'project') {
+        item.waiting     = (val === 'waiting');
+        item.waitingAuto = false; // manually set — mark as non-auto so it stays sticky
+        Data.upsertProject(item);
+      } else {
+        Data.upsertTask(item);
+      }
+    }
+    document.getElementById('bno')?.classList.toggle('active-no',   val === false);
+    document.getElementById('bwait')?.classList.toggle('active-wait', val === 'waiting');
+    document.getElementById('byes')?.classList.toggle('active-yes',  val === true);
+    const waitInput   = document.getElementById('d-waiting-reason');
     const reasonInput = document.getElementById('d-blocked-reason');
-    if (reasonInput) reasonInput.style.display = val ? 'block' : 'none';
+    if (waitInput)   waitInput.style.display   = (val === 'waiting') ? 'block' : 'none';
+    if (reasonInput) reasonInput.style.display = (val === true)      ? 'block' : 'none';
   }
 
   function _moveItem(id, status, btn) {
@@ -1433,18 +1468,20 @@ const App = (() => {
 
   function _saveDetail(id) {
     const item = Data.findItem(id); if (!item) return;
-    const t = document.getElementById('d-title');
-    const d = document.getElementById('d-due');
-    const s = document.getElementById('d-sched');
+    const t  = document.getElementById('d-title');
+    const d  = document.getElementById('d-due');
+    const s  = document.getElementById('d-sched');
     const tm = document.getElementById('d-time');
-    const n = document.getElementById('d-notes');
-    const r = document.getElementById('d-blocked-reason');
+    const n  = document.getElementById('d-notes');
+    const r  = document.getElementById('d-blocked-reason');
+    const wr = document.getElementById('d-waiting-reason');
     if (t && t.value.trim()) item.title = t.value.trim();
-    if (d) item.dueDate = d.value || '';
-    if (s) item.scheduledDate = s.value || '';
+    if (d)  item.dueDate       = d.value  || '';
+    if (s)  item.scheduledDate = s.value  || '';
     if (tm) item.scheduledTime = tm.value || '';
-    if (n) item.notes = n.value || '';
-    if (r) item.blockedReason = r.value || '';
+    if (n)  item.notes         = n.value  || '';
+    if (r)  item.blockedReason  = r.value  || '';
+    if (wr) item.waitingReason  = wr.value || '';
     if (item.type === 'project') {
       const capInput = document.getElementById('d-capacities-url');
       if (capInput && capInput.value.trim().startsWith('capacities://')) {

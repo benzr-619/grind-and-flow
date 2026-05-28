@@ -74,6 +74,9 @@ Three Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
 | dateAdded | date_added | date string |
 | blocked | blocked | boolean |
 | blockedReason | blocked_reason | text or null |
+| waiting | waiting | boolean — true when one or more child tasks are blocked (or manually set) |
+| waitingReason | waiting_reason | text or null |
+| waitingAuto | waiting_auto | boolean — true if the waiting state was set automatically by a blocked child task; false if manually set |
 | tags | tags | jsonb array of strings |
 | subtasks | subtasks | jsonb array of subtask objects |
 | capacitiesUrl | capacities_url | text or null — deep link to the linked Capacities object |
@@ -168,7 +171,7 @@ Do not add new localStorage keys without a strong reason.
 - **Doing zone**: Drag any task from the board into the focus strip. Left flank sends it back to Next; right flank marks it Done. Only one task in Doing at a time — dropping a new one bumps the existing one back to Next.
 - **Focus timer**: Progressive sequence (5m work → 5m break → 10m → 5m → 25m → 5m → 50m → 5m → 50m). Wall-clock drift correction (immune to browser background tab throttling). Pause/resume, segment jump by clicking track. "Calm" boundary state after work ends; "Pushy" boundary state after break ends. Elapsed-minutes counter. Browser notification on segment completion.
 - **Task cards**: Color-coded tag pills, age counter (days in backlog; stale at 7d, old at 14d), scheduled date/day display, blocked badge + reason inline, parent project reference.
-- **Project cards**: Subtask list (inline add, checkbox toggle, drag reorder, progress bar + percentage). Promote subtask to task board as a `this-week` task. Recall a promoted subtask back to the project. Blocked badge + reason. Tags. Collapsed/expanded toggle with animated collapse.
+- **Project cards**: Subtask list (inline add, checkbox toggle, drag reorder, progress bar + percentage). Promote subtask to task board as a `this-week` task. Recall a promoted subtask back to the project. Three-state blocking: Blocked (amber), Waiting (gold `#c49a2a`), or Clear — each with an optional reason line. Waiting auto-sets when a linked task card is blocked and auto-clears when all linked blocked tasks are resolved. Manual waiting is sticky (not auto-cleared). Tags. Collapsed/expanded toggle with animated collapse.
 - **Detail modal**: Edit title, move status, toggle tags, scheduled date/time, due date, notes, blocked state + reason, subtask management (projects), delete with confirmation.
 - **New item modal**: Task or project. Task type toggle (standalone vs. linked to project). Tag selection, status, dates, notes. Subtask pre-population for new projects before saving.
 - **Filters**: By tag (multi-select OR logic) and by scheduled date. Filter count badge on button.

@@ -35,6 +35,9 @@ const Data = (() => {
       date_added:     p.dateAdded      || null,
       blocked:        !!p.blocked,
       blocked_reason: p.blockedReason  || null,
+      waiting:        !!p.waiting,
+      waiting_reason: p.waitingReason  || null,
+      waiting_auto:   !!p.waitingAuto,
       tags:           p.tags           || [],
       subtasks:       p.subtasks       || [],
       capacities_url: p.capacitiesUrl  || null,
@@ -54,6 +57,9 @@ const Data = (() => {
       dateAdded:     r.date_added      || '',
       blocked:       !!r.blocked,
       blockedReason: r.blocked_reason  || '',
+      waiting:       !!r.waiting,
+      waitingReason: r.waiting_reason  || '',
+      waitingAuto:   !!r.waiting_auto,
       tags:          r.tags            || [],
       subtasks:      r.subtasks        || [],
       capacitiesUrl: r.capacities_url  || null,
@@ -287,6 +293,39 @@ const Data = (() => {
     const idx = _state.tasks.findIndex(t => t.id === item.id);
     if (idx >= 0) _state.tasks[idx] = item; else _state.tasks.push(item);
     _syncT(item);
+
+    // Auto-waiting: keep parent project's waiting state in sync with blocked child tasks
+    if (item.parentProject) {
+      const proj = findProject(item.parentProject);
+      if (proj && !proj.blocked) {
+        if (item.blocked) {
+          // Task just blocked — set project to waiting only if it isn't already manually waiting
+          if (!proj.waiting || proj.waitingAuto) {
+            const wasWaiting  = proj.waiting;
+            proj.waiting      = true;
+            proj.waitingAuto  = true;
+            // Only pre-fill reason on the first auto-set (project was clear before)
+            if (!wasWaiting) proj.waitingReason = item.blockedReason || '';
+            const pi = _state.projects.findIndex(p => p.id === proj.id);
+            if (pi >= 0) _state.projects[pi] = proj;
+            _syncP(proj);
+          }
+        } else if (proj.waiting && proj.waitingAuto) {
+          // Task unblocked — auto-clear only if no other child tasks are still blocked
+          const anyStillBlocked = _state.tasks.some(
+            t => t.id !== item.id && t.parentProject === item.parentProject && t.blocked
+          );
+          if (!anyStillBlocked) {
+            proj.waiting      = false;
+            proj.waitingReason = '';
+            proj.waitingAuto  = false;
+            const pi = _state.projects.findIndex(p => p.id === proj.id);
+            if (pi >= 0) _state.projects[pi] = proj;
+            _syncP(proj);
+          }
+        }
+      }
+    }
   }
 
   function deleteItem(id) {
