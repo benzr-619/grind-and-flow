@@ -27,18 +27,42 @@ const TIMER_SEQ = [
   { kind:'work',  m:50, label:'50m' },
 ];
 
-// ── Default + user-defined tags stored in localStorage ──
-const TAG_STORAGE_KEY = 'gf-tags';
 // ── Completion-date map stored in localStorage ──
 // Maps taskId → YYYY-MM-DD string of when that task was marked done.
 // This lets the midnight auto-archive know which "done" tasks belong to a previous day.
 const COMPLETION_DATES_KEY = 'gf-completion-dates';
+
+// ── Tag definitions and color overrides live in Supabase (Data.get().tags) ──
+// Built-in tags are always present; custom tags and any color overrides are
+// loaded from the `tags` table and kept in memory via Data._state.
+const BUILT_IN_TAGS = ['work', 'personal', 'school'];
+
 function _loadTags() {
-  try { return JSON.parse(localStorage.getItem(TAG_STORAGE_KEY)) || ['work','personal','school']; }
-  catch { return ['work','personal','school']; }
+  const customTags = (Data.get()?.tags || [])
+    .filter(t => !BUILT_IN_TAGS.includes(t.name))
+    .map(t => t.name);
+  return [...BUILT_IN_TAGS, ...customTags];
 }
-function _saveTags(tags) {
-  localStorage.setItem(TAG_STORAGE_KEY, JSON.stringify(tags));
+
+function _loadTagColors() {
+  const overrides = {};
+  (Data.get()?.tags || []).forEach(t => {
+    if (t.colorSlot !== null && t.colorSlot !== undefined) {
+      overrides[t.name] = t.colorSlot;
+    }
+  });
+  return overrides;
+}
+// Returns the CSS class(es) for a tag.
+// Manual color overrides take priority; otherwise built-in tags get tag-{name}
+// and custom tags get tag-slot-N from the rotation.
+function _tagClasses(t, allTags) {
+  const overrides = _loadTagColors();
+  if (t in overrides) return `tag-slot-${overrides[t] % 5}`;
+  if (BUILT_IN_TAGS.includes(t)) return `tag-${t}`;
+  const customTags = allTags.filter(x => !BUILT_IN_TAGS.includes(x));
+  const idx = customTags.indexOf(t);
+  return `tag-slot-${idx >= 0 ? idx % 5 : 0}`;
 }
 
 const App = (() => {
@@ -319,7 +343,8 @@ const App = (() => {
     const isDone = colId === 'done';
     const tags   = item.tags || [];
     const firstTag = tags[0] || '';
-    const tagClass = firstTag ? `tag-${firstTag}` : '';
+    const _allTags = _loadTags();
+    const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
 
     // Days in backlog counter (resets when leaving/re-entering backlog)
     let ageHtml = '';
@@ -342,7 +367,7 @@ const App = (() => {
 
     // Tags bottom-left
     const tagPills = tags.map(t =>
-      `<span class="tag-pill tag-${t}">${t.toUpperCase()}</span>`
+      `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
     ).join('');
 
     // Subtask count
@@ -422,7 +447,8 @@ const App = (() => {
     const pct = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
     const tags = item.tags || [];
     const firstTag = tags[0] || '';
-    const tagClass = firstTag ? `tag-${firstTag}` : '';
+    const _allTags = _loadTags();
+    const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
 
     const blockedBadge = item.blocked
       ? `<span class="blocked-badge">Blocked</span>`
@@ -434,7 +460,7 @@ const App = (() => {
       : item.waiting && item.waitingReason
         ? `<div class="proj-waiting-reason"><span>↳</span> ${esc(item.waitingReason)}</div>`
         : '';
-    const tagPills = tags.map(t => `<span class="tag-pill tag-${t}">${t.toUpperCase()}</span>`).join('');
+    const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`).join('');
     const isOpen = !!item._open;
 
     const capacitiesIcon = item.capacitiesUrl ? `
@@ -603,9 +629,10 @@ const App = (() => {
           ${items.map(item => {
             const tags = item.tags || [];
             const firstTag = tags[0] || '';
-            const tagClass = firstTag ? ` tag-${firstTag}` : '';
+            const _archAllTags = _loadTags();
+            const tagClass = firstTag ? ` ${_tagClasses(firstTag, _archAllTags)}` : '';
             const tagPill  = firstTag
-              ? `<span class="tag-pill arch-tag tag-${firstTag}">${firstTag.toUpperCase()}</span>`
+              ? `<span class="tag-pill arch-tag ${_tagClasses(firstTag, _archAllTags)}">${firstTag.toUpperCase()}</span>`
               : '';
             return `
               <div class="archive-row${item.type === 'project' ? ' is-project' : ''}${tagClass}">
@@ -739,7 +766,7 @@ const App = (() => {
             <div class="doing-identity">
               <div class="doing-meta-top">
                 ${isActive ? `<span class="tag-pill" style="font-size:8px;padding:1px 5px;background:var(--sage-pale);border-color:var(--sage-deep);color:var(--sage-deep)">● NOW</span>` : ''}
-                ${tags.slice(0,1).map(t => `<span class="tag-pill tag-${t}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
+                ${tags.slice(0,1).map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
               </div>
               <div class="doing-task-title">${esc(task.title)}</div>
             </div>
@@ -1315,8 +1342,9 @@ const App = (() => {
       : '';
 
     const tagPillsHtml = allTags.map(t =>
-      `<button class="modal-tag-pill tag-${t}${itemTags.includes(t) ? ' active' : ''}"
-        onclick="App._toggleItemTag('${id}','${t}',this)">${t.toUpperCase()}</button>`
+      `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
+        onclick="App._toggleItemTag('${id}','${t}',this)"
+        oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
     ).join('');
 
     const capacitiesHtml = isProject ? _buildCapacitiesSection(item) : '';
@@ -1414,19 +1442,179 @@ const App = (() => {
     const tag = input?.value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
     if (!tag) return;
     const allTags = _loadTags();
-    if (!allTags.includes(tag)) { allTags.push(tag); _saveTags(allTags); }
+    if (!allTags.includes(tag)) { Data.upsertTag(tag, null); }
     const item = Data.findItem(itemId);
     if (item) { item.tags = item.tags || []; if (!item.tags.includes(tag)) item.tags.push(tag); item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item); }
     // Refresh tags row
     const row = document.getElementById('modal-tags-row');
     if (row) {
+      const refreshedTags = _loadTags();
       const itemTags = item?.tags || [];
-      row.innerHTML = _loadTags().map(t =>
-        `<button class="modal-tag-pill tag-${t}${itemTags.includes(t) ? ' active' : ''}"
-          onclick="App._toggleItemTag('${itemId}','${t}',this)">${t.toUpperCase()}</button>`
+      row.innerHTML = refreshedTags.map(t =>
+        `<button class="modal-tag-pill ${_tagClasses(t, refreshedTags)}${itemTags.includes(t) ? ' active' : ''}"
+          onclick="App._toggleItemTag('${itemId}','${t}',this)"
+          oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
       ).join('');
     }
     if (input) input.value = '';
+  }
+
+  // Adds a new custom tag from the new-item modal (no existing item — just saves to
+  // localStorage and appends an active pill to the row so _saveNew() picks it up).
+  function _addNewTag() {
+    const input = document.getElementById('new-tag-input');
+    const tag = input?.value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+    if (!tag) return;
+    const allTags = _loadTags();
+    if (!allTags.includes(tag)) { Data.upsertTag(tag, null); }
+    const row = document.getElementById('new-modal-tags-row');
+    if (row && !row.querySelector(`[data-tag="${tag}"]`)) {
+      const freshTags = _loadTags();
+      const btn = document.createElement('button');
+      btn.className = `modal-tag-pill ${_tagClasses(tag, freshTags)} active`;
+      btn.dataset.tag = tag;
+      btn.onclick = function() { this.classList.toggle('active'); };
+      btn.textContent = tag.toUpperCase();
+      row.appendChild(btn);
+    } else if (row) {
+      // Tag already in row — just make it active
+      const existing = row.querySelector(`[data-tag="${tag}"]`);
+      if (existing) existing.classList.add('active');
+    }
+    if (input) input.value = '';
+  }
+
+  // ── Tag context menu (right-click on any modal pill) ──
+
+  const SLOT_HEX = ['#7a5298','#9c5570','#a83232','#4e7a58','#5b9ea8'];
+
+  function _dismissTagMenu() {
+    const m = document.getElementById('tag-menu');
+    if (m) m.remove();
+  }
+
+  function _showTagMenu(tagName, el) {
+    _dismissTagMenu();
+    const allTags = _loadTags();
+    const overrides = _loadTagColors();
+    // Determine currently selected slot
+    let currentSlot;
+    if (tagName in overrides) {
+      currentSlot = overrides[tagName] % 5;
+    } else if (BUILT_IN_TAGS.includes(tagName)) {
+      currentSlot = null; // using built-in color, no slot selected
+    } else {
+      const customTags = allTags.filter(x => !BUILT_IN_TAGS.includes(x));
+      currentSlot = customTags.indexOf(tagName) % 5;
+    }
+
+    const swatchHtml = SLOT_HEX.map((hex, i) =>
+      `<div class="tag-swatch${currentSlot === i ? ' selected' : ''}" style="background:${hex}"
+        onclick="App._setTagColor('${tagName}',${i})" title="Color ${i+1}"></div>`
+    ).join('');
+
+    // Count how many items currently use this tag
+    const state = Data.get();
+    const usageCount = [...(state.tasks||[]), ...(state.projects||[])]
+      .filter(i => (i.tags||[]).includes(tagName)).length;
+
+    const menu = document.createElement('div');
+    menu.id = 'tag-menu';
+    menu.className = 'tag-menu';
+    menu.innerHTML = `
+      <div class="tag-menu-name">${tagName.toUpperCase()}</div>
+      <div class="tag-menu-swatches">${swatchHtml}</div>
+      <hr class="tag-menu-divider">
+      <div id="tag-menu-del-zone">
+        <button class="tag-menu-delete" onclick="App._confirmDeleteTag('${tagName}',${usageCount})">Delete tag</button>
+      </div>`;
+
+    // Position below the pill, clamped to viewport
+    const rect = el.getBoundingClientRect();
+    menu.style.top  = (rect.bottom + 5) + 'px';
+    menu.style.left = rect.left + 'px';
+    document.body.appendChild(menu);
+
+    // Clamp right edge
+    const mRect = menu.getBoundingClientRect();
+    if (mRect.right > window.innerWidth - 8) {
+      menu.style.left = (window.innerWidth - 8 - mRect.width) + 'px';
+    }
+
+    // Dismiss on next outside click
+    setTimeout(() => document.addEventListener('click', _dismissTagMenu, { once: true }), 0);
+  }
+
+  function _confirmDeleteTag(tagName, usageCount) {
+    const zone = document.getElementById('tag-menu-del-zone');
+    if (!zone) return;
+    const msg = usageCount > 0
+      ? `Removes from ${usageCount} item${usageCount !== 1 ? 's' : ''}.`
+      : 'Not used on any items.';
+    zone.innerHTML = `
+      <div class="tag-menu-confirm">${msg}</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="tag-menu-delete" style="width:auto" onclick="App._executeDeleteTag('${tagName}')">Yes, delete</button>
+        <button class="tag-menu-cancel" onclick="App._dismissTagMenu()">Cancel</button>
+      </div>`;
+  }
+
+  function _executeDeleteTag(tagName) {
+    // Strip from all tasks and projects
+    const state = Data.get();
+    (state.tasks || []).forEach(t => {
+      if ((t.tags || []).includes(tagName)) {
+        t.tags = t.tags.filter(x => x !== tagName);
+        Data.upsertTask(t);
+      }
+    });
+    (state.projects || []).forEach(p => {
+      if ((p.tags || []).includes(tagName)) {
+        p.tags = p.tags.filter(x => x !== tagName);
+        Data.upsertProject(p);
+      }
+    });
+    // Remove from Supabase (handles both the tag entry and any color override)
+    Data.deleteTag(tagName);
+
+    _dismissTagMenu();
+    renderBoard();
+    _refreshModalTagRow();
+  }
+
+  function _setTagColor(tagName, slotIdx) {
+    Data.upsertTag(tagName, slotIdx);
+    _dismissTagMenu();
+    renderBoard();
+    _refreshModalTagRow();
+  }
+
+  // Re-renders whichever modal tag row is currently visible after a tag change.
+  function _refreshModalTagRow() {
+    const allTags = _loadTags();
+    // Detail modal row
+    const detailRow = document.getElementById('modal-tags-row');
+    if (detailRow && openItemId) {
+      const item = Data.findItem(openItemId);
+      if (item) {
+        const itemTags = item.tags || [];
+        detailRow.innerHTML = allTags.map(t =>
+          `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
+            onclick="App._toggleItemTag('${openItemId}','${t}',this)"
+            oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
+        ).join('');
+      }
+    }
+    // New-item modal row
+    const newRow = document.getElementById('new-modal-tags-row');
+    if (newRow) {
+      const activeTags = [...newRow.querySelectorAll('.modal-tag-pill.active')].map(b => b.dataset.tag);
+      newRow.innerHTML = allTags.map(t =>
+        `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${activeTags.includes(t) ? ' active' : ''}" data-tag="${t}"
+          onclick="this.classList.toggle('active')"
+          oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
+      ).join('');
+    }
   }
 
   function _setBlocked(id, val) {
@@ -1563,9 +1751,15 @@ const App = (() => {
         <input type="text" class="modal-input" id="f-title" placeholder="Name..." /></div>
       ${taskExtra}
       <div class="fg"><label class="modal-label">Tags</label>
-        <div class="modal-tags-row">
-          ${allTags.map(t => `<button class="modal-tag-pill tag-${t}" data-tag="${t}"
-            onclick="this.classList.toggle('active')">${t.toUpperCase()}</button>`).join('')}
+        <div class="modal-tags-row" id="new-modal-tags-row">
+          ${allTags.map(t => `<button class="modal-tag-pill ${_tagClasses(t, allTags)}" data-tag="${t}"
+            onclick="this.classList.toggle('active')"
+            oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`).join('')}
+        </div>
+        <div class="modal-tag-add">
+          <input type="text" id="new-tag-input" placeholder="New tag..."
+            onkeydown="if(event.key==='Enter'){event.preventDefault();App._addNewTag();}" />
+          <button onclick="App._addNewTag()">+ add</button>
         </div></div>
       <div class="fg"><label class="modal-label">Status</label>
         <select class="modal-input" id="f-status">${statusOpts}</select></div>
@@ -1681,7 +1875,8 @@ const App = (() => {
     _setNewType, _saveNew,
     _stDragStart, _stDragEnd, _stListDragOver, _stListDrop,
     _toggleProjOpen, _inlineAddSubtask,
-    _toggleItemTag, _addCustomTag,
+    _toggleItemTag, _addCustomTag, _addNewTag,
+    _showTagMenu, _confirmDeleteTag, _executeDeleteTag, _setTagColor, _dismissTagMenu,
     _filterToggleTag, _filterSetDate,
     _openCapacitiesCreate, _removeCapacitiesUrl,
   };

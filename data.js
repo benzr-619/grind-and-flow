@@ -9,7 +9,10 @@
 // One-time migration: on first load for a user with an empty Supabase
 // account, any existing localStorage data is automatically imported.
 
-const LEGACY_STORAGE_KEY = 'gf-data'; // read-only — used once for migration
+const LEGACY_STORAGE_KEY    = 'gf-data';        // read-only — used once for legacy task/project migration
+const LEGACY_TAGS_KEY       = 'gf-tags';        // read-only — used once for tag migration
+const LEGACY_TAG_COLORS_KEY = 'gf-tag-colors';  // read-only — used once for tag color migration
+const _BUILT_IN_TAGS        = ['work', 'personal', 'school']; // duplicated from app.js for migration use
 
 const Data = (() => {
   let _state  = null;
@@ -126,6 +129,21 @@ const Data = (() => {
     };
   }
 
+  function _tagFromDb(r) {
+    return {
+      name:      r.name,
+      colorSlot: r.color_slot ?? null,
+    };
+  }
+
+  function _tagToDb(t, uid) {
+    return {
+      user_id:    uid,
+      name:       t.name,
+      color_slot: t.colorSlot ?? null,
+    };
+  }
+
   function _archFromDb(r) {
     return {
       id:             r.id,
@@ -209,6 +227,36 @@ const Data = (() => {
     }
   }
 
+  // One-time migration for tags stored in localStorage under gf-tags / gf-tag-colors.
+  // Runs during load(); clears the localStorage keys on success.
+  async function _migrateTagsFromLocalStorage(uid) {
+    const tagsRaw   = localStorage.getItem(LEGACY_TAGS_KEY);
+    const colorsRaw = localStorage.getItem(LEGACY_TAG_COLORS_KEY);
+    if (!tagsRaw && !colorsRaw) return;
+    try {
+      const legacyTags   = tagsRaw   ? JSON.parse(tagsRaw)   : [];
+      const legacyColors = colorsRaw ? JSON.parse(colorsRaw) : {};
+      const rows = [];
+      // Custom tags (not built-ins)
+      legacyTags.filter(t => !_BUILT_IN_TAGS.includes(t)).forEach(name => {
+        rows.push({ user_id: uid, name, color_slot: legacyColors[name] ?? null });
+      });
+      // Built-in tags that have a color override
+      _BUILT_IN_TAGS.forEach(name => {
+        if (name in legacyColors) rows.push({ user_id: uid, name, color_slot: legacyColors[name] });
+      });
+      if (rows.length > 0) {
+        const { error } = await _client.from('tags').upsert(rows);
+        if (error) { console.error('[Data] tags migration error:', error.message); return; }
+      }
+      localStorage.removeItem(LEGACY_TAGS_KEY);
+      localStorage.removeItem(LEGACY_TAG_COLORS_KEY);
+      console.log('[Data] Tags migrated from localStorage → Supabase.');
+    } catch (e) {
+      console.warn('[Data] Tags migration skipped:', e.message);
+    }
+  }
+
   // ─────────────────────────────────────────────
   // Load — async, called from App.init()
   // ─────────────────────────────────────────────
@@ -216,28 +264,32 @@ const Data = (() => {
   async function load() {
     if (!_client) {
       console.error('[Data] load called before setClient()');
-      _state = { projects: [], tasks: [], archive: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [] };
       return _state;
     }
     await _migrateFromLocalStorage();
     try {
       const uid = await _uid();
-      const [pr, tr, ar] = await Promise.all([
+      await _migrateTagsFromLocalStorage(uid);
+      const [pr, tr, ar, tg] = await Promise.all([
         _client.from('projects').select('*').eq('user_id', uid),
         _client.from('tasks').select('*').eq('user_id', uid),
         _client.from('archive').select('*').eq('user_id', uid),
+        _client.from('tags').select('*').eq('user_id', uid),
       ]);
       if (pr.error) throw pr.error;
       if (tr.error) throw tr.error;
       if (ar.error) console.warn('[Data] archive load error:', ar.error.message);
+      if (tg.error) console.warn('[Data] tags load error:', tg.error.message);
       _state = {
         projects: (pr.data || []).map(_projFromDb),
         tasks:    (tr.data || []).map(_taskFromDb),
         archive:  (ar.data || []).map(_archFromDb),
+        tags:     (tg.data || []).map(_tagFromDb),
       };
     } catch (e) {
       console.error('[Data] load failed:', e.message);
-      _state = { projects: [], tasks: [], archive: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [] };
     }
     return _state;
   }
@@ -396,6 +448,34 @@ const Data = (() => {
     _del('archive', id);
   }
 
+  // ── Tag mutations ──
+
+  function upsertTag(name, colorSlot) {
+    const tag = { name, colorSlot: colorSlot ?? null };
+    const idx = _state.tags.findIndex(t => t.name === name);
+    if (idx >= 0) _state.tags[idx] = tag; else _state.tags.push(tag);
+    _syncTag(tag);
+  }
+
+  function deleteTag(name) {
+    _state.tags = _state.tags.filter(t => t.name !== name);
+    _delTag(name);
+  }
+
+  async function _syncTag(tag) {
+    if (!_client) return;
+    const uid = await _uid();
+    const { error } = await _client.from('tags').upsert(_tagToDb(tag, uid));
+    if (error) console.error('[Data] sync tag:', error.message);
+  }
+
+  async function _delTag(name) {
+    if (!_client) return;
+    const uid = await _uid();
+    const { error } = await _client.from('tags').delete().eq('user_id', uid).eq('name', name);
+    if (error) console.error('[Data] delete tag:', error.message);
+  }
+
   // ─────────────────────────────────────────────
   // syncAll — pushes entire in-memory state to Supabase.
   // Called by _migrateData() in app.js after fixing legacy status values.
@@ -463,6 +543,7 @@ const Data = (() => {
     load, get, getAllItems, findItem, findProject,
     upsertProject, upsertTask, deleteItem,
     archiveItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive, clearArchive,
+    upsertTag, deleteTag,
     syncAll, replaceAll,
     save, saveNow, isDirty,
     showSaveBanner, hideSaveBanner,

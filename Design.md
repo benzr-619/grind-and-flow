@@ -25,6 +25,15 @@ The interface follows a tactile, minimalist "analog paper meets dark steel" aest
     * *Usage*: "Flow" status indicators, active timer progress tracks, success markers, and positive progress accents.
 * **Amber (Warning / Blocked State)**: `#b76f2e` (or `rgb(183, 111, 46)`)
     * *Usage*: "Grind" focus boundaries, blocked tags, action interrupts, countdown warnings, and attention flags.
+* **Red (Work tag / Tag slot 2)**: `#a83232` (pale: `#f0d4d4`)
+    * *Usage*: The `work` default tag color. Also occupies slot 2 in the custom tag rotation.
+* **Violet (Tag slot 0)**: `#7a5298` (pale: `#e8daf5`)
+    * *Usage*: First slot in the custom tag color rotation. Not used elsewhere in the UI.
+* **Dusty Rose (Tag slot 1)**: `#9c5570` (pale: `#f5dce8`)
+    * *Usage*: Second slot in the custom tag color rotation. Not used elsewhere in the UI.
+
+### Tag Color System
+Tags use a five-slot color rotation: **violet → dusty rose → red → sage → teal** (slots 0–4, cycling). The three built-in tags have fixed default colors (`work` = red, `personal` = sage, `school` = teal). Any tag — including built-ins — can be manually reassigned to any slot via right-click on the pill in a modal. Manual overrides are stored in `localStorage` under `gf-tag-colors`.
 
 ### 1.2 State & Interactive Variations
 * **Subtle Accent Fill**: `rgba(42, 44, 48, 0.05)` — used for inactive tag buttons, secondary list fields, and table borders.
