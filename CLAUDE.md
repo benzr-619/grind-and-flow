@@ -58,7 +58,7 @@ App name, icons, theme color (`#ece2cd`), display mode. No logic.
 
 ## Data Model
 
-Three Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
+Four Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
 
 ### `projects` table
 
@@ -115,6 +115,30 @@ Same shape as `tasks`, plus two additional fields:
 
 Archived projects also carry a `subtasks` jsonb array (same as the projects table).
 
+### `tags` table
+
+Stores user-defined custom tags and any color overrides for built-in tags. Built-in tags (`work`, `personal`, `school`) are hardcoded in `app.js` and only appear here if the user has manually reassigned their color.
+
+**Create with:**
+```sql
+create table tags (
+  user_id    uuid references auth.users not null,
+  name       text not null,
+  color_slot integer,
+  created_at timestamptz default now(),
+  primary key (user_id, name)
+);
+alter table tags enable row level security;
+create policy "Users manage own tags" on tags
+  for all using (auth.uid() = user_id);
+```
+
+| JS camelCase | DB snake_case | Notes |
+|---|---|---|
+| name | name | tag string, e.g. `'exercise'` |
+| colorSlot | color_slot | 0–4 index into the 5-color rotation; null = use rotation default |
+| — | user_id | scopes rows to the authenticated user |
+
 ---
 
 ## Rules & Conventions
@@ -155,11 +179,13 @@ Drag-and-drop and dynamic rendering depend on these selectors being stable:
 - Subtasks: `'st' + Date.now()`
 
 ### localStorage — narrow, intentional use only
-The main data store is Supabase. localStorage is only used for two lightweight items that do not need server persistence:
-- `gf-tags` — the user's custom tag list (default: `['work','personal','school']`)
+The main data store is Supabase. localStorage is only used for one item that does not need server persistence:
 - `gf-completion-dates` — map of `taskId → YYYY-MM-DD` used by the midnight auto-archive to know which "done" tasks belong to a previous day
 
-Do not add new localStorage keys without a strong reason.
+Do not add new localStorage keys without a strong reason. Tags and tag color overrides previously lived in `gf-tags` / `gf-tag-colors` — these are now in Supabase and a one-time migration in `data.js` will move them on first load.
+
+### Sync-friendly development
+This app is intended for use across multiple devices (desktop and eventually mobile). All user data — including preferences and configuration like tags — must live in Supabase, not localStorage. When adding any new feature that stores user state, default to a Supabase table or column. Only use localStorage for truly ephemeral, device-local concerns (e.g. the completion-dates map used for same-device midnight archiving).
 
 ---
 
