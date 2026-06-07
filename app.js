@@ -8,7 +8,7 @@ const PROJECT_COLS = [
   { id: 'someday', label: 'Someday', hint: 'maybe' },
 ];
 const TASK_COLS = [
-  { id: 'backlog',   label: 'Backlog',    hint: 'oldest top' },
+  { id: 'backlog',   label: 'Inbox',      hint: 'move or leave' },
   { id: 'this-week', label: 'This Week',  hint: 'committed' },
   { id: 'next',      label: 'Next',       hint: 'lined up' },
   { id: 'done',      label: 'Done',       hint: 'today' },
@@ -74,6 +74,9 @@ const App = (() => {
   let openItemId = null;
   let dragId = null, dragEl = null, placeholder = null;
   let _pendingFade = false;
+
+  // Mobile tab state — 'inbox' or 'today'; not persisted
+  let mobileTab = 'inbox';
 
   // Filter state
   let filterTags = [];       // active tag filters
@@ -352,10 +355,14 @@ const App = (() => {
     _renderMobileInbox();
   }
 
-  // ── Mobile inbox ──
+  // ── Mobile panel (Inbox / Today) ──
   function _renderMobileInbox() {
-    const inbox = document.getElementById('mobile-inbox');
-    if (!inbox) return;
+    const panel = document.getElementById('mobile-inbox');
+    if (!panel) return;
+    mobileTab === 'today' ? _renderMobileToday(panel) : _renderMobileInboxContent(panel);
+  }
+
+  function _renderMobileInboxContent(panel) {
     const _allTags = _loadTags();
     const backlogItems = (Data.get().tasks || [])
       .filter(t => t.status === 'backlog')
@@ -378,19 +385,65 @@ const App = (() => {
           if (item.backlogEnteredAt) {
             const days = _daysDiff(item.backlogEnteredAt);
             const cls  = days >= 14 ? ' old' : days >= 7 ? ' stale' : '';
-            ageHtml = `<span class="age-counter${cls}">${days}d</span>`;
+            ageHtml = `<span class="age-counter${cls}">${_ageLabel(item.backlogEnteredAt)}</span>`;
           }
-          return `<div class="mobile-inbox-row ${tagClass}">
+          return `<div class="mobile-inbox-row ${tagClass}" onclick="App._openInboxSheet('${item.id}')">
             <div class="mobile-inbox-title">${esc(item.title)}</div>
             <div class="mobile-inbox-meta">${tagPills}${ageHtml}</div>
           </div>`;
         }).join('');
 
-    inbox.innerHTML = `
+    panel.innerHTML = `
       <div class="mobile-inbox-head">
         Inbox <span class="mobile-inbox-count">${backlogItems.length}</span>
       </div>
       <div class="mobile-inbox-list">${rows}</div>`;
+  }
+
+  function _renderMobileToday(panel) {
+    const today = _today();
+    const _allTags = _loadTags();
+    const todayItems = (Data.get().tasks || [])
+      .filter(t => t.scheduledDate === today && t.status !== 'done')
+      .sort((a, b) => {
+        const at = a.scheduledTime || '99:99';
+        const bt = b.scheduledTime || '99:99';
+        return at < bt ? -1 : at > bt ? 1 : 0;
+      });
+
+    const rows = todayItems.length === 0
+      ? '<div class="mobile-inbox-empty">Nothing scheduled for today.</div>'
+      : todayItems.map(item => {
+          const tags = item.tags || [];
+          const firstTag = tags[0] || '';
+          const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
+          const tagPills = tags.map(t =>
+            `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
+          ).join('');
+          const timeHtml = item.scheduledTime
+            ? `<span class="mobile-today-time">${esc(item.scheduledTime)}</span>`
+            : '';
+          const statusHtml = item.status !== 'backlog'
+            ? `<span class="mobile-today-status">${esc(item.status)}</span>`
+            : '';
+          return `<div class="mobile-inbox-row ${tagClass}" onclick="App._openInboxSheet('${item.id}')">
+            <div class="mobile-inbox-title">${esc(item.title)}</div>
+            <div class="mobile-inbox-meta">${tagPills}${timeHtml}${statusHtml}</div>
+          </div>`;
+        }).join('');
+
+    panel.innerHTML = `
+      <div class="mobile-inbox-head">
+        Today <span class="mobile-inbox-count">${todayItems.length}</span>
+      </div>
+      <div class="mobile-inbox-list">${rows}</div>`;
+  }
+
+  function switchMobileTab(tab) {
+    mobileTab = tab;
+    document.getElementById('seg-inbox')?.classList.toggle('active', tab === 'inbox');
+    document.getElementById('seg-today')?.classList.toggle('active', tab === 'today');
+    _renderMobileInbox();
   }
 
   // ── Task card ──
@@ -401,12 +454,12 @@ const App = (() => {
     const _allTags = _loadTags();
     const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
 
-    // Days in backlog counter (resets when leaving/re-entering backlog)
+    // Time-in-inbox counter (resets when leaving/re-entering backlog)
     let ageHtml = '';
     if (!isDone && item.backlogEnteredAt) {
       const days = _daysDiff(item.backlogEnteredAt);
       const ageClass = days >= 14 ? 'old' : days >= 7 ? 'stale' : '';
-      ageHtml = `<span class="age-counter${ageClass ? ' ' + ageClass : ''}">${days}d</span>`;
+      ageHtml = `<span class="age-counter${ageClass ? ' ' + ageClass : ''}">${_ageLabel(item.backlogEnteredAt)}</span>`;
     }
 
     const blockedHtml = item.blocked
@@ -578,7 +631,7 @@ const App = (() => {
   }
 
   function _renderSubtaskRow(st, projId) {
-    const locTag = st.promoted ? 'ON BOARD' : (st.loc || 'BACKLOG').toUpperCase();
+    const locTag = st.promoted ? 'ON BOARD' : st.loc === 'backlog' ? 'INBOX' : (st.loc || 'INBOX').toUpperCase();
     return `<div class="subtask-row-item" id="sti-${st.id}" draggable="true"
       ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
       ondragend="App._stDragEnd(event)">
@@ -1890,6 +1943,137 @@ const App = (() => {
     renderBoard();
   }
 
+  // ── Mobile inbox bottom sheet ──
+  function _openInboxSheet(id) {
+    const item = Data.findItem(id); if (!item) return;
+    const allTags = _loadTags();
+    const itemTags = item.tags || [];
+
+    const tagPillsHtml = allTags.map(t =>
+      `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
+        data-tag="${t}"
+        onclick="App._inboxToggleTag('${id}','${t}',this)">${t.toUpperCase()}</button>`
+    ).join('');
+
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="bs-overlay" onclick="App._closeInboxSheet()">
+        <div class="bottom-sheet" onclick="event.stopPropagation()">
+          <div class="bs-handle-row">
+            <div class="bs-handle"></div>
+            <button class="bs-close" onclick="App._closeInboxSheet()">✕</button>
+          </div>
+          <div class="bs-title">${esc(item.title)}</div>
+
+          <div class="bs-quick-actions">
+            <button class="bs-quick-btn bs-complete" onclick="App._inboxComplete('${id}')">
+              <span class="bs-quick-icon">✓</span>Complete
+            </button>
+            <button class="bs-quick-btn bs-this-week" onclick="App._inboxMove('${id}','this-week')">
+              <span class="bs-quick-icon">▸</span>This Week
+            </button>
+            <button class="bs-quick-btn bs-next-up" onclick="App._inboxMove('${id}','next')">
+              <span class="bs-quick-icon">▹</span>Next Up
+            </button>
+          </div>
+
+          <div class="bs-section">
+            <label class="bs-label">Schedule</label>
+            <input type="date" class="bs-date-input" id="bs-sched"
+              value="${esc(item.scheduledDate || '')}"
+              onchange="App._inboxSchedule('${id}',this.value)" />
+          </div>
+
+          <div class="bs-section">
+            <label class="bs-label">Tags</label>
+            <div class="bs-tags" id="bs-tags-row">${tagPillsHtml}</div>
+          </div>
+
+          <div class="bs-section">
+            <label class="bs-label">Notes</label>
+            <textarea class="bs-textarea" id="bs-notes"
+              oninput="App._inboxSaveNotes('${id}',this.value)">${esc(item.notes || '')}</textarea>
+          </div>
+
+          <div class="bs-footer" id="bs-footer">
+            <button class="bs-delete-btn" onclick="App._inboxConfirmDelete('${id}')">Delete task</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function _closeInboxSheet() {
+    document.getElementById('modal-root').innerHTML = '';
+  }
+
+  function _inboxComplete(id) {
+    const item = Data.findItem(id); if (!item) return;
+    item.status = 'done';
+    Data.upsertTask(item);
+    _saveCompletionDate(id);
+    _closeInboxSheet();
+    renderBoard();
+  }
+
+  function _inboxMove(id, status) {
+    const item = Data.findItem(id); if (!item) return;
+    item.status = status;
+    _clearCompletionDate(id);
+    Data.upsertTask(item);
+    _closeInboxSheet();
+    renderBoard();
+  }
+
+  function _inboxSchedule(id, date) {
+    const item = Data.findItem(id); if (!item) return;
+    item.scheduledDate = date || '';
+    Data.upsertTask(item);
+    renderBoard();
+  }
+
+  function _inboxToggleTag(id, tag, el) {
+    const item = Data.findItem(id); if (!item) return;
+    item.tags = item.tags || [];
+    if (item.tags.includes(tag)) {
+      item.tags = item.tags.filter(t => t !== tag);
+      el.classList.remove('active');
+    } else {
+      item.tags.push(tag);
+      el.classList.add('active');
+    }
+    Data.upsertTask(item);
+    renderBoard();
+  }
+
+  function _inboxSaveNotes(id, notes) {
+    const item = Data.findItem(id); if (!item) return;
+    item.notes = notes;
+    Data.upsertTask(item);
+  }
+
+  function _inboxConfirmDelete(id) {
+    const footer = document.getElementById('bs-footer');
+    if (!footer) return;
+    footer.innerHTML = `
+      <div class="bs-delete-confirm">
+        <span class="bs-delete-confirm-msg">Delete this task?</span>
+        <button class="bs-confirm-no" onclick="App._inboxResetDelete('${id}')">Cancel</button>
+        <button class="bs-confirm-yes" onclick="App._inboxDelete('${id}')">Delete</button>
+      </div>`;
+  }
+
+  function _inboxResetDelete(id) {
+    const footer = document.getElementById('bs-footer');
+    if (!footer) return;
+    footer.innerHTML = `<button class="bs-delete-btn" onclick="App._inboxConfirmDelete('${id}')">Delete task</button>`;
+  }
+
+  function _inboxDelete(id) {
+    Data.deleteItem(id);
+    _closeInboxSheet();
+    renderBoard();
+  }
+
   // ── Confirm modal ──
   function _showConfirm(title, msg, confirmLabel, onConfirm) {
     _showModal(`
@@ -1952,7 +2136,11 @@ const App = (() => {
     _showTagMenu, _confirmDeleteTag, _executeDeleteTag, _setTagColor, _dismissTagMenu,
     _filterToggleTag, _filterSetDate,
     _openCapacitiesCreate, _removeCapacitiesUrl,
-    addMobileCapture,
+    addMobileCapture, switchMobileTab,
+    _openInboxSheet, _closeInboxSheet,
+    _inboxComplete, _inboxMove, _inboxSchedule,
+    _inboxToggleTag, _inboxSaveNotes,
+    _inboxConfirmDelete, _inboxResetDelete, _inboxDelete,
   };
 })();
 
