@@ -217,6 +217,9 @@ This app is intended for use across multiple devices (desktop and eventually mob
 - **PWA**: Installable on desktop and mobile, theme color, app icons.
 - **Capacities integration**: One-way bootstrap integration with Capacities.io. Project detail modal exposes a "Create Capacities page" button (fires an X-callback URL that opens the Capacities desktop app and pre-populates a new object with project title, notes, due date, and tags) and a paste field for the returned deep link. Once linked, a bookmark icon appears on the project card as a persistent shortcut to open the linked Capacities object. The linked state shows an "Open in Capacities" link and a "remove link" action. Stored as `capacitiesUrl` / `capacities_url` on the projects table.
 
+- **Mobile capture/Inbox view (phase 1)**: At ≤640px, the focus/Doing zone and Projects board are hidden. A sticky capture bar appears below the topbar for quick task entry (creates a `backlog` task via `Data.upsertTask`). Below it, an "Inbox" section lists all `backlog` tasks with tag pills and age counter (stale/old styling reused). The `backlog` status string and `backlog_entered_at` field are unchanged — "Inbox" is a UI-only label. Triage actions (phase 2) are not yet implemented; rows are display-only. Key elements: `#mobile-capture-bar` (sticky), `#mobile-inbox` (rendered by `_renderMobileInbox()` called from `renderBoard()`), `App.addMobileCapture()`. Desktop layout is unaffected.
+
 ### Not yet built / known gaps
 - **Timer loop button**: The loop icon is rendered in the timer track but is not wired up — clicking it does nothing.
 - **Search**: The `searchQuery` state variable and filter logic exist in `app.js`, but there is no search input in `index.html`. The feature is partially scaffolded but not exposed in the UI.
+- **Mobile triage actions (phase 2)**: The mobile Inbox list is display-only. Moving items out of backlog (e.g., to this-week/next) from the mobile view is not yet implemented.

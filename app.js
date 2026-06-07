@@ -337,6 +337,10 @@ const App = (() => {
       }).join('')}</div>`;
     }
 
+    // Stamp data-view so CSS can hide the projects board on mobile
+    document.querySelector('.board-section')
+      ?.setAttribute('data-view', archiveOpen ? 'archive' : view);
+
     // Board crossfade — only fires on explicit tab/view switches
     if (_pendingFade) {
       _pendingFade = false;
@@ -344,6 +348,49 @@ const App = (() => {
       void board.offsetWidth; // force reflow to restart animation
       board.classList.add('board-fade-in');
     }
+
+    _renderMobileInbox();
+  }
+
+  // ── Mobile inbox ──
+  function _renderMobileInbox() {
+    const inbox = document.getElementById('mobile-inbox');
+    if (!inbox) return;
+    const _allTags = _loadTags();
+    const backlogItems = (Data.get().tasks || [])
+      .filter(t => t.status === 'backlog')
+      .sort((a, b) => {
+        const ad = a.backlogEnteredAt || a.dateAdded || '';
+        const bd = b.backlogEnteredAt || b.dateAdded || '';
+        return ad < bd ? -1 : ad > bd ? 1 : 0;
+      });
+
+    const rows = backlogItems.length === 0
+      ? '<div class="mobile-inbox-empty">Nothing in the inbox — capture something above.</div>'
+      : backlogItems.map(item => {
+          const tags = item.tags || [];
+          const firstTag = tags[0] || '';
+          const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
+          const tagPills = tags.map(t =>
+            `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
+          ).join('');
+          let ageHtml = '';
+          if (item.backlogEnteredAt) {
+            const days = _daysDiff(item.backlogEnteredAt);
+            const cls  = days >= 14 ? ' old' : days >= 7 ? ' stale' : '';
+            ageHtml = `<span class="age-counter${cls}">${days}d</span>`;
+          }
+          return `<div class="mobile-inbox-row ${tagClass}">
+            <div class="mobile-inbox-title">${esc(item.title)}</div>
+            <div class="mobile-inbox-meta">${tagPills}${ageHtml}</div>
+          </div>`;
+        }).join('');
+
+    inbox.innerHTML = `
+      <div class="mobile-inbox-head">
+        Inbox <span class="mobile-inbox-count">${backlogItems.length}</span>
+      </div>
+      <div class="mobile-inbox-list">${rows}</div>`;
   }
 
   // ── Task card ──
@@ -1826,6 +1873,23 @@ const App = (() => {
     }, 16);
   }
 
+  // ── Mobile capture ──
+  function addMobileCapture(e) {
+    e.preventDefault();
+    const input = document.getElementById('mobile-capture-input');
+    const title = input?.value.trim();
+    if (!title) return;
+    const id = 't' + Date.now();
+    Data.upsertTask({
+      id, type: 'standalone', title, status: 'backlog',
+      tags: [], parentProject: null, dueDate: '', scheduledDate: '',
+      scheduledTime: '', notes: '', dateAdded: _today(),
+      backlogEnteredAt: _today(), blocked: false,
+    });
+    if (input) input.value = '';
+    renderBoard();
+  }
+
   // ── Confirm modal ──
   function _showConfirm(title, msg, confirmLabel, onConfirm) {
     _showModal(`
@@ -1888,6 +1952,7 @@ const App = (() => {
     _showTagMenu, _confirmDeleteTag, _executeDeleteTag, _setTagColor, _dismissTagMenu,
     _filterToggleTag, _filterSetDate,
     _openCapacitiesCreate, _removeCapacitiesUrl,
+    addMobileCapture,
   };
 })();
 

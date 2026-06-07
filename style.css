@@ -1221,6 +1221,10 @@ select.modal-input { cursor: pointer; }
 }
 .cap-remove-link:hover { color: var(--ink); }
 
+/* Mobile-only elements — hidden on desktop */
+.mobile-capture-bar { display: none; }
+.mobile-inbox       { display: none; }
+
 /* ════════════════════════════════════════
    RESPONSIVE
 ════════════════════════════════════════ */
@@ -1231,8 +1235,134 @@ select.modal-input { cursor: pointer; }
   .tseg-25 { width: 80px; }
 }
 @media (max-width: 640px) {
+  /* Hide desktop chrome */
+  #focus-zone { display: none; }
+  .board-section[data-view="projects"] { display: none; }
+
+  /* Collapse task board to single column */
   .columns { grid-template-columns: 1fr; }
-  .doing-timer-zone { display: none; }
+
+  /* ── Capture bar ── */
+  .mobile-capture-bar {
+    display: flex;
+    position: sticky;
+    top: 50px;
+    z-index: 99;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line-md);
+    padding: 10px 16px;
+  }
+  .mobile-capture-form {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+  .mobile-capture-input {
+    flex: 1;
+    padding: 8px 10px;
+    background: var(--card);
+    border: 1px solid var(--line-md);
+    border-radius: var(--r-xs);
+    font-size: 14px;
+    font-family: var(--font-body);
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.12s;
+  }
+  .mobile-capture-input:focus { border-color: var(--steel); }
+  .mobile-capture-input::placeholder { color: var(--muted); }
+  .mobile-capture-submit {
+    padding: 8px 14px;
+    background: var(--ink);
+    color: var(--card);
+    border-radius: var(--r-xs);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    transition: opacity 0.12s;
+  }
+  .mobile-capture-submit:hover  { opacity: 0.82; }
+  .mobile-capture-submit:active { transform: scale(0.97); }
+
+  /* ── Inbox list ── */
+  .mobile-inbox {
+    display: block;
+    padding: 16px 16px 8px;
+  }
+  .mobile-inbox-head {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    padding: 0 2px 8px;
+    margin-bottom: 10px;
+    border-bottom: 1.5px solid var(--line-md);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .mobile-inbox-count { color: var(--muted); font-weight: 500; }
+  .mobile-inbox-list  { display: flex; flex-direction: column; gap: 6px; }
+
+  .mobile-inbox-row {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 10px 12px 10px 16px;
+    box-shadow: var(--shadow-card);
+    position: relative;
+    overflow: hidden;
+  }
+  /* left accent bar — mirrors .card */
+  .mobile-inbox-row::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--line-md);
+    border-radius: var(--r-xs) 0 0 var(--r-xs);
+  }
+  .mobile-inbox-row.tag-work::before     { background: var(--red); }
+  .mobile-inbox-row.tag-personal::before { background: var(--sage-deep); }
+  .mobile-inbox-row.tag-school::before   { background: var(--teal); }
+  .mobile-inbox-row.tag-slot-0::before   { background: var(--violet); }
+  .mobile-inbox-row.tag-slot-1::before   { background: var(--rose); }
+  .mobile-inbox-row.tag-slot-2::before   { background: var(--red); }
+  .mobile-inbox-row.tag-slot-3::before   { background: var(--sage-deep); }
+  .mobile-inbox-row.tag-slot-4::before   { background: var(--teal); }
+
+  .mobile-inbox-title {
+    font-family: var(--font-display);
+    font-size: 13.5px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    line-height: 1.35;
+    margin-bottom: 5px;
+    word-break: normal;
+    overflow-wrap: break-word;
+  }
+  .mobile-inbox-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .mobile-inbox-empty {
+    padding: 24px 12px;
+    text-align: center;
+    font-family: var(--font-body);
+    font-style: italic;
+    font-size: 12.5px;
+    color: var(--muted);
+    border: 1px dashed var(--line);
+    border-radius: var(--r-sm);
+  }
 }
 
 /* ════════════════════════════════════════

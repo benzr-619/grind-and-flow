@@ -67,6 +67,18 @@
     <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
   </div>
 
+  <!-- ── Mobile capture bar — sticky below topbar, hidden on desktop ── -->
+  <div class="mobile-capture-bar" id="mobile-capture-bar">
+    <form class="mobile-capture-form" onsubmit="App.addMobileCapture(event)">
+      <input type="text" id="mobile-capture-input" class="mobile-capture-input"
+             placeholder="Capture a task…" autocomplete="off" />
+      <button type="submit" class="mobile-capture-submit">Add</button>
+    </form>
+  </div>
+
+  <!-- ── Mobile inbox list — rendered by JS, hidden on desktop ── -->
+  <div id="mobile-inbox" class="mobile-inbox"></div>
+
   <!-- ── Focus zone: doing row + timer track ── -->
   <div id="focus-zone" class="focus-zone">
     <section class="doing-section" id="doing-section">
