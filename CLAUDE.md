@@ -1,5 +1,13 @@
 # CLAUDE.md — Grind & Flow
 
+## [AUTOMATIC MAINTENANCE]
+
+New area-specific detail is appended directly to a targeted `.claude/rules/<area>.md` with a one-line pointer here — no rewrite of this file. Changing behavior already documented here requires confirmation first.
+
+**After every session where a bug was fixed, a schema fact was discovered, or a gotcha was identified: update the relevant `.claude/rules/<area>.md` file immediately — do not wait to be asked.** If no rules file fits, create a new one under `.claude/rules/`. This is mandatory, not optional.
+
+---
+
 > This file is the persistent context document for this codebase. Read it at the start of every session. Update it after any change that affects the data model, module interfaces, or feature status.
 
 ---
@@ -20,6 +28,7 @@ Grind & Flow is a single-user personal productivity web app for managing project
 | Fonts | Bricolage Grotesque (display), Source Serif 4 (body), JetBrains Mono / IBM Plex Mono (labels) |
 | PWA | `manifest.json` + iOS meta tags |
 | Supabase project | `https://copzqbnjoakvcrvmedev.supabase.co` |
+| Supabase MCP | Connected — project ID `copzqbnjoakvcrvmedev`. Use MCP tools for schema changes, migrations, and data inspection instead of manual SQL. See `.claude/rules/supabase-mcp.md`. |
 
 Script load order in `index.html` is load-order dependent: `data.js` → `auth.js` → `app.js`. Do not reorder.
 
