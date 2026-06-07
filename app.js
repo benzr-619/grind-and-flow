@@ -310,6 +310,14 @@ const App = (() => {
             return ad.localeCompare(bd);
           });
         }
+        // This Week / Next: scheduled items first (date + time), unscheduled at bottom
+        if (col.id === 'this-week' || col.id === 'next') {
+          colItems = [...colItems].sort((a, b) => {
+            const aKey = a.scheduledDate ? (a.scheduledDate + (a.scheduledTime || '')) : '9999';
+            const bKey = b.scheduledDate ? (b.scheduledDate + (b.scheduledTime || '')) : '9999';
+            return aKey.localeCompare(bKey);
+          });
+        }
         return `<div class="col-wrap">
           <div class="col-head${col.id === 'this-week' ? ' this-week' : ''}">
             <span class="col-name">
