@@ -864,9 +864,10 @@ const App = (() => {
   function _renderTimerTrack() {
     const track = document.getElementById('timer-track');
     if (!track) return;
+    const hasTask = !!timerTask;
     const segs = TIMER_SEQ.map((seg, i) => {
-      const done = i < timerSegIdx;
-      const cur  = i === timerSegIdx;
+      const done = hasTask && i < timerSegIdx;
+      const cur  = hasTask && i === timerSegIdx;
       const isBreak = seg.kind === 'break';
       const w = isBreak ? 'tseg-brk' : `tseg-${seg.m}`;
       const fillPct = cur ? Math.max(0, 1 - timerSecsRemaining / (seg.m * 60)) : 0;
@@ -878,7 +879,7 @@ const App = (() => {
     }).join('');
     const labels = TIMER_SEQ.map((seg, i) => {
       const w = seg.kind === 'break' ? 'tl-brk' : `tseg-${seg.m}`;
-      return `<div class="tl-seg ${w}${i === timerSegIdx ? ' active' : ''}">${seg.kind !== 'break' ? seg.label : ''}</div>`;
+      return `<div class="tl-seg ${w}${hasTask && i === timerSegIdx ? ' active' : ''}">${seg.kind !== 'break' ? seg.label : ''}</div>`;
     }).join('');
     // Boundary state banner (shown when a segment just finished and user must start the next)
     let boundaryBanner = '';
