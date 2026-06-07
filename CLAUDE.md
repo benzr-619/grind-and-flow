@@ -100,7 +100,7 @@ Subtask object shape: `{ id, title, done, promoted, loc, promotedTaskId? }`
 | id | id | `'t' + Date.now()` format |
 | type | type | `standalone` or `task` (linked to project) |
 | title | title | |
-| status | status | `backlog`, `this-week`, `next`, `doing`, `done` |
+| status | status | `backlog`, `this-week`, `next`, `doing`, `done` — **`backlog` is surfaced as "Inbox" in all UI labels; the internal string is unchanged** |
 | parentProject | parent_project | project id or null |
 | dueDate | due_date | |
 | scheduledDate | scheduled_date | |
@@ -110,7 +110,7 @@ Subtask object shape: `{ id, title, done, promoted, loc, promotedTaskId? }`
 | blocked | blocked | boolean |
 | blockedReason | blocked_reason | |
 | tags | tags | jsonb array |
-| backlogEnteredAt | backlog_entered_at | set when item enters backlog; drives age counter |
+| backlogEnteredAt | backlog_entered_at | set when item enters backlog; drives the "time in Inbox" age counter |
 | — | user_id | injected by `_taskToDb()` |
 
 ### `archive` table
@@ -205,7 +205,7 @@ This app is intended for use across multiple devices (desktop and eventually mob
 - **Archive view**: Time-grouped layout (Today / This Week / Last Week / Earlier). Restore, delete, and Clear Archive actions.
 - **Doing zone**: Drag any task from the board into the focus strip. Left flank sends it back to Next; right flank marks it Done. Only one task in Doing at a time — dropping a new one bumps the existing one back to Next.
 - **Focus timer**: Progressive sequence (5m work → 5m break → 10m → 5m → 25m → 5m → 50m → 5m → 50m). Wall-clock drift correction (immune to browser background tab throttling). Pause/resume, segment jump by clicking track. "Calm" boundary state after work ends; "Pushy" boundary state after break ends. Elapsed-minutes counter. Browser notification on segment completion.
-- **Task cards**: Color-coded tag pills, age counter (days in backlog; stale at 7d, old at 14d), scheduled date/day display, blocked badge + reason inline, parent project reference.
+- **Task cards**: Color-coded tag pills, age counter (time in Inbox via `_ageLabel()` — e.g. "3d ago", "1w ago"; stale at 7d amber, old at 14d red), scheduled date/day display, blocked badge + reason inline, parent project reference.
 - **Project cards**: Subtask list (inline add, checkbox toggle, drag reorder, progress bar + percentage). Promote subtask to task board as a `this-week` task. Recall a promoted subtask back to the project. Three-state blocking: Blocked (amber), Waiting (gold `#c49a2a`), or Clear — each with an optional reason line. Waiting auto-sets when a linked task card is blocked and auto-clears when all linked blocked tasks are resolved. Manual waiting is sticky (not auto-cleared). Tags. Collapsed/expanded toggle with animated collapse.
 - **Detail modal**: Edit title, move status, toggle tags, scheduled date/time, due date, notes, blocked state + reason, subtask management (projects), delete with confirmation.
 - **New item modal**: Task or project. Task type toggle (standalone vs. linked to project). Tag selection, status, dates, notes. Subtask pre-population for new projects before saving.
@@ -217,9 +217,13 @@ This app is intended for use across multiple devices (desktop and eventually mob
 - **PWA**: Installable on desktop and mobile, theme color, app icons.
 - **Capacities integration**: One-way bootstrap integration with Capacities.io. Project detail modal exposes a "Create Capacities page" button (fires an X-callback URL that opens the Capacities desktop app and pre-populates a new object with project title, notes, due date, and tags) and a paste field for the returned deep link. Once linked, a bookmark icon appears on the project card as a persistent shortcut to open the linked Capacities object. The linked state shows an "Open in Capacities" link and a "remove link" action. Stored as `capacitiesUrl` / `capacities_url` on the projects table.
 
-- **Mobile capture/Inbox view (phase 1)**: At ≤640px, the focus/Doing zone and Projects board are hidden. A sticky capture bar appears below the topbar for quick task entry (creates a `backlog` task via `Data.upsertTask`). Below it, an "Inbox" section lists all `backlog` tasks with tag pills and age counter (stale/old styling reused). The `backlog` status string and `backlog_entered_at` field are unchanged — "Inbox" is a UI-only label. Triage actions (phase 2) are not yet implemented; rows are display-only. Key elements: `#mobile-capture-bar` (sticky), `#mobile-inbox` (rendered by `_renderMobileInbox()` called from `renderBoard()`), `App.addMobileCapture()`. Desktop layout is unaffected.
+- **Inbox relabel (phase 4)**: The desktop Tasks board "Backlog" column is labelled "Inbox" (hint: "move or leave"). The age counter on task cards and mobile inbox rows uses `_ageLabel()` for human-readable copy ("3d ago", "1w ago") instead of raw `Nd`. The subtask location badge shows "INBOX" instead of "BACKLOG". Internal status enum `backlog`, `data-col` attribute, `backlogEnteredAt` field, archive logic, and all status comparisons are **unchanged**.
+
+- **Mobile capture/Inbox + triage (phases 1–3)**: At ≤640px, the focus/Doing zone and Projects board are hidden. A sticky capture bar (`#mobile-capture-bar`, `top: 50px`) creates `backlog` tasks instantly. Directly below it, a segmented toggle (`#mobile-seg-bar`, `top: 107px`, state in `mobileTab`) switches between two views rendered into `#mobile-inbox`:
+  - **Inbox** — backlog tasks oldest-first; each row shows title, tag pills, age counter (stale/old styling). "Inbox" is a UI-only label; `backlog` status and `backlog_entered_at` are unchanged.
+  - **Today** — tasks with `scheduledDate === today` across all non-`done` statuses, sorted by `scheduledTime`; shows time and status badge instead of age counter.
+  Tapping either view's rows opens the Phase 2 bottom sheet (`_openInboxSheet` → `#modal-root`). Sheet actions work correctly from both views: Complete removes item from Today; rescheduling to a different date removes it from Today; moving out of backlog removes it from Inbox. Desktop layout fully unaffected.
 
 ### Not yet built / known gaps
 - **Timer loop button**: The loop icon is rendered in the timer track but is not wired up — clicking it does nothing.
 - **Search**: The `searchQuery` state variable and filter logic exist in `app.js`, but there is no search input in `index.html`. The feature is partially scaffolded but not exposed in the UI.
-- **Mobile triage actions (phase 2)**: The mobile Inbox list is display-only. Moving items out of backlog (e.g., to this-week/next) from the mobile view is not yet implemented.

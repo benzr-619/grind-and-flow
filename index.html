@@ -76,7 +76,15 @@
     </form>
   </div>
 
-  <!-- ── Mobile inbox list — rendered by JS, hidden on desktop ── -->
+  <!-- ── Mobile segmented toggle — hidden on desktop ── -->
+  <div class="mobile-seg-bar" id="mobile-seg-bar">
+    <div class="mobile-seg-ctrl">
+      <button class="mobile-seg-btn active" id="seg-inbox" onclick="App.switchMobileTab('inbox')">Inbox</button>
+      <button class="mobile-seg-btn"        id="seg-today" onclick="App.switchMobileTab('today')">Today</button>
+    </div>
+  </div>
+
+  <!-- ── Mobile list panel — rendered by JS, hidden on desktop ── -->
   <div id="mobile-inbox" class="mobile-inbox"></div>
 
   <!-- ── Focus zone: doing row + timer track ── -->
