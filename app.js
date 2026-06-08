@@ -142,10 +142,12 @@ const App = (() => {
     const dates = _loadCompletionDates();
     const state = Data.get();
     const toArchive = state.tasks.filter(t =>
-      t.status === 'done' && dates[t.id] && dates[t.id] < today
+      t.status === 'done' && (!dates[t.id] || dates[t.id] < today)
     );
     toArchive.forEach(t => {
-      Data.archiveItemWithDate(t.id, dates[t.id]); // stamp with completion date
+      // Fall back to dateAdded if no completion date recorded (e.g. done on another device)
+      const completionDate = dates[t.id] || t.dateAdded || today;
+      Data.archiveItemWithDate(t.id, completionDate);
       _clearCompletionDate(t.id);
     });
     return toArchive.length;
