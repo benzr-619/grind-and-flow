@@ -1078,18 +1078,21 @@ const App = (() => {
   function _playStartChime() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const gain = ctx.createGain();
-      gain.connect(ctx.destination);
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
-      [880, 1100].forEach((freq, i) => {
-        const osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.13);
-        osc.connect(gain);
-        osc.start(ctx.currentTime + i * 0.13);
-        osc.stop(ctx.currentTime + i * 0.13 + 0.6);
-      });
+      const play = () => {
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
+        [880, 1100].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.13);
+          osc.connect(gain);
+          osc.start(ctx.currentTime + i * 0.13);
+          osc.stop(ctx.currentTime + i * 0.13 + 0.6);
+        });
+      };
+      if (ctx.state === 'suspended') { ctx.resume().then(play); } else { play(); }
     } catch(e) {}
   }
 
