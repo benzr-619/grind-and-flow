@@ -1075,10 +1075,37 @@ const App = (() => {
     _renderFocusRow(); _renderTimerTrack(); renderBoard();
   }
 
+  function _playStartChime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const gain = ctx.createGain();
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
+      [880, 1100].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.13);
+        osc.connect(gain);
+        osc.start(ctx.currentTime + i * 0.13);
+        osc.stop(ctx.currentTime + i * 0.13 + 0.6);
+      });
+    } catch(e) {}
+  }
+
+  function _fireStartNotification() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const isBreak = TIMER_SEQ[timerSegIdx].kind === 'break';
+    const body = isBreak ? 'Break started — step away for a bit.' : 'Work session started — get after it.';
+    try { new Notification('Grind & Flow', { body, icon: 'icon-192.png' }); } catch(e) {}
+  }
+
   function _startTimer() {
     clearInterval(timerInterval);
     timerRunning = true;
     timerAtBoundary = false;
+    _playStartChime();
+    _fireStartNotification();
     // Snapshot wall-clock so background throttling can't cause drift
     _timerStartedAt = Date.now();
     _timerStartSecs = timerSecsRemaining;
