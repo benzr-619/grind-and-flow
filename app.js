@@ -1108,7 +1108,6 @@ const App = (() => {
     timerRunning = true;
     timerAtBoundary = false;
     _playStartChime();
-    _fireStartNotification();
     // Snapshot wall-clock so background throttling can't cause drift
     _timerStartedAt = Date.now();
     _timerStartSecs = timerSecsRemaining;
