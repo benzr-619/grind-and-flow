@@ -535,7 +535,7 @@ input, textarea, select { font: inherit; color: inherit; }
   gap: 8px; margin-bottom: 5px;
 }
 .card-title {
-  font-family: var(--font-display); font-size: 11.5px; font-weight: 500;
+  font-family: var(--font-display); font-size: 13px; font-weight: 500;
   letter-spacing: -0.005em; color: var(--ink); line-height: 1.3;
   word-break: normal; overflow-wrap: break-word; flex: 1; min-width: 0;
 }
@@ -726,7 +726,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .proj-card.on-hold { opacity: 0.80; }
 
 .proj-card-head {
-  padding: 11px 12px 9px 12px;
+  padding: 9px 11px;
   border-bottom: 1px solid transparent;
   display: flex; flex-direction: column; gap: 5px; cursor: pointer;
 }
@@ -737,7 +737,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .proj-title-and-blocked { display: flex; align-items: flex-start; gap: 8px; flex: 1; min-width: 0; }
 .proj-name {
-  font-family: var(--font-display); font-size: 15px; font-weight: 500;
+  font-family: var(--font-display); font-size: 13px; font-weight: 500;
   letter-spacing: -0.005em; color: var(--ink); line-height: 1.3; flex: 1; min-width: 0;
 }
 .proj-toggle {
@@ -811,8 +811,13 @@ input, textarea, select { font: inherit; color: inherit; }
 .st-handle { color: var(--muted); font-size: 13px; flex-shrink: 0; cursor: grab; line-height: 1; padding: 0 1px; }
 .st-handle:active { cursor: grabbing; }
 .subtask-row-item input[type=checkbox] { flex-shrink: 0; cursor: pointer; accent-color: var(--sage); }
-.st-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.st-title.done { text-decoration: line-through; color: var(--muted); }
+.st-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.st-title.done { text-decoration: line-through; color: var(--muted); cursor: default; }
+.st-title-edit {
+  flex: 1; border: none; border-bottom: 1px solid var(--line-md); background: transparent;
+  outline: none; font-size: inherit; font-family: inherit; color: var(--ink);
+  padding: 0 0 1px; min-width: 0;
+}
 .st-loc-tag {
   font-family: var(--font-mono); font-size: 8.5px; font-weight: 600;
   letter-spacing: 0.10em; text-transform: uppercase; color: var(--steel);
@@ -849,71 +854,151 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .add-inline-st button:hover { background: var(--card-warm); color: var(--ink); border-color: var(--ink); }
 
-/* Capacities bookmark icon on project card */
-.proj-progress { position: relative; }
+/* Capacities bookmark icon — inline in proj-title-row */
 .proj-cap-icon {
-  position: absolute; bottom: 8px; right: 8px;
   width: 16px; height: 18px;
   display: grid; place-items: center;
-  color: var(--ink); opacity: 0.28;
+  color: var(--muted); font-size: 13px;
   padding: 0; background: none; border: none; cursor: pointer;
-  transition: opacity 0.12s;
+  transition: color 0.12s; flex-shrink: 0;
 }
-.proj-cap-icon:hover { opacity: 1; }
+.proj-cap-icon:hover { color: var(--ink); }
 .proj-cap-icon svg { display: block; }
+
+/* Project card state pills (in meta row) */
+.proj-pill-waiting, .proj-pill-blocked {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 500;
+  letter-spacing: 0.2px; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+}
+.proj-pill-waiting { background: #FDF5E0; color: #8A6B1A; }
+.proj-pill-blocked { background: #FDF0E0; color: #9B6E1F; }
+
+/* Project card due date */
+.proj-due {
+  font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-faint); white-space: nowrap; margin-left: auto;
+}
+
+/* Subtask promote button — hover-reveal in modal rows */
+.st-promote-btn {
+  font-family: var(--font-mono); font-size: 9px;
+  color: var(--muted); background: none; border: none;
+  cursor: pointer; padding: 0; margin-left: auto;
+  opacity: 0; transition: opacity 0.12s; flex-shrink: 0;
+  white-space: nowrap;
+}
+.subtask-row-item:hover .st-promote-btn { opacity: 1; }
+
+/* On-board badge for promoted subtasks */
+.st-on-board-badge {
+  font-family: var(--font-mono); font-size: 9px;
+  background: #EEF0F5; color: #7A7E8A;
+  padding: 1px 5px; border-radius: 3px;
+  white-space: nowrap; flex-shrink: 0;
+}
+
+/* Recall button for promoted subtasks */
+.st-recall {
+  font-family: var(--font-mono); font-size: 9px;
+  color: var(--muted); background: none; border: none;
+  cursor: pointer; padding: 0; margin-left: auto;
+  white-space: nowrap; flex-shrink: 0; transition: color 0.12s;
+}
+.st-recall:hover { color: var(--ink); }
+
+/* Project state segmented control (modal) */
+.proj-state-seg {
+  display: flex; border: 0.5px solid var(--line); border-radius: 5px; overflow: hidden;
+}
+.proj-state-seg-btn {
+  flex: 1; font-family: var(--font-mono); font-size: 10px;
+  padding: 5px 0; text-align: center;
+  background: #FDFCFA; color: var(--muted);
+  border: none; cursor: pointer; transition: all 0.12s;
+}
+.proj-state-seg-btn + .proj-state-seg-btn { border-left: 0.5px solid var(--line); }
+.proj-state-seg-btn.active { background: var(--ink); color: #F8F5F0; }
+.proj-auto-wait-note {
+  font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+  margin-top: 6px; font-style: italic;
+}
+
+/* Project modal title input (underline style) */
+.proj-modal-title-input {
+  width: 100%; font-family: var(--font-display);
+  font-size: 18px; font-weight: 500; letter-spacing: -0.4px; color: var(--ink);
+  border: none; border-bottom: 0.5px solid var(--line); outline: none;
+  background: transparent; padding: 0 0 8px; margin-bottom: 14px;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.proj-modal-title-input:focus { border-bottom-color: transparent; box-shadow: 0 2px 0 var(--sage-deep); }
+
+/* Project modal 3-col grid for status + dates */
+.proj-modal-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px;
+}
+.proj-modal-grid .fg { margin-bottom: 0; }
+.proj-modal-date-stack { display: flex; flex-direction: column; gap: 5px; }
+
+/* Hide old progress section styles (harmless — elements no longer rendered) */
+.proj-progress { display: none; }
+.proj-no-tasks { display: none; }
+.proj-progress-row { display: none; }
+.proj-bar { display: none; }
 
 /* ════════════════════════════════════════
    ARCHIVE
 ════════════════════════════════════════ */
-.archive-section { display: grid; gap: 24px; padding: 4px 0; }
-.archive-group { display: grid; gap: 0; }
+.archive-section { display: grid; gap: 28px; padding: 4px 0; }
+.archive-group { display: flex; flex-direction: column; }
 
-/* Section header: TODAY / THIS WEEK / LAST WEEK / EARLIER */
+/* Group header: THIS WEEK / LAST WEEK / EARLIER */
 .archive-group-head {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--muted);
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.8px;
+  text-transform: uppercase; font-weight: 500;
+  color: #B0A99F;
   display: flex; justify-content: space-between; align-items: center;
-  padding: 3px 2px 8px; border-bottom: 1px solid var(--line);
-  margin-bottom: 8px;
+  padding: 14px 16px 6px;
 }
+.archive-group-head span:last-child { color: #C4BEB4; }
 
-/* Archive row: dot · title · [tag chip] [date] · [hover actions] */
+/* Base archive row — flat, no card borders */
 .archive-row {
-  background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm);
-  padding: 10px 14px; display: flex; align-items: center; gap: 10px;
-  box-shadow: var(--shadow-card); margin-bottom: 6px; overflow: hidden;
+  background: #FFFFFF; display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; border-bottom: 0.5px solid #F5F2EE; overflow: hidden;
 }
-.archive-row:last-child { margin-bottom: 0; }
+.archive-row:last-child { border-bottom: none; }
 
-/* Dot — colour driven by the task's first tag */
-.archive-dot { width: 7px; height: 7px; background: var(--steel-soft); border-radius: 99px; flex-shrink: 0; }
-.archive-row.is-project .archive-dot           { background: var(--ink); }
-.archive-row.tag-work .archive-dot             { background: var(--red); }
-.archive-row.tag-personal .archive-dot         { background: var(--sage-deep); }
-.archive-row.tag-school .archive-dot           { background: var(--teal); }
-.archive-row.tag-slot-0 .archive-dot           { background: var(--violet); }
-.archive-row.tag-slot-1 .archive-dot           { background: var(--rose); }
-.archive-row.tag-slot-2 .archive-dot           { background: var(--red); }
-.archive-row.tag-slot-3 .archive-dot           { background: var(--sage-deep); }
-.archive-row.tag-slot-4 .archive-dot           { background: var(--teal); }
+/* 14px fixed-width icon slot — keeps task titles aligned with project titles */
+.arch-icon-slot {
+  width: 14px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+}
 
-/* Title — no strikethrough; occupies remaining space */
+/* Title */
 .archive-name {
-  font-family: var(--font-display); font-size: 13.5px; color: var(--ink); flex: 1;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--font-display); font-size: 12px; color: #1C1917;
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Right-side meta: tag chip + date label */
-.archive-row-meta {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+/* Project title — slightly bolder */
+.arch-proj-name { font-weight: 500; }
+
+/* Parent project reference on task rows */
+.arch-parent-proj {
+  font-size: 10px; color: #C4BEB4; white-space: nowrap; flex-shrink: 0;
 }
+
+/* Tag pills — small, same fill style as card pills */
 .arch-tag {
   font-size: 8px !important; padding: 2px 6px !important;
-  letter-spacing: 0.09em; line-height: 1.4;
+  letter-spacing: 0.09em; line-height: 1.4; flex-shrink: 0;
 }
+
+/* Date label */
 .archive-date {
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--muted);
-  letter-spacing: 0.05em; white-space: nowrap; min-width: 38px; text-align: right;
+  font-family: var(--font-mono); font-size: 10px; color: #C4BEB4;
+  letter-spacing: 0.04em; white-space: nowrap; min-width: 36px; text-align: right; flex-shrink: 0;
 }
 
 /* Restore / delete — hidden until row is hovered */
@@ -928,15 +1013,42 @@ input, textarea, select { font: inherit; color: inherit; }
 .archive-restore:hover { background: var(--card-warm); color: var(--ink); border-color: var(--ink); }
 .archive-del { color: var(--muted); font-size: 12px; padding: 0 4px; }
 .archive-del:hover { color: var(--red); }
+
+/* Project row — clickable to expand */
+.arch-proj-row { cursor: pointer; }
+.arch-proj-row:hover { background: #FDFCFA; }
+
+/* Project block wraps the header row + nested tasks */
+.archive-proj-block { border-bottom: 0.5px solid #E3DDD4; }
+.archive-proj-block:last-child { border-bottom: none; }
+.archive-proj-block .archive-row { border-bottom: none; }
+
+/* Nested tasks inside an expanded project row */
+.arch-nested-tasks { background: #FDFCFA; }
+.arch-nested-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 16px 6px 40px;
+  border-bottom: 0.5px solid #F8F6F2;
+}
+.arch-nested-row.last { border-bottom: none; }
+.arch-nested-title {
+  font-family: var(--font-display); font-size: 11px; color: #B0A99F;
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-right: 10px;
+}
+.arch-nested-empty {
+  padding: 8px 16px 8px 40px; font-size: 11px; color: #C4BEB4;
+  font-style: italic; font-family: var(--font-body);
+}
+
 .archive-empty { padding: 40px 0; text-align: center; font-family: var(--font-body); font-style: italic; font-size: 13px; color: var(--muted); }
 
-/* Clear Archive button in board-actions */
+/* Clear Archive button — de-emphasised (destructive but not prominent) */
 .btn-archive-clear {
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase;
-  padding: 5px 13px; border: 1px solid var(--line-md); border-radius: var(--r-xs);
-  background: transparent; color: var(--steel);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  padding: 4px 12px; border: 0.5px solid #E3DDD4; border-radius: 4px;
+  background: transparent; color: #D5CFC6;
 }
-.btn-archive-clear:hover { border-color: var(--red); color: var(--red); background: var(--red-pale); }
+.btn-archive-clear:hover { color: var(--muted); border-color: var(--muted); }
 
 /* ════════════════════════════════════════
    FILTER DROPDOWN

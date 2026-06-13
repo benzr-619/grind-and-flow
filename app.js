@@ -78,6 +78,9 @@ const App = (() => {
   // Mobile tab state — 'inbox' or 'today'; not persisted
   let mobileTab = 'inbox';
 
+  // Archive: tracks which done-project rows are expanded to show nested tasks
+  let _expandedArchiveProjects = new Set();
+
   // Filter state
   let filterTags = [];       // active tag filters
   let filterDate = '';       // scheduled date filter
@@ -269,7 +272,8 @@ const App = (() => {
           <button class="btn" onclick="App.openNewModal()">+ New ${view === 'projects' ? 'Project' : 'Task'}</button>
           <button class="btn btn-primary" id="filter-btn" onclick="App.toggleFilter(event)">Filters${filterTags.length || filterDate ? ' · ' + (filterTags.length + (filterDate ? 1 : 0)) : ''}</button>`;
       } else {
-        const archiveCount = Data.get().archive?.length || 0;
+        const archiveCount = (Data.get().archive?.length || 0) +
+          (Data.get().projects?.filter(p => p.status === 'done').length || 0);
         actEl.innerHTML = archiveCount > 0
           ? `<button class="btn btn-archive-clear" onclick="App.confirmClearArchive()">Clear Archive</button>`
           : '';
@@ -281,7 +285,10 @@ const App = (() => {
     } else {
       const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
       const state = Data.get();
-      let items = view === 'projects' ? state.projects : state.tasks;
+      // Done projects live in Archive view only — exclude from the kanban board
+      let items = view === 'projects'
+        ? state.projects.filter(p => p.status !== 'done')
+        : state.tasks;
 
       // Apply search
       if (searchQuery) {
@@ -541,35 +548,38 @@ const App = (() => {
 
   // ── Project card ──
   function _renderProjCard(item) {
-    const totalTasks = (item.subtasks || []).length;
-    const doneTasks  = (item.subtasks || []).filter(s => s.done).length;
-    const pct = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
     const tags = item.tags || [];
     const firstTag = tags[0] || '';
     const _allTags = _loadTags();
     const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
-
-    const blockedBadge = item.blocked
-      ? `<span class="blocked-badge">Blocked</span>`
-      : item.waiting
-        ? `<span class="waiting-badge">Waiting</span>`
-        : '';
-    const blockedReason = item.blocked && item.blockedReason
-      ? `<div class="proj-blocked-reason"><span>↳</span> ${esc(item.blockedReason)}</div>`
-      : item.waiting && item.waitingReason
-        ? `<div class="proj-waiting-reason"><span>↳</span> ${esc(item.waitingReason)}</div>`
-        : '';
     const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`).join('');
     const isOpen = !!item._open;
+
+    // State pill — only render if waiting or blocked
+    const statePill = item.blocked
+      ? `<span class="proj-pill-blocked">Blocked</span>`
+      : item.waiting
+        ? `<span class="proj-pill-waiting">Waiting</span>`
+        : '';
+
+    // Due date display
+    let dueDateHtml = '';
+    if (item.dueDate) {
+      const dd = new Date(item.dueDate + 'T00:00:00');
+      const dueFmt = dd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      dueDateHtml = `<span class="proj-due">Due ${dueFmt}</span>`;
+    }
 
     const capacitiesIcon = item.capacitiesUrl ? `
       <button class="proj-cap-icon" title="Open in Capacities"
         onclick="event.stopPropagation();window.open('${esc(item.capacitiesUrl)}')">
-        <svg width="14" height="16" viewBox="0 0 14 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg width="11" height="13" viewBox="0 0 14 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M1 1h12v14l-6-3.5L1 15V1z" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linejoin="round"/>
-          <text x="7" y="10" text-anchor="middle" dominant-baseline="middle" font-family="'JetBrains Mono',monospace" font-size="5.5" font-weight="600" fill="currentColor">c</text>
         </svg>
       </button>` : '';
+
+    // Sort subtasks: undone first, done below
+    const sortedSubs = [...(item.subtasks || [])].sort((a, b) => (a.done === b.done) ? 0 : a.done ? 1 : -1);
 
     return `<div class="proj-card ${tagClass}${item.status === 'on-hold' ? ' on-hold' : ''}${isOpen ? ' open' : ''}"
       draggable="true" data-id="${item.id}"
@@ -577,32 +587,22 @@ const App = (() => {
       ondragend="App._onDragEnd(event)">
       <div class="proj-card-head" onclick="App.openDetail('${item.id}')">
         <div class="proj-title-row">
-          <div class="proj-title-and-blocked">
-            <div class="proj-name">${esc(item.title)}</div>
-            ${blockedBadge}
+          <div class="proj-name">${esc(item.title)}</div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+            ${capacitiesIcon}
+            <button class="proj-toggle" onclick="event.stopPropagation();App._toggleProjOpen('${item.id}')">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"
+                style="transform:${isOpen ? 'rotate(0deg)':'rotate(-90deg)'}">
+                <path d="M4 6l4 5 4-5z"/>
+              </svg>
+            </button>
           </div>
-          <button class="proj-toggle" onclick="event.stopPropagation();App._toggleProjOpen('${item.id}')">
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"
-              style="transform:${isOpen ? 'rotate(0deg)':'rotate(-90deg)'}">
-              <path d="M4 6l4 5 4-5z"/>
-            </svg>
-          </button>
         </div>
         <div class="proj-meta">
           ${tagPills}
-          ${item.dateAdded ? `<span class="proj-meta-sep">·</span><span>${_ageLabel(item.dateAdded)}</span>` : ''}
+          ${statePill}
+          ${dueDateHtml}
         </div>
-        ${blockedReason}
-      </div>
-      <div class="proj-progress" onclick="App.openDetail('${item.id}')">
-        ${totalTasks === 0
-          ? `<div class="proj-no-tasks">no tasks yet</div>`
-          : `<div class="proj-progress-row">
-              <span>${doneTasks}/${totalTasks} tasks</span>
-              <span>${pct}%</span>
-            </div>
-            <div class="proj-bar"><div class="proj-bar-fill" style="width:${pct}%"></div></div>`}
-        ${capacitiesIcon}
       </div>
       ${isOpen ? `
         <div class="proj-subtasks">
@@ -610,7 +610,7 @@ const App = (() => {
           <div id="stlist-${item.id}"
             ondragover="App._stListDragOver(event,'${item.id}')"
             ondrop="App._stListDrop(event,'${item.id}')">
-            ${(item.subtasks || []).map(st => _renderSubtaskRow(st, item.id)).join('')}
+            ${sortedSubs.map(st => _renderSubtaskRow(st, item.id)).join('')}
           </div>
           <div class="add-inline-st" onclick="event.stopPropagation()">
             <input type="text" placeholder="Add task..." id="inline-st-${item.id}"
@@ -622,20 +622,14 @@ const App = (() => {
   }
 
   function _renderSubtaskRow(st, projId) {
-    const locTag = st.promoted ? 'ON BOARD' : st.loc === 'backlog' ? 'INBOX' : (st.loc || 'INBOX').toUpperCase();
     return `<div class="subtask-row-item" id="sti-${st.id}" draggable="true"
       ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
       ondragend="App._stDragEnd(event)">
       <span class="st-handle" title="Drag to reorder">⠿</span>
-      <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
+      <input type="checkbox" ${st.done ? 'checked' : ''}
         onclick="event.stopPropagation()"
         onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
       <span class="st-title${st.done ? ' done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
-      <span class="st-loc-tag">${locTag}</span>
-      ${!st.promoted
-        ? `<button class="st-promote" onclick="event.stopPropagation();App._promoteSubtask('${projId}','${st.id}')">→ this week</button>
-           <button class="st-del" onclick="event.stopPropagation();App._removeSubtask('${projId}','${st.id}')">✕</button>`
-        : `<span class="st-promote promoted">✓ on board</span>`}
     </div>`;
   }
 
@@ -676,81 +670,163 @@ const App = (() => {
   }
 
   function _renderArchive(board) {
-    const archive = (Data.get().archive || []).slice().reverse(); // newest first
+    const archive      = (Data.get().archive   || []).slice();
+    const doneProjects = (Data.get().projects  || []).filter(p => p.status === 'done');
+    const allItems     = [...archive, ...doneProjects];
 
-    if (!archive.length) {
+    if (!allItems.length) {
       board.innerHTML = `<div class="archive-empty">Nothing archived yet.</div>`;
       return;
     }
 
     const now = new Date(); now.setHours(0, 0, 0, 0);
-    const yesterdayDate = new Date(now); yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterday = yesterdayDate.toISOString().split('T')[0];
     const thisWeekStart = _weekStart(now);
     const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    const allTags = _loadTags();
+
+    // Canonical date string for grouping/sorting: project uses completedAt, task uses archivedAt
+    function _itemDateStr(item) {
+      if (item.type === 'project') {
+        return item.completedAt ? item.completedAt.split('T')[0] : (item.dateAdded || '');
+      }
+      return item.archivedAt || '';
+    }
 
     function _archiveGroup(item) {
-      const d = item.archivedAt;
+      const d = _itemDateStr(item);
       if (!d) return 'earlier';
-      if (d === yesterday) return 'yesterday';
       const dt = new Date(d + 'T00:00:00');
-      if (dt >= thisWeekStart && d !== yesterday) return 'this-week';
+      if (dt >= thisWeekStart) return 'this-week';
       if (dt >= lastWeekStart) return 'last-week';
       return 'earlier';
     }
 
     function _archiveDateLabel(item) {
-      const d = item.archivedAt;
+      const d = _itemDateStr(item);
       if (!d) return '';
-      if (d === yesterday) return 'yesterday';
       const dt = new Date(d + 'T00:00:00');
-      if (dt >= thisWeekStart) return dt.toLocaleDateString('en-US', { weekday: 'short' });
+      // This week or last week → day name; earlier → "Jun 4"
+      if (dt >= lastWeekStart) return dt.toLocaleDateString('en-US', { weekday: 'short' });
       return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
 
+    // Sort newest first within each group
+    allItems.sort((a, b) => _itemDateStr(b).localeCompare(_itemDateStr(a)));
+
+    function _tagPills(tags) {
+      if (!tags || !tags.length) return '';
+      return tags.map(t =>
+        `<span class="tag-pill arch-tag ${_tagClasses(t, allTags)}">${t.toUpperCase()}</span>`
+      ).join('');
+    }
+
+    function _renderTaskRow(item) {
+      const tagPills  = _tagPills(item.tags || []);
+      const dateLabel = _archiveDateLabel(item);
+      let parentRef = '';
+      if (item.parentProject) {
+        const proj = Data.findProject(item.parentProject)
+          || doneProjects.find(p => p.id === item.parentProject);
+        if (proj) parentRef = `<span class="arch-parent-proj">${esc(proj.title)}</span>`;
+      }
+      return `
+        <div class="archive-row arch-task-row">
+          <div class="arch-icon-slot"></div>
+          <span class="archive-name">${esc(item.title)}</span>
+          ${tagPills}${parentRef}
+          <span class="archive-date">${dateLabel}</span>
+          <div class="archive-actions">
+            <button class="archive-restore" onclick="App.restoreItem('${item.id}')">restore</button>
+            <button class="archive-del" onclick="App.deleteArchiveItem('${item.id}')">✕</button>
+          </div>
+        </div>`;
+    }
+
+    function _renderProjectRow(item) {
+      const tagPills   = _tagPills(item.tags || []);
+      const dateLabel  = _archiveDateLabel(item);
+      const isExpanded = _expandedArchiveProjects.has(item.id);
+      const folderIcon = isExpanded
+        ? `<i class="ti ti-folder-open" style="font-size:14px;color:#C4BEB4"></i>`
+        : `<i class="ti ti-folder"      style="font-size:14px;color:#D5CFC6"></i>`;
+
+      // Nested archived tasks that belong to this project
+      let nestedHtml = '';
+      if (isExpanded) {
+        const nested = archive
+          .filter(t => t.parentProject === item.id)
+          .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
+        if (nested.length) {
+          const lastIdx = nested.length - 1;
+          nestedHtml = `<div class="arch-nested-tasks">${nested.map((t, i) => `
+            <div class="arch-nested-row${i === lastIdx ? ' last' : ''}">
+              <span class="arch-nested-title">${esc(t.title)}</span>
+              <span class="archive-date">${_archiveDateLabel(t)}</span>
+            </div>`).join('')}</div>`;
+        } else {
+          nestedHtml = `<div class="arch-nested-tasks"><div class="arch-nested-empty">No completed tasks</div></div>`;
+        }
+      }
+
+      return `
+        <div class="archive-proj-block${isExpanded ? ' expanded' : ''}">
+          <div class="archive-row arch-proj-row" onclick="App._toggleArchiveProject('${item.id}')">
+            <div class="arch-icon-slot">${folderIcon}</div>
+            <span class="archive-name arch-proj-name">${esc(item.title)}</span>
+            ${tagPills}
+            <span class="archive-date">${dateLabel}</span>
+            <div class="archive-actions" onclick="event.stopPropagation()">
+              <button class="archive-restore" onclick="App._restoreDoneProject('${item.id}')">restore</button>
+              <button class="archive-del" onclick="App._deleteDoneProject('${item.id}')">✕</button>
+            </div>
+          </div>
+          ${nestedHtml}
+        </div>`;
+    }
+
     const GROUPS = [
-      { key: 'yesterday', label: 'Yesterday'  },
-      { key: 'this-week', label: 'This Week'  },
-      { key: 'last-week', label: 'Last Week'  },
-      { key: 'earlier',   label: 'Earlier'    },
+      { key: 'this-week', label: 'This Week' },
+      { key: 'last-week', label: 'Last Week' },
+      { key: 'earlier',   label: 'Earlier'   },
     ];
 
     let html = '<div class="archive-section">';
     GROUPS.forEach(g => {
-      const items = archive.filter(i => _archiveGroup(i) === g.key);
+      const items = allItems.filter(i => _archiveGroup(i) === g.key);
       if (!items.length) return;
       html += `
         <div class="archive-group">
           <div class="archive-group-head">
             <span>${g.label.toUpperCase()}</span>
-            <span>${items.length} DONE</span>
+            <span>${items.length} done</span>
           </div>
-          ${items.map(item => {
-            const tags = item.tags || [];
-            const firstTag = tags[0] || '';
-            const _archAllTags = _loadTags();
-            const tagClass = firstTag ? ` ${_tagClasses(firstTag, _archAllTags)}` : '';
-            const tagPill  = firstTag
-              ? `<span class="tag-pill arch-tag ${_tagClasses(firstTag, _archAllTags)}">${firstTag.toUpperCase()}</span>`
-              : '';
-            return `
-              <div class="archive-row${item.type === 'project' ? ' is-project' : ''}${tagClass}">
-                <span class="archive-dot"></span>
-                <span class="archive-name">${esc(item.title)}</span>
-                <div class="archive-row-meta">
-                  ${tagPill}
-                  <span class="archive-date">${_archiveDateLabel(item)}</span>
-                </div>
-                <div class="archive-actions">
-                  <button class="archive-restore" onclick="App.restoreItem('${item.id}')">restore</button>
-                  <button class="archive-del" onclick="App.deleteArchiveItem('${item.id}')">✕</button>
-                </div>
-              </div>`;
-          }).join('')}
+          ${items.map(item => item.type === 'project' ? _renderProjectRow(item) : _renderTaskRow(item)).join('')}
         </div>`;
     });
     html += '</div>';
     board.innerHTML = html;
+  }
+
+  function _toggleArchiveProject(id) {
+    if (_expandedArchiveProjects.has(id)) _expandedArchiveProjects.delete(id);
+    else _expandedArchiveProjects.add(id);
+    const board = document.getElementById('board');
+    if (board) _renderArchive(board);
+  }
+
+  function _restoreDoneProject(id) {
+    const proj = Data.findProject(id); if (!proj) return;
+    proj.status = 'active';
+    proj.completedAt = null;
+    Data.upsertProject(proj);
+    _expandedArchiveProjects.delete(id);
+    renderBoard();
+  }
+
+  function _deleteDoneProject(id) {
+    Data.deleteItem(id);
+    _expandedArchiveProjects.delete(id);
+    renderBoard();
   }
 
   function confirmClearArchive() {
@@ -758,7 +834,7 @@ const App = (() => {
       'Clear archive?',
       'This permanently deletes all archived items and cannot be undone.',
       'Clear all',
-      () => { Data.clearArchive(); renderBoard(); }
+      () => { Data.clearArchive(); _expandedArchiveProjects.clear(); renderBoard(); }
     );
   }
 
@@ -825,16 +901,12 @@ const App = (() => {
     const doingTasks = state.tasks.filter(t => t.status === 'doing');
     const task = doingTasks[0] || null;
 
+    // Hide entire focus zone (doing + timer track) when no active task
+    const fz = document.getElementById('focus-zone');
+    if (fz) fz.style.display = task ? '' : 'none';
+
     if (!task) {
-      sec.innerHTML = `
-        <div class="doing-strip">
-          <div class="doing-drop-hint" id="doing-cards-row"
-            ondragover="App._onDoingDragOver(event)"
-            ondragleave="App._onDoingDragLeave(event)"
-            ondrop="App._onDoingDrop(event)">
-            drag a task here to focus
-          </div>
-        </div>`;
+      sec.innerHTML = '';
     } else {
       const isActive = timerTask && timerTask.id === task.id;
       const isRunning = isActive && timerRunning;
@@ -944,6 +1016,7 @@ const App = (() => {
     }
     item.status = 'done';
     _saveCompletionDate(item.id);
+    _syncSubtaskFromTask(item.id);
     Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
@@ -1199,7 +1272,7 @@ const App = (() => {
         item.backlogEnteredAt = _today();
       }
       // Completion date tracking
-      if (colId === 'done') _saveCompletionDate(item.id);
+      if (colId === 'done') { _saveCompletionDate(item.id); _syncSubtaskFromTask(item.id); }
       else _clearCompletionDate(item.id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
@@ -1261,6 +1334,20 @@ const App = (() => {
     }, { offset: Number.NEGATIVE_INFINITY }).element;
   }
 
+  // ── Two-way subtask sync ──
+  // When a task is marked done on the board, check off its parent subtask.
+  function _syncSubtaskFromTask(taskId) {
+    const task = Data.findItem(taskId);
+    if (!task || task.type !== 'task' || !task.parentProject) return;
+    const proj = Data.findProject(task.parentProject);
+    if (!proj) return;
+    const st = (proj.subtasks || []).find(s => s.promotedTaskId === taskId);
+    if (st && !st.done) {
+      st.done = true;
+      Data.upsertProject(proj);
+    }
+  }
+
   // ── Subtask actions ──
   function _toggleSubtask(projId, stId, checked) {
     // Pending (new-project modal) path
@@ -1273,11 +1360,31 @@ const App = (() => {
     }
     const proj = Data.findProject(projId); if (!proj) return;
     const st = proj.subtasks.find(s => s.id === stId);
-    if (st) { st.done = checked; Data.upsertProject(proj); }
+    if (!st) return;
+    st.done = checked;
+    // Two-way sync: if checking a promoted subtask, mark the promoted task done
+    if (checked && st.promoted && st.promotedTaskId) {
+      const promotedTask = Data.findItem(st.promotedTaskId);
+      if (promotedTask && promotedTask.status !== 'done') {
+        promotedTask.status = 'done';
+        _saveCompletionDate(promotedTask.id);
+        Data.upsertTask(promotedTask);
+      }
+    }
+    Data.upsertProject(proj);
     const span = document.getElementById('stspan-' + stId);
     if (span) span.className = 'st-title' + (checked ? ' done' : '');
     renderBoard();
   }
+  // Replaces a subtask row element in-place with fresh HTML from _buildModalSubtaskRow.
+  function _refreshSubtaskRow(projId, st) {
+    const row = document.getElementById('sti-' + st.id);
+    if (!row) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = _buildModalSubtaskRow(st, projId);
+    row.replaceWith(tmp.firstElementChild);
+  }
+
   function _promoteSubtask(projId, stId) {
     const proj = Data.findProject(projId); if (!proj) return;
     const st = proj.subtasks.find(s => s.id === stId);
@@ -1287,17 +1394,10 @@ const App = (() => {
     Data.upsertProject(proj);
     Data.upsertTask({ id: newTaskId, type:'task', title:st.title, status:'this-week',
       parentProject:projId, dueDate:'', scheduledDate:'', notes:'', dateAdded:_today(), blocked:false, tags:[...(proj.tags||[])] });
-    // Instant DOM update — no waiting for renderBoard
-    const row = document.getElementById('sti-' + stId);
-    if (row) {
-      const cb = row.querySelector('input[type="checkbox"]');
-      if (cb) cb.disabled = true;
-      row.querySelectorAll('.st-promote, .st-del').forEach(b => b.remove());
-      row.insertAdjacentHTML('beforeend',
-        `<button class="st-promote promoted" title="Click to recall from task board" onclick="App._recallSubtask('${projId}','${stId}')">✓ on board</button>`);
-    }
+    _refreshSubtaskRow(projId, st);
     renderBoard();
   }
+
   function _recallSubtask(projId, stId) {
     const proj = Data.findProject(projId); if (!proj) return;
     const st = proj.subtasks.find(s => s.id === stId);
@@ -1305,18 +1405,9 @@ const App = (() => {
     const promotedTaskId = st.promotedTaskId;
     st.promoted = false; st.loc = 'backlog';
     delete st.promotedTaskId;
-    Data.upsertProject(proj); // persist un-promoted state before deleteItem runs
+    Data.upsertProject(proj);
     if (promotedTaskId) Data.deleteItem(promotedTaskId);
-    // Instant DOM update
-    const row = document.getElementById('sti-' + stId);
-    if (row) {
-      const cb = row.querySelector('input[type="checkbox"]');
-      if (cb) cb.disabled = false;
-      row.querySelectorAll('.st-promote, .st-del').forEach(b => b.remove());
-      row.insertAdjacentHTML('beforeend',
-        `<button class="st-promote" onclick="App._promoteSubtask('${projId}','${stId}')">→ task board</button>
-         <button class="st-del" onclick="App._removeSubtask('${projId}','${stId}')">✕</button>`);
-    }
+    _refreshSubtaskRow(projId, st);
     renderBoard();
   }
   function _addSubtask(projId) {
@@ -1359,22 +1450,69 @@ const App = (() => {
     document.getElementById('sti-' + stId)?.remove(); renderBoard();
   }
 
-  // Modal subtask row (slightly different from inline card row — used inside modal editor)
+  function _editSubtask(projId, stId, spanEl) {
+    const proj = Data.findProject(projId); if (!proj) return;
+    const st = proj.subtasks.find(s => s.id === stId); if (!st) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = st.title;
+    input.className = 'st-title-edit';
+    let saved = false;
+    function commit() {
+      if (saved) return; saved = true;
+      const val = input.value.trim();
+      if (val && val !== st.title) {
+        st.title = val;
+        Data.upsertProject(proj);
+        // Keep promoted task title in sync
+        if (st.promotedTaskId) {
+          const task = Data.findItem(st.promotedTaskId);
+          if (task) { task.title = val; Data.upsertTask(task); }
+        }
+      }
+      _refreshSubtaskRow(projId, st);
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = st.title; saved = true; input.blur(); _refreshSubtaskRow(projId, st); }
+    });
+    spanEl.replaceWith(input);
+    input.focus(); input.select();
+  }
+
+  // Modal subtask row — hover-reveal promote, recall only if task not done
   // hidePromote = true when the project isn't saved yet (new-project modal)
   function _buildModalSubtaskRow(st, projId, hidePromote = false) {
+    // Check if the promoted task is already done (no recall in that case)
+    const promotedTask = st.promoted && st.promotedTaskId ? Data.findItem(st.promotedTaskId) : null;
+    const promotedTaskDone = promotedTask && promotedTask.status === 'done';
+
+    const onBoardBadge = st.promoted
+      ? `<span class="st-on-board-badge">on board ↩</span>` : '';
+    const recallBtn = st.promoted && !promotedTaskDone
+      ? `<button class="st-recall" onclick="event.stopPropagation();App._recallSubtask('${projId}','${st.id}')">recall</button>` : '';
+    const promoteBtn = !st.promoted && !st.done && !hidePromote
+      ? `<button class="st-promote-btn" onclick="event.stopPropagation();App._promoteSubtask('${projId}','${st.id}')">↑ promote</button>` : '';
+    const delBtn = !st.promoted && !hidePromote
+      ? `<button class="st-del" onclick="event.stopPropagation();App._removeSubtask('${projId}','${st.id}')">✕</button>` : '';
+    const newDelBtn = hidePromote && !st.promoted
+      ? `<button class="st-del" onclick="event.stopPropagation();App._removeSubtask('${projId}','${st.id}')">✕</button>` : '';
+
     return `<div class="subtask-row-item" id="sti-${st.id}" draggable="true"
       ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
       ondragend="App._stDragEnd(event)">
       <span class="st-handle">⠿</span>
-      <input type="checkbox" ${st.done ? 'checked' : ''} ${st.promoted ? 'disabled' : ''}
+      <input type="checkbox" ${st.done ? 'checked' : ''}
+        onclick="event.stopPropagation()"
         onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
-      <span class="st-title${st.done ? ' done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
-      ${st.promoted
-        ? `<button class="st-promote promoted" title="Click to recall from task board" onclick="App._recallSubtask('${projId}','${st.id}')">✓ on board</button>`
-        : hidePromote
-          ? `<button class="st-del" onclick="App._removeSubtask('${projId}','${st.id}')">✕</button>`
-          : `<button class="st-promote" onclick="App._promoteSubtask('${projId}','${st.id}')">→ task board</button>
-             <button class="st-del" onclick="App._removeSubtask('${projId}','${st.id}')">✕</button>`}
+      <span class="st-title${st.done ? ' done' : ''}" id="stspan-${st.id}"
+        onclick="event.stopPropagation();App._editSubtask('${projId}','${st.id}',this)"
+        title="Click to edit">${esc(st.title)}</span>
+      ${onBoardBadge}
+      ${promoteBtn}
+      ${recallBtn}
+      ${hidePromote ? newDelBtn : delBtn}
     </div>`;
   }
 
@@ -1433,19 +1571,8 @@ const App = (() => {
     openItemId = id;
     history.replaceState(null, '', '#' + id);
     const isProject = item.type === 'project';
-    const cols = isProject ? PROJECT_COLS : TASK_COLS;
     const allTags = _loadTags();
     const itemTags = item.tags || [];
-
-    const moveBtns = cols.map(c =>
-      `<button class="move-btn${item.status === c.id ? ' current' : ''}"
-        onclick="App._moveItem('${id}','${c.id}',this)">${c.label}</button>`
-    ).join('');
-
-    const projLinkHtml = !isProject && item.parentProject
-      ? `<div class="fg"><label class="modal-label">Project</label>
-         <div style="font-size:12.5px;color:var(--steel);padding:5px 0;font-family:var(--font-body)">${esc(Data.findProject(item.parentProject)?.title || '—')}</div></div>`
-      : '';
 
     const tagPillsHtml = allTags.map(t =>
       `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
@@ -1453,46 +1580,109 @@ const App = (() => {
         oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
     ).join('');
 
-    const capacitiesHtml = isProject ? _buildCapacitiesSection(item) : '';
+    if (isProject) {
+      // ── Project detail modal — new layout ──
+      const statusOpts = [...PROJECT_COLS, { id: 'done', label: 'Done' }].map(c =>
+        `<option value="${c.id}"${item.status === c.id ? ' selected' : ''}>${c.label}</option>`
+      ).join('');
 
-    const subtaskHtml = isProject ? `
-      <div class="modal-section">
-        <label class="modal-label">Tasks <span class="modal-label-hint">drag to reorder · promote to task board</span></label>
-        <div class="subtask-list" id="stlist-${item.id}"
-          ondragover="App._stListDragOver(event,'${item.id}')"
-          ondrop="App._stListDrop(event,'${item.id}')">
-          ${(item.subtasks || []).map(st => _buildModalSubtaskRow(st, item.id)).join('') || '<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0;font-family:var(--font-body)">No tasks yet</div>'}
-        </div>
-        <div style="display:flex;gap:5px;margin-top:7px">
-          <input type="text" class="modal-input" id="new-st-${item.id}" placeholder="Add task..."
-            onkeydown="if(event.key==='Enter')App._addSubtask('${item.id}')" />
-          <button class="btn-close" onclick="App._addSubtask('${item.id}')">+ add</button>
-        </div>
-      </div>` : '';
+      // Sort subtasks: undone first, done below
+      const sortedSubs = [...(item.subtasks || [])].sort((a, b) => (a.done === b.done) ? 0 : a.done ? 1 : -1);
+      const subtaskRows = sortedSubs.map(st => _buildModalSubtaskRow(st, item.id)).join('') ||
+        '<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0;font-family:var(--font-body)">No tasks yet</div>';
 
-    const blockedSection = isProject
-      ? `<div class="fg"><label class="modal-label">Blocked?</label>
-          <div class="blocked-toggle">
-            <button class="blocked-opt${!item.blocked && !item.waiting ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
-            <button class="blocked-opt${item.waiting ? ' active-wait' : ''}" id="bwait" onclick="App._setBlocked('${id}','waiting')">⏳ Waiting On</button>
-            <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+      const stateIsWaiting = item.waiting;
+      const stateIsBlocked = item.blocked;
+      const stateIsClear   = !stateIsWaiting && !stateIsBlocked;
+
+      const autoWaitNote = item.waitingAuto
+        ? `<div class="proj-auto-wait-note">Auto-set — a linked task is blocked.</div>` : '';
+
+      const capSection = _buildCapacitiesSection(item);
+
+      _showModal(`
+        <input type="text" class="proj-modal-title-input" id="d-title" value="${esc(item.title)}" />
+        <div class="modal-section">
+          <div class="fg"><label class="modal-label">Tags</label>
+            <div class="modal-tags-row" id="modal-tags-row">${tagPillsHtml}</div>
+            <div class="modal-tag-add" style="margin-top:7px">
+              <input type="text" id="new-tag-input" placeholder="New tag..." />
+              <button onclick="App._addCustomTag('${id}')">+ add tag</button>
+            </div>
           </div>
-          <input type="text" class="modal-input" id="d-waiting-reason"
-            placeholder="Waiting on..." value="${esc(item.waitingReason || '')}"
-            style="margin-top:7px;display:${item.waiting ? 'block' : 'none'}" />
-          <input type="text" class="modal-input" id="d-blocked-reason"
-            placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
-            style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
-        </div>`
-      : `<div class="fg"><label class="modal-label">Blocked?</label>
-          <div class="blocked-toggle">
-            <button class="blocked-opt${!item.blocked ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
-            <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+          <div class="proj-modal-grid" style="grid-template-columns:1fr 1fr">
+            <div class="fg"><label class="modal-label">Status</label>
+              <select class="modal-input" id="d-status" data-prev="${item.status}"
+                onchange="App._onProjStatusChange('${id}',this)">${statusOpts}</select>
+              <div id="status-done-msg" style="display:none;font-size:10px;color:#C98B2A;margin-top:5px"></div>
+            </div>
+            <div class="fg"><label class="modal-label">Due date</label>
+              <input type="date" class="modal-input" id="d-due" value="${item.dueDate || ''}" /></div>
           </div>
-          <input type="text" class="modal-input" id="d-blocked-reason"
-            placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
-            style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
-        </div>`;
+          <div class="fg"><label class="modal-label">Notes</label>
+            <textarea class="modal-input" id="d-notes" style="height:52px;resize:vertical">${esc(item.notes || '')}</textarea></div>
+        </div>
+        <div class="modal-section">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px">
+            <label class="modal-label" style="margin-bottom:0">Tasks</label>
+            <span style="font-size:9px;color:var(--muted);font-style:italic">drag to reorder</span>
+          </div>
+          <div class="subtask-list" id="stlist-${item.id}"
+            ondragover="App._stListDragOver(event,'${item.id}')"
+            ondrop="App._stListDrop(event,'${item.id}')">
+            ${subtaskRows}
+          </div>
+          <div style="display:flex;gap:5px;margin-top:7px">
+            <input type="text" class="modal-input" id="new-st-${item.id}" placeholder="Add task..."
+              onkeydown="if(event.key==='Enter')App._addSubtask('${item.id}')" />
+            <button class="btn-close" onclick="App._addSubtask('${item.id}')">+ add</button>
+          </div>
+        </div>
+        <div class="modal-section">
+          <label class="modal-label" style="margin-bottom:7px">State</label>
+          <div class="proj-state-seg">
+            <button class="proj-state-seg-btn${stateIsClear ? ' active' : ''}" id="pstate-clear" onclick="App._setProjState('${id}','clear')">Clear</button>
+            <button class="proj-state-seg-btn${stateIsWaiting ? ' active' : ''}" id="pstate-waiting" onclick="App._setProjState('${id}','waiting')">Waiting</button>
+            <button class="proj-state-seg-btn${stateIsBlocked ? ' active' : ''}" id="pstate-blocked" onclick="App._setProjState('${id}','blocked')">Blocked</button>
+          </div>
+          ${autoWaitNote}
+          <textarea class="modal-input" id="d-waiting-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsWaiting ? 'block' : 'none'}" placeholder="Reason...">${esc(item.waitingReason || '')}</textarea>
+          <textarea class="modal-input" id="d-blocked-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsBlocked ? 'block' : 'none'}" placeholder="Reason...">${esc(item.blockedReason || '')}</textarea>
+        </div>
+        ${capSection}
+        <div class="modal-footer">
+          <div id="del-zone"><button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button></div>
+          <div class="modal-footer-right">
+            <button class="btn-close" onclick="App._closeDetail()">Cancel</button>
+            <button class="btn-save" onclick="App._saveDetail('${id}');App._closeDetail()">Save</button>
+          </div>
+        </div>`, id);
+      return;
+    }
+
+    // ── Task detail modal — unchanged layout ──
+    const cols = TASK_COLS;
+    const moveBtns = cols.map(c =>
+      `<button class="move-btn${item.status === c.id ? ' current' : ''}"
+        onclick="App._moveItem('${id}','${c.id}',this)">${c.label}</button>`
+    ).join('');
+
+    const allProjects = (Data.get().projects || []).filter(p => p.status !== 'done');
+    const projLinkHtml = `<div class="fg"><label class="modal-label">Project</label>
+      <select class="modal-input" id="d-parent-project">
+        <option value="">— none —</option>
+        ${allProjects.map(p => `<option value="${p.id}"${item.parentProject === p.id ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}
+      </select></div>`;
+
+    const blockedSection = `<div class="fg"><label class="modal-label">Blocked?</label>
+        <div class="blocked-toggle">
+          <button class="blocked-opt${!item.blocked ? ' active-no' : ''}" id="bno" onclick="App._setBlocked('${id}',false)">✓ Clear</button>
+          <button class="blocked-opt${item.blocked ? ' active-yes' : ''}" id="byes" onclick="App._setBlocked('${id}',true)">⏸ Blocked</button>
+        </div>
+        <input type="text" class="modal-input" id="d-blocked-reason"
+          placeholder="Reason (optional)..." value="${esc(item.blockedReason || '')}"
+          style="margin-top:7px;display:${item.blocked ? 'block' : 'none'}" />
+      </div>`;
 
     _showModal(`
       <div class="modal-title">${esc(item.title)}</div>
@@ -1523,8 +1713,6 @@ const App = (() => {
           <textarea class="modal-input" id="d-notes">${esc(item.notes || '')}</textarea></div>
         ${blockedSection}
       </div>
-      ${subtaskHtml}
-      ${capacitiesHtml}
       <div class="modal-footer">
         <div id="del-zone"><button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button></div>
         <div class="modal-footer-right">
@@ -1532,6 +1720,42 @@ const App = (() => {
           <button class="btn-save" onclick="App._saveDetail('${id}');App._closeDetail()">Save</button>
         </div>
       </div>`, id);
+  }
+
+  // Three-way state segmented control for project detail modal
+  function _setProjState(id, state) {
+    const item = Data.findProject(id); if (!item) return;
+    item.blocked     = (state === 'blocked');
+    item.waiting     = (state === 'waiting');
+    item.waitingAuto = false; // manual override clears auto flag
+    Data.upsertProject(item);
+    // Update segmented buttons
+    ['clear','waiting','blocked'].forEach(s => {
+      document.getElementById('pstate-' + s)?.classList.toggle('active', s === state);
+    });
+    // Show/hide reason textareas
+    const waitTa = document.getElementById('d-waiting-reason');
+    const blkTa  = document.getElementById('d-blocked-reason');
+    if (waitTa) waitTa.style.display = state === 'waiting' ? 'block' : 'none';
+    if (blkTa)  blkTa.style.display  = state === 'blocked'  ? 'block' : 'none';
+  }
+
+  function _onProjStatusChange(id, sel) {
+    const msg     = document.getElementById('status-done-msg');
+    const saveBtn = document.querySelector('#modal-root .btn-save');
+    if (sel.value === 'done') {
+      const activeTasks = Data.get().tasks.filter(t => t.parentProject === id);
+      if (activeTasks.length > 0) {
+        const n = activeTasks.length;
+        if (msg) { msg.textContent = `${n} task${n > 1 ? 's' : ''} still active — complete or delete them first`; msg.style.display = 'block'; }
+        if (saveBtn) saveBtn.disabled = true;
+        sel.value = sel.dataset.prev || 'active'; // revert dropdown
+        return;
+      }
+    }
+    if (msg) msg.style.display = 'none';
+    if (saveBtn) saveBtn.disabled = false;
+    sel.dataset.prev = sel.value;
   }
 
   function _toggleItemTag(id, tag, btn) {
@@ -1749,7 +1973,7 @@ const App = (() => {
     if (item) {
       const old = item.status; item.status = status;
       if (status === 'backlog' && old !== 'backlog') item.backlogEnteredAt = _today();
-      if (status === 'done') _saveCompletionDate(id);
+      if (status === 'done') { _saveCompletionDate(id); _syncSubtaskFromTask(id); }
       else _clearCompletionDate(id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
@@ -1775,12 +1999,32 @@ const App = (() => {
     if (r)  item.blockedReason  = r.value  || '';
     if (wr) item.waitingReason  = wr.value || '';
     if (item.type === 'project') {
+      const statusSel = document.getElementById('d-status');
+      if (statusSel) {
+        const newStatus = statusSel.value;
+        if (newStatus === 'done') {
+          const activeTasks = Data.get().tasks.filter(t => t.parentProject === id);
+          if (activeTasks.length > 0) return; // hard block — validation should have caught this
+          if (!item.completedAt || item.status !== 'done') {
+            item.completedAt = new Date().toISOString();
+          }
+        } else if (item.status === 'done' && newStatus !== 'done') {
+          item.completedAt = null;
+        }
+        item.status = newStatus;
+      }
       const capInput = document.getElementById('d-capacities-url');
       if (capInput && capInput.value.trim().startsWith('capacities://')) {
         item.capacitiesUrl = capInput.value.trim();
       }
       Data.upsertProject(item);
     } else {
+      const projSel = document.getElementById('d-parent-project');
+      if (projSel !== null) {
+        const newParent = projSel.value || null;
+        item.parentProject = newParent;
+        item.type = newParent ? 'task' : 'standalone';
+      }
       Data.upsertTask(item);
     }
   }
@@ -1869,12 +2113,12 @@ const App = (() => {
         </div></div>
       <div class="fg"><label class="modal-label">Status</label>
         <select class="modal-input" id="f-status">${statusOpts}</select></div>
-      <div class="field-row">
+      ${view === 'tasks' ? `<div class="field-row">
         <div class="fg"><label class="modal-label">Scheduled date</label>
           <input type="date" class="modal-input" id="f-sched" /></div>
         <div class="fg"><label class="modal-label">Scheduled time</label>
           <input type="time" class="modal-input" id="f-sched-time" /></div>
-      </div>
+      </div>` : ''}
       <div class="fg"><label class="modal-label">Due date</label>
         <input type="date" class="modal-input" id="f-due" /></div>
       <div class="fg"><label class="modal-label">Notes</label>
@@ -1908,7 +2152,7 @@ const App = (() => {
     if (view === 'projects') {
       const subtasks = [..._pendingSubtasks];
       _pendingProjectId = null; _pendingSubtasks = [];
-      Data.upsertProject({ id, type:'project', title, status, tags, dueDate:due, scheduledDate:sched, scheduledTime:schedTime, notes, dateAdded:_today(), subtasks, blocked:false });
+      Data.upsertProject({ id, type:'project', title, status, tags, dueDate:due, notes, dateAdded:_today(), subtasks, blocked:false });
     } else {
       const parent = _newType === 'task' ? (document.getElementById('f-parent')?.value || null) : null;
       const backlogEnteredAt = status === 'backlog' ? _today() : '';
@@ -2123,9 +2367,10 @@ const App = (() => {
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
     removeFromDoing, markDoingDone,
-    _closeDetail, _saveDetail, _setBlocked, _moveItem,
+    _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
-    _toggleSubtask, _promoteSubtask, _recallSubtask, _addSubtask, _removeSubtask,
+    _toggleArchiveProject, _restoreDoneProject, _deleteDoneProject,
+    _toggleSubtask, _promoteSubtask, _recallSubtask, _editSubtask, _addSubtask, _removeSubtask,
     _setNewType, _saveNew,
     _stDragStart, _stDragEnd, _stListDragOver, _stListDrop,
     _toggleProjOpen, _inlineAddSubtask,
