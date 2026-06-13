@@ -325,10 +325,8 @@ const App = (() => {
         }
         return `<div class="col-wrap">
           <div class="col-head${col.id === 'this-week' ? ' this-week' : ''}">
-            <span class="col-name">
-              ${col.label.toUpperCase()} <span class="col-count">${String(colItems.length).padStart(2,'0')}</span>
-            </span>
-            <span class="col-hint">${col.hint}</span>
+            <span class="col-name">${col.label.toUpperCase()}</span>
+            <span class="col-count">${String(colItems.length).padStart(2,'0')}</span>
           </div>
           <div class="col-body" data-col="${col.id}"
             ondragover="App._onDragOver(event,'${col.id}')"
@@ -528,23 +526,14 @@ const App = (() => {
       <div class="card-top">
         <div style="flex:1;min-width:0">
           <div class="card-title">${esc(item.title)}</div>
-          ${blockedReasonHtml}
           ${projHtml}
         </div>
         <div class="card-top-right">
           ${blockedHtml}
-          ${ageHtml}
         </div>
       </div>
-      <div class="card-bottom">
-        <div class="card-bottom-left">
-          ${tagPills}
-          ${subHtml}
-          ${schedHtml}
-        </div>
-        <div class="card-bottom-right">
-          ${dayHtml}
-        </div>
+      <div class="card-meta">
+        ${tagPills}${subHtml}${schedHtml}${dayHtml}${ageHtml}
       </div>
       ${focusBtn}
     </div>`;
@@ -838,13 +827,12 @@ const App = (() => {
 
     if (!task) {
       sec.innerHTML = `
-        <div class="doing-label-row"><span class="doing-label">Doing</span></div>
         <div class="doing-strip">
           <div class="doing-drop-hint" id="doing-cards-row"
             ondragover="App._onDoingDragOver(event)"
             ondragleave="App._onDoingDragLeave(event)"
             ondrop="App._onDoingDrop(event)">
-            drag a task here to commit
+            drag a task here to focus
           </div>
         </div>`;
     } else {
@@ -854,12 +842,11 @@ const App = (() => {
       const isPushy = timerAtBoundary && isActive && TIMER_SEQ[timerSegIdx].kind !== 'break';
       const tags = task.tags || [];
       sec.innerHTML = `
-        <div class="doing-label-row"><span class="doing-label">Doing</span></div>
         <div class="doing-strip">
           <button class="doing-flank doing-flank-left"
             onclick="event.stopPropagation();App.removeFromDoing('${task.id}')"
             title="Back to Next">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
             <span>next</span>
           </button>
           <div class="doing-band${isActive ? ' now' : ''}${isCalm ? ' boundary-calm' : ''}${isPushy ? ' boundary-pushy' : ''}"
@@ -870,36 +857,28 @@ const App = (() => {
             <button class="doing-play-btn${isRunning ? ' running' : ''}"
               onclick="${isRunning ? 'App.timerTogglePlay()' : `App.activateTask('${task.id}')`}">
               ${isRunning
-                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
-                : `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>`}
+                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
+                : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>`}
             </button>
             <div class="doing-identity">
               <div class="doing-meta-top">
-                ${isActive ? `<span class="tag-pill" style="font-size:8px;padding:1px 5px;background:var(--sage-pale);border-color:var(--sage-deep);color:var(--sage-deep)">● NOW</span>` : ''}
-                ${tags.slice(0,1).map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}" style="font-size:8px;padding:1px 5px">${t.toUpperCase()}</span>`).join('')}
+                ${tags.slice(0,2).map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}">${t.toUpperCase()}</span>`).join('')}
               </div>
               <div class="doing-task-title">${esc(task.title)}</div>
             </div>
             <div class="doing-divider"></div>
             <div class="doing-timer-zone">
               <div class="focus-clock">
-                <div class="focus-clock-label">Focus</div>
-                <div class="focus-clock-time-row">
-                  <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
-                  <span class="focus-clock-remaining">remaining</span>
-                </div>
+                <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
+                ${isActive ? `<div class="doing-elapsed-val">${timerTask._elapsed || 0}m</div>` : ''}
               </div>
-              ${isActive ? `<div class="doing-elapsed">
-                <div class="doing-elapsed-lbl">Elapsed</div>
-                <div class="doing-elapsed-val">${timerTask._elapsed || 0}<span style="font-size:11px;color:var(--muted);font-style:normal;margin-left:1px">m</span></div>
-              </div>` : ''}
             </div>
           </div>
           <button class="doing-flank doing-flank-right"
             onclick="event.stopPropagation();App.markDoingDone('${task.id}')"
             title="Mark Done">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             <span>done</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </button>
         </div>`;
     }
@@ -1010,20 +989,7 @@ const App = (() => {
       }
     }
 
-    track.innerHTML = `
-      <div class="timer-segments">
-        ${segs}
-        <div class="timer-loops">
-          <button class="timer-loops-btn" title="Loop">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12a9 9 0 0 1 15.3-6.4L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.3 6.4L3 16M3 21v-5h5"/>
-            </svg>
-          </button>
-          <span class="timer-loops-lbl">loops</span>
-        </div>
-      </div>
-      <div class="timer-labels">${labels}<div style="width:56px"></div></div>
-      ${boundaryBanner}`;
+    track.innerHTML = `<div class="timer-segments">${segs}</div>${boundaryBanner}`;
   }
 
   // ── Timer logic ──
