@@ -44,6 +44,7 @@ const Data = (() => {
       tags:           p.tags           || [],
       subtasks:       p.subtasks       || [],
       capacities_url: p.capacitiesUrl  || null,
+      completed_at:   p.completedAt    || null,
     };
   }
 
@@ -66,6 +67,7 @@ const Data = (() => {
       tags:          r.tags            || [],
       subtasks:      r.subtasks        || [],
       capacitiesUrl: r.capacities_url  || null,
+      completedAt:   r.completed_at    || null,
     };
   }
 
@@ -145,6 +147,15 @@ const Data = (() => {
   }
 
   function _archFromDb(r) {
+    // archive.tags, archive.blocked, and archive.subtasks are stored as `text`
+    // (not jsonb/boolean) — parse them defensively.
+    function _parseJson(v, fallback) {
+      if (Array.isArray(v)) return v;
+      if (typeof v === 'string' && v.trim().startsWith('[')) {
+        try { return JSON.parse(v); } catch (e) { return fallback; }
+      }
+      return fallback;
+    }
     return {
       id:             r.id,
       type:           r.type,
@@ -157,10 +168,10 @@ const Data = (() => {
       scheduledDate:  r.scheduled_date         || '',
       notes:          r.notes                  || '',
       dateAdded:      r.date_added             || '',
-      blocked:        !!r.blocked,
+      blocked:        r.blocked === true || r.blocked === 'true',
       blockedReason:  r.blocked_reason         || '',
-      tags:           r.tags                   || [],
-      subtasks:       r.subtasks               || [],
+      tags:           _parseJson(r.tags, []),
+      subtasks:       _parseJson(r.subtasks, []),
     };
   }
 
@@ -425,11 +436,16 @@ const Data = (() => {
     _del(item.type === 'project' ? 'projects' : 'tasks', id);
   }
 
-  // clearArchive — permanently deletes all items from the archive.
+  // clearArchive — permanently deletes all items from the archive table
+  // AND all projects with status === 'done' from the projects table.
   function clearArchive() {
-    const ids = _state.archive.map(i => i.id);
+    const archiveIds = _state.archive.map(i => i.id);
     _state.archive = [];
-    ids.forEach(id => _del('archive', id));
+    archiveIds.forEach(id => _del('archive', id));
+
+    const doneProjects = _state.projects.filter(p => p.status === 'done');
+    _state.projects = _state.projects.filter(p => p.status !== 'done');
+    doneProjects.forEach(p => _del('projects', p.id));
   }
 
   function restoreFromArchive(id) {
