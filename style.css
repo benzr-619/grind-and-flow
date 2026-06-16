@@ -1993,7 +1993,13 @@ select.modal-input { cursor: pointer; }
   text-transform: uppercase; letter-spacing: 0.05em; color: var(--steel-soft);
   backdrop-filter: blur(4px);
 }
-.legend-row { display: flex; align-items: center; gap: 8px; }
+.legend-hint {
+  font-family: var(--font-mono); font-size: 8.5px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin-bottom: 4px; opacity: 0.7;
+}
+.legend-row { display: flex; align-items: center; gap: 8px; border-radius: 5px; padding: 2px 4px; margin: 0 -4px; transition: background 120ms; }
+.legend-drop.over { background: color-mix(in srgb, var(--sage) 18%, transparent); color: var(--ink); }
 .legend-dot { border-radius: 50%; background: var(--muted); display: inline-block; flex-shrink: 0; }
 .lg-active  { width: 14px; height: 14px; }
 .lg-upnext  { width: 11px; height: 11px; }
@@ -2004,13 +2010,28 @@ select.modal-input { cursor: pointer; }
   .proj-orb { animation: none; }
 }
 
-/* ── Project space modal — enlarged; child-task list (first-class tasks) ── */
-.modal:has(.proj-space) { width: 680px; }
+/* ── Project space modal — wide two-column; child-task list (first-class tasks) ── */
+.modal:has(.proj-space) { width: 880px; }
 .proj-space { display: none; }
 
+/* Two-column layout: left = metadata, right = tasks + capacities */
+.proj-modal-cols {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 0 28px;
+  align-items: start;
+  margin-top: 4px;
+}
+.proj-modal-left  { display: flex; flex-direction: column; }
+.proj-modal-right { display: flex; flex-direction: column; }
+
+/* Taller notes field in project modal */
+.proj-notes-tall { height: 120px; resize: vertical; }
+
+.pspace-section { flex: 1; }
 .pspace-tasklist {
   display: flex; flex-direction: column; gap: 15px;
-  max-height: 340px; overflow-y: auto;
+  max-height: 420px; overflow-y: auto;
 }
 .pspace-group-head {
   display: flex; justify-content: space-between;
