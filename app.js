@@ -97,6 +97,10 @@ const App = (() => {
   let _timerStartedAt = 0;   // Date.now() when current segment was started/resumed
   let _timerStartSecs = 0;   // timerSecsRemaining at that moment
   let _notifPermissionAsked = false; // only prompt once per session
+  // PiP float — the Document Picture-in-Picture window holding the orb (null = docked).
+  // Shares this JS realm, so the timer keeps running with no cross-window messaging.
+  let _pipWin = null;
+  const _pipSupported = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 
   // Clock
   let clockInterval = null;
@@ -904,14 +908,17 @@ const App = (() => {
     const fz = document.getElementById('focus-zone');
     const meta = document.getElementById('focus-meta');
     const controls = document.getElementById('focus-orb-controls');
-    const orbEl = document.getElementById('focus-orb');
-    const glowEl = document.getElementById('focus-orb-glow');
+    // The orb subtree may live in the PiP window — resolve in whichever doc holds it.
+    const fdoc = _focusDoc();
+    const orbEl = fdoc.getElementById('focus-orb');
+    const glowEl = fdoc.getElementById('focus-orb-glow');
     if (!fz || !meta || !controls) return;
 
     const state = Data.get();
     const task = state.tasks.filter(t => t.status === 'doing')[0] || null;
 
     if (!task) {
+      if (_pipWin) closeFocusPip();
       fz.style.display = 'none';
       fz.classList.remove('active', 'break');
       meta.innerHTML = '';
@@ -937,7 +944,14 @@ const App = (() => {
     fz.classList.toggle('break', isBreak);
     if (orbEl)  orbEl.className  = `orb ${stateClass}${paused ? ' paused' : ''}`;
     if (glowEl) glowEl.className = `orb-glow ${stateClass}${paused ? ' paused' : ''}`;
-    document.getElementById('doing-cards-row')?.setAttribute('data-id', task.id);
+    fdoc.getElementById('doing-cards-row')?.setAttribute('data-id', task.id);
+    if (_pipWin) {
+      // At a boundary, keep a slow settle-pulse ring on the PiP stage (the brief
+      // attention grab is fired once in _timerTick). Cleared when not at a boundary.
+      const stage = _pipWin.document.getElementById('pip-stage');
+      stage?.classList.toggle('boundary-settle', atBoundary);
+      if (!atBoundary) stage?.classList.remove('boundary-nudge');
+    }
 
     // Top-left meta: label · tags · title · big timer · sub (work/break + elapsed, or boundary copy)
     const boundaryMsg = isCalm
@@ -959,20 +973,96 @@ const App = (() => {
     // Layout reads spatially: Return to Next (backward) left · main action middle · Done (forward) right.
     const backBtn = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return to Next</button>`;
     const doneBtn = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
+    // Float/Dock — only when Document PiP is available (Chromium). Pops the orb into
+    // an always-on-top window that follows the user across apps.
+    const floatBtn = !_pipSupported ? ''
+      : _pipWin ? `<button class="oc-btn" onclick="App.closeFocusPip()">Dock orb</button>`
+      : `<button class="oc-btn" onclick="App.openFocusPip()">Float ↗</button>`;
     if (atBoundary) {
       const n = TIMER_SEQ[timerSegIdx].m;
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}`;
+        <button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}${floatBtn}`;
     } else if (!isActive) {
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}`;
+        <button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}${floatBtn}`;
     } else {
       controls.innerHTML = `${backBtn}
         <button class="oc-btn primary" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
-        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>${doneBtn}`;
+        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>${doneBtn}${floatBtn}`;
     }
 
+    if (_pipWin) _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak });
     _renderClock();
+  }
+
+  // ── PiP float — detach the orb into an always-on-top window ──
+  // Document PiP shares this JS realm, so the live timer keeps running; we just
+  // relocate the orb DOM (#doing-cards-row) between #focus-zone and the PiP body.
+  function _focusDoc() { return _pipWin ? _pipWin.document : document; }
+
+  async function openFocusPip() {
+    if (!_pipSupported || _pipWin) return;
+    const orbArea = document.getElementById('doing-cards-row');
+    if (!orbArea) return;
+    let pip;
+    try {
+      pip = await window.documentPictureInPicture.requestWindow({ width: 220, height: 220 });
+    } catch (e) { return; } // gesture/permission rejected — stay docked
+    _pipWin = pip;
+    // Carry the stylesheet across (tokens, .orb gradients, keyframes) + compact layer.
+    document.querySelectorAll('link[rel="stylesheet"], style').forEach(node => {
+      pip.document.head.appendChild(node.cloneNode(true));
+    });
+    pip.document.body.className = 'pip-orb';
+    // Inline onclick="App.*" handlers in the PiP doc resolve App via the PiP global.
+    pip.App = App;
+    // Stage: the relocated orb subtree + a hover overlay (remaining time + controls).
+    const stage = pip.document.createElement('div');
+    stage.className = 'pip-stage';
+    stage.id = 'pip-stage';
+    const hover = pip.document.createElement('div');
+    hover.className = 'pip-hover';
+    hover.id = 'pip-hover';
+    stage.appendChild(orbArea);   // moves the live node into the PiP document
+    stage.appendChild(hover);
+    pip.document.body.appendChild(stage);
+    pip.addEventListener('pagehide', closeFocusPip);
+    _renderFocusRow();
+  }
+
+  function closeFocusPip() {
+    const pip = _pipWin;
+    if (!pip) return;
+    _pipWin = null; // null first so re-entrancy from pagehide is a no-op
+    // Return the orb subtree to the full-screen overlay, before the controls section.
+    const orbArea = pip.document.getElementById('doing-cards-row');
+    const fz = document.getElementById('focus-zone');
+    const anchor = document.getElementById('doing-section');
+    if (orbArea && fz) fz.insertBefore(orbArea, anchor);
+    try { pip.close(); } catch (e) {}
+    _renderFocusRow();
+  }
+
+  // Render the PiP hover overlay (remaining time + compact controls) to current state.
+  function _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak }) {
+    const hover = _pipWin && _pipWin.document.getElementById('pip-hover');
+    if (!hover) return;
+    const back = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return</button>`;
+    const done = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
+    const dock = `<button class="oc-btn" onclick="App.closeFocusPip()">Dock</button>`;
+    let mid;
+    if (atBoundary) {
+      const n = TIMER_SEQ[timerSegIdx].m;
+      mid = `<button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}m ${isBreak ? 'break' : 'work'} ›</button>`;
+    } else if (!isActive) {
+      mid = `<button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start</button>`;
+    } else {
+      mid = `<button class="oc-btn primary" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
+        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>`;
+    }
+    hover.innerHTML = `
+      <div class="pip-clock" id="pip-clock-time">--<span class="fc-colon">:</span>--</div>
+      <div class="pip-controls">${back}${mid}${done}${dock}</div>`;
   }
 
   // ── Doing drop zone handlers ──
@@ -1054,18 +1144,23 @@ const App = (() => {
   }
 
   function _renderClock() {
-    const el = document.getElementById('focus-clock-time');
-    if (!el) return;
+    // The remaining-time readout exists on the main screen and, while floating,
+    // also in the PiP hover overlay (#pip-clock-time). Write to whichever exist.
+    let html;
     if (timerTask && timerSecsRemaining >= 0) {
       const m = String(Math.floor(timerSecsRemaining / 60)).padStart(2,'0');
       const s = String(timerSecsRemaining % 60).padStart(2,'0');
-      el.innerHTML = `${m}<span class="fc-colon">:</span>${s}`;
+      html = `${m}<span class="fc-colon">:</span>${s}`;
     } else {
       const now = new Date();
       const m = String(now.getHours()).padStart(2,'0');
       const s = String(now.getMinutes()).padStart(2,'0');
-      el.innerHTML = `${m}<span class="fc-colon">:</span>${s}`;
+      html = `${m}<span class="fc-colon">:</span>${s}`;
     }
+    const el = document.getElementById('focus-clock-time');
+    if (el) el.innerHTML = html;
+    const pipEl = _pipWin && _pipWin.document.getElementById('pip-clock-time');
+    if (pipEl) pipEl.innerHTML = html;
   }
 
   function startTask(id) {
@@ -1160,7 +1255,20 @@ const App = (() => {
       timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
       _fireSegmentNotification();
       _renderTimerTrack(); _renderFocusRow();
+      _pipBoundaryNudge();
     }
+  }
+
+  // Boundary cue while floating: a brief attention grab (one raise + stronger pulse)
+  // that then settles into the slow ring-pulse from _renderFocusRow — a nudge to move
+  // on, not a sustained alarm. The user can ignore it and finish their thought.
+  function _pipBoundaryNudge() {
+    if (!_pipWin) return;
+    const stage = _pipWin.document.getElementById('pip-stage');
+    if (!stage) return;
+    try { _pipWin.focus(); } catch (e) {}
+    stage.classList.add('boundary-nudge');
+    setTimeout(() => stage.classList.remove('boundary-nudge'), 2600);
   }
 
   function timerTogglePlay() {
@@ -2556,6 +2664,7 @@ const App = (() => {
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem, confirmClearArchive,
     startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment, skipSegment,
+    openFocusPip, closeFocusPip,
     openInboxReview, closeInboxReview, _reviewThisWeek, _sendToLater,
     _reviewDelete, _reviewUndo, _reviewCenter, _reviewScroll,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
