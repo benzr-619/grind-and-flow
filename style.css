@@ -318,8 +318,11 @@ input, textarea, select { font: inherit; color: inherit; }
 
 /* ── PiP float: the orb detached into an always-on-top window ──
    Same JS realm as the main page; this styles the cloned stylesheet inside the
-   PiP document. Reads as "just the orb" on paper — no text until hover. */
-body.pip-orb { margin: 0; overflow: hidden; background: var(--paper); }
+   PiP document (cloned into BOTH docs — keep every rule scoped to body.pip-orb).
+   The PiP title bar is browser-drawn and can't be recolored or forced to light,
+   so the window background matches its black (#18191b) for one seamless surface;
+   the warm/cool orb glows on the dark. */
+body.pip-orb { margin: 0; overflow: hidden; background: #18191b; color-scheme: dark; }
 .pip-stage { position: fixed; inset: 0; }
 .pip-stage .orb-wrap { width: 150px; height: 150px; }
 .pip-stage .orb-glow { inset: 28%; }
@@ -333,22 +336,33 @@ body.pip-orb { margin: 0; overflow: hidden; background: var(--paper); }
 .pip-stage.boundary-settle::after { animation: orb-settle 3.2s ease-in-out infinite; }
 .pip-stage.boundary-nudge::after  { animation: orb-nudge 0.85s ease-in-out infinite; }
 
-/* Hover overlay — remaining time + compact controls, hidden until hover */
+/* Hover overlay — remaining time + compact controls, hidden until hover.
+   Light scrim only (not a heavy cover) so the orb stays visible behind it. */
 .pip-hover {
   position: absolute; inset: 0; z-index: 5;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; opacity: 0; pointer-events: none;
-  background: color-mix(in srgb, var(--paper) 72%, transparent);
+  background: rgba(24,25,27,0.45);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
   transition: opacity 160ms ease;
 }
 .pip-stage:hover .pip-hover { opacity: 1; pointer-events: auto; }
 .pip-clock {
   font-family: var(--font-display); font-size: 30px; font-weight: 700;
-  color: var(--ink); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  color: var(--paper); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
 }
 .pip-clock .fc-colon { color: var(--muted); }
 .pip-controls { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 200px; }
-.pip-controls .oc-btn { padding: 5px 9px; font-size: 9px; }
+/* Light-on-dark controls — uniform at rest, brighten on hover */
+body.pip-orb .pip-controls .oc-btn {
+  padding: 5px 9px; font-size: 9px;
+  color: color-mix(in srgb, var(--paper) 62%, transparent);
+  border-color: color-mix(in srgb, var(--paper) 22%, transparent);
+}
+body.pip-orb .pip-controls .oc-btn:hover {
+  color: var(--paper);
+  border-color: color-mix(in srgb, var(--paper) 50%, transparent);
+}
 
 @keyframes orb-nudge {
   0%,100% { box-shadow: 0 0 0 2px rgba(217,122,46,0);    transform: scale(1); }
