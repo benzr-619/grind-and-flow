@@ -97,6 +97,7 @@ const App = (() => {
   let _timerStartedAt = 0;   // Date.now() when current segment was started/resumed
   let _timerStartSecs = 0;   // timerSecsRemaining at that moment
   let _notifPermissionAsked = false; // only prompt once per session
+  let _boundaryFlashInterval = null; // interval that alternates orb amber↔blue at boundary
   // PiP float — the Document Picture-in-Picture window holding the orb (null = docked).
   // Shares this JS realm, so the timer keeps running with no cross-window messaging.
   let _pipWin = null;
@@ -104,9 +105,6 @@ const App = (() => {
 
   // Clock
   let clockInterval = null;
-
-  // Subtask drag
-  let stDragId = null, stProjId = null, stPlaceholder = null, stDragEl = null;
 
   // ── Data migration (handle old status values) ──
   function _migrateData() {
@@ -320,6 +318,9 @@ const App = (() => {
         items = items.filter(i => i.scheduledDate === filterDate);
       }
 
+      if (view === 'projects') {
+        board.innerHTML = _renderProjCanvas(items);
+      } else {
       board.innerHTML = `<div class="columns" data-cols="${cols.length}">${cols.map(col => {
         let colItems = items.filter(i => i.status === col.id);
         // Backlog: sort oldest first
@@ -347,12 +348,13 @@ const App = (() => {
             ondragover="App._onDragOver(event,'${col.id}')"
             ondragleave="App._onDragLeave(event)"
             ondrop="App._onDrop(event,'${col.id}')">
-            ${colItems.map(i => view === 'projects' ? _renderProjCard(i) : _renderTaskCard(i, col.id)).join('')}
+            ${colItems.map(i => _renderTaskCard(i, col.id)).join('')}
             ${colItems.length === 0 ? `<div class="col-empty">empty</div>` : ''}
             ${col.id !== 'done' ? `<button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>` : ''}
           </div>
         </div>`;
       }).join('')}</div>`;
+      }
     }
 
     // Stamp data-view so CSS can hide the projects board on mobile
@@ -557,115 +559,89 @@ const App = (() => {
   }
 
   // ── Project card ──
-  function _renderProjCard(item) {
-    const tags = item.tags || [];
-    const firstTag = tags[0] || '';
-    const _allTags = _loadTags();
-    const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
-    const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`).join('');
-    const isOpen = !!item._open;
+  // ── Projects spatial canvas ──
+  // Orb size by project state — Active largest, On Hold smallest.
+  const PROJ_ORB_SIZE    = { 'active': 200, 'up-next': 160, 'someday': 132, 'on-hold': 112 };
+  const PROJ_STATUS_ORDER = ['active', 'up-next', 'someday', 'on-hold'];
 
-    // State pill — only render if waiting or blocked
+  // Deterministic hash → [0,1) from a string. Keeps each orb's scatter stable
+  // across re-renders (no Math.random, which would make orbs jump every render).
+  function _hashStr(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  // First-class task model: a project's tasks ARE `tasks` rows linked by parentProject.
+  function _projectTasks(projId) {
+    return Data.get().tasks.filter(t => t.parentProject === projId);
+  }
+  function _projectProgress(projId) {
+    const ts = _projectTasks(projId);
+    const done = ts.filter(t => t.status === 'done').length;
+    return { done, total: ts.length, pct: ts.length ? Math.round(done / ts.length * 100) : 0 };
+  }
+
+  // Vivid tag colour for an orb — reuses the Inbox-review palette for cohesion.
+  // Untagged → neutral steel. Display-only; does not touch the muted card palette.
+  function _projOrbColor(item) {
+    const t = (item.tags || [])[0];
+    if (!t) return '#8A8378';
+    return REVIEW_COLORS[_tagClasses(t, _loadTags())] || '#8A8378';
+  }
+
+  // Build the canvas: a meandering vertical stream of softly drifting orbs.
+  function _renderProjCanvas(items) {
+    if (!items.length) {
+      return `<div class="proj-canvas"><div class="proj-canvas-empty">No projects yet — add one to begin.</div></div>`;
+    }
+    const ordered = [...items].sort((a, b) =>
+      PROJ_STATUS_ORDER.indexOf(a.status) - PROJ_STATUS_ORDER.indexOf(b.status));
+    let y = 60;
+    const orbs = ordered.map((item, i) => {
+      const size = PROJ_ORB_SIZE[item.status] || 140;
+      const xPct = 12 + _hashStr(item.id) * 58;   // horizontal scatter within margins
+      const top  = y;
+      y += size * 0.6 + 28;                         // vertical flow, no overlap
+      return _renderProjOrb(item, { size, xPct, top, idx: i });
+    }).join('');
+    return `<div class="proj-canvas" style="height:${y + 80}px">
+      ${_renderCanvasLegend()}
+      ${orbs}
+    </div>`;
+  }
+
+  function _renderProjOrb(item, pos) {
+    const color   = _projOrbColor(item);
+    const prog    = _projectProgress(item.id);
+    const tags    = item.tags || [];
+    const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}">${t.toUpperCase()}</span>`).join('');
     const statePill = item.blocked
       ? `<span class="proj-pill-blocked">Blocked</span>`
-      : item.waiting
-        ? `<span class="proj-pill-waiting">Waiting</span>`
-        : '';
-
-    // Due date display
-    let dueDateHtml = '';
-    if (item.dueDate) {
-      const dd = new Date(item.dueDate + 'T00:00:00');
-      const dueFmt = dd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      dueDateHtml = `<span class="proj-due">Due ${dueFmt}</span>`;
-    }
-
-    const capacitiesIcon = item.capacitiesUrl ? `
-      <button class="proj-cap-icon" title="Open in Capacities"
-        onclick="event.stopPropagation();window.open('${esc(item.capacitiesUrl)}')">
-        <svg width="11" height="13" viewBox="0 0 14 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M1 1h12v14l-6-3.5L1 15V1z" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linejoin="round"/>
-        </svg>
-      </button>` : '';
-
-    // Sort subtasks: undone first, done below
-    const sortedSubs = [...(item.subtasks || [])].sort((a, b) => (a.done === b.done) ? 0 : a.done ? 1 : -1);
-
-    return `<div class="proj-card ${tagClass}${item.status === 'on-hold' ? ' on-hold' : ''}${isOpen ? ' open' : ''}"
-      draggable="true" data-id="${item.id}"
-      ondragstart="App._onDragStart(event,'${item.id}')"
-      ondragend="App._onDragEnd(event)">
-      <div class="proj-card-head" onclick="App.openDetail('${item.id}')">
-        <div class="proj-title-row">
-          <div class="proj-name">${esc(item.title)}</div>
-          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-            ${capacitiesIcon}
-            <button class="proj-toggle" onclick="event.stopPropagation();App._toggleProjOpen('${item.id}')">
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"
-                style="transform:${isOpen ? 'rotate(0deg)':'rotate(-90deg)'}">
-                <path d="M4 6l4 5 4-5z"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="proj-meta">
-          ${tagPills}
-          ${statePill}
-          ${dueDateHtml}
-        </div>
+      : item.waiting ? `<span class="proj-pill-waiting">Waiting</span>` : '';
+    const dueHtml  = item.dueDate ? `<span class="orb-meta-due">Due ${_fmtDate(item.dueDate)}</span>` : '';
+    const progHtml = prog.total ? `<span class="orb-meta-prog">${prog.done}/${prog.total}</span>` : '';
+    const drift    = (pos.idx % 6) * -2.6;          // negative delay desyncs each orb's drift
+    return `<div class="proj-orb status-${item.status}" data-id="${item.id}"
+      style="--orb-color:${color};left:${pos.xPct}%;top:${pos.top}px;width:${pos.size}px;height:${pos.size}px;animation-delay:${drift}s"
+      onclick="App.openDetail('${item.id}')">
+      <div class="proj-orb-glow"></div>
+      <div class="proj-orb-body"></div>
+      <div class="proj-orb-label">
+        <span class="orb-title">${esc(item.title)}</span>
+        <span class="orb-meta">${progHtml}${dueHtml}</span>
       </div>
-      ${isOpen ? `
-        <div class="proj-subtasks">
-          <div class="proj-subtasks-head">Tasks</div>
-          <div id="stlist-${item.id}"
-            ondragover="App._stListDragOver(event,'${item.id}')"
-            ondrop="App._stListDrop(event,'${item.id}')">
-            ${sortedSubs.map(st => _renderSubtaskRow(st, item.id)).join('')}
-          </div>
-          <div class="add-inline-st" onclick="event.stopPropagation()">
-            <input type="text" placeholder="Add task..." id="inline-st-${item.id}"
-              onkeydown="if(event.key==='Enter')App._inlineAddSubtask('${item.id}')" />
-            <button onclick="App._inlineAddSubtask('${item.id}')">+ add</button>
-          </div>
-        </div>` : ''}
+      <div class="proj-orb-hover">${tagPills}${statePill}</div>
     </div>`;
   }
 
-  function _renderSubtaskRow(st, projId) {
-    return `<div class="subtask-row-item" id="sti-${st.id}" draggable="true"
-      ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
-      ondragend="App._stDragEnd(event)">
-      <span class="st-handle" title="Drag to reorder">⠿</span>
-      <input type="checkbox" ${st.done ? 'checked' : ''}
-        onclick="event.stopPropagation()"
-        onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
-      <span class="st-title${st.done ? ' done' : ''}" id="stspan-${st.id}">${esc(st.title)}</span>
+  function _renderCanvasLegend() {
+    return `<div class="proj-legend">
+      <div class="legend-row"><span class="legend-dot lg-active"></span>Active</div>
+      <div class="legend-row"><span class="legend-dot lg-upnext"></span>Up next</div>
+      <div class="legend-row"><span class="legend-dot lg-someday"></span>Someday</div>
+      <div class="legend-row"><span class="legend-dot lg-onhold"></span>On hold</div>
     </div>`;
-  }
-
-  function _toggleProjOpen(id) {
-    const item = Data.findProject(id);
-    if (!item) return;
-    if (item._open) {
-      // Animate collapse before removing from DOM
-      const subtasksEl = document.querySelector(`[data-id="${id}"] .proj-subtasks`);
-      if (subtasksEl) {
-        subtasksEl.classList.add('collapsing');
-        setTimeout(() => { item._open = false; renderBoard(); }, 130);
-        return;
-      }
-    }
-    item._open = !item._open;
-    renderBoard();
-  }
-
-  function _inlineAddSubtask(projId) {
-    const input = document.getElementById('inline-st-' + projId);
-    const title = input?.value.trim(); if (!title) return;
-    const proj = Data.findProject(projId); if (!proj) return;
-    proj.subtasks = proj.subtasks || [];
-    proj.subtasks.push({ id: 'st' + Date.now(), title, done: false, promoted: false, loc: 'backlog' });
-    Data.upsertProject(proj); renderBoard();
   }
 
   // ── Archive ──
@@ -1102,6 +1078,7 @@ const App = (() => {
     if (timerTask && timerTask.id === id) {
       clearInterval(timerInterval);
       clearInterval(timerElapsedInterval);
+      _stopBoundaryFlash();
       timerTask = null;
       timerRunning = false;
       timerSecsRemaining = 0;
@@ -1119,6 +1096,7 @@ const App = (() => {
     if (timerTask && timerTask.id === id) {
       clearInterval(timerInterval);
       clearInterval(timerElapsedInterval);
+      _stopBoundaryFlash();
       timerTask = null;
       timerRunning = false;
       timerSecsRemaining = 0;
@@ -1126,7 +1104,6 @@ const App = (() => {
     }
     item.status = 'done';
     _saveCompletionDate(item.id);
-    _syncSubtaskFromTask(item.id);
     Data.upsertTask(item);
     _renderFocusRow();
     renderBoard();
@@ -1213,6 +1190,50 @@ const App = (() => {
     } catch(e) {}
   }
 
+  // Descending two-tone chime — distinct from the ascending start chime so the user
+  // can tell by sound alone whether a segment just started or just ended.
+  function _playEndChime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const play = () => {
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.22, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.1);
+        [1100, 770].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.18);
+          osc.connect(gain);
+          osc.start(ctx.currentTime + i * 0.18);
+          osc.stop(ctx.currentTime + i * 0.18 + 0.75);
+        });
+      };
+      if (ctx.state === 'suspended') { ctx.resume().then(play); } else { play(); }
+    } catch(e) {}
+  }
+
+  // Alternates the orb between amber and blue while waiting at a boundary — reuses
+  // the existing 1.6s background transition so the crossfade is smooth.
+  function _startBoundaryFlash() {
+    _stopBoundaryFlash();
+    let flash = false;
+    _boundaryFlashInterval = setInterval(() => {
+      flash = !flash;
+      const orbEl  = _focusDoc().getElementById('focus-orb');
+      const glowEl = _focusDoc().getElementById('focus-orb-glow');
+      if (!orbEl) { _stopBoundaryFlash(); return; }
+      const a = flash ? 'break' : 'work';
+      const b = flash ? 'work'  : 'break';
+      orbEl.classList.replace(a, b);
+      if (glowEl) glowEl.classList.replace(a, b);
+    }, 2000); // 2s per colour — matches the 1.6s CSS crossfade with a beat of rest
+  }
+
+  function _stopBoundaryFlash() {
+    if (_boundaryFlashInterval) { clearInterval(_boundaryFlashInterval); _boundaryFlashInterval = null; }
+  }
+
   function _fireStartNotification() {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const isBreak = TIMER_SEQ[timerSegIdx].kind === 'break';
@@ -1222,6 +1243,7 @@ const App = (() => {
 
   function _startTimer() {
     clearInterval(timerInterval);
+    _stopBoundaryFlash(); // clear any amber↔blue flash from the previous boundary
     timerRunning = true;
     timerAtBoundary = false;
     _playStartChime();
@@ -1256,7 +1278,9 @@ const App = (() => {
       timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
       timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
       _fireSegmentNotification();
+      _playEndChime();
       _renderTimerTrack(); _renderFocusRow();
+      _startBoundaryFlash();
       _pipBoundaryNudge();
     }
   }
@@ -1373,7 +1397,7 @@ const App = (() => {
         item.backlogEnteredAt = _today();
       }
       // Completion date tracking
-      if (colId === 'done') { _saveCompletionDate(item.id); _syncSubtaskFromTask(item.id); }
+      if (colId === 'done') { _saveCompletionDate(item.id); }
       else _clearCompletionDate(item.id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
@@ -1382,239 +1406,120 @@ const App = (() => {
     renderBoard();
   }
 
-  // ── Subtask drag (modal + inline) ──
-  function _stDragStart(e, projId, stId) {
-    stDragId = stId; stProjId = projId; stDragEl = e.currentTarget;
-    e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => stDragEl?.classList.add('is-dragging'), 0);
-  }
-  function _stDragEnd(e) {
-    stDragEl?.classList.remove('is-dragging');
-    stPlaceholder?.remove(); stPlaceholder = null;
-    stDragId = null; stProjId = null; stDragEl = null;
-  }
-  function _stListDragOver(e, projId) {
-    e.preventDefault();
-    if (!stPlaceholder) { stPlaceholder = document.createElement('div'); stPlaceholder.className = 'st-placeholder'; }
-    const list = document.getElementById('stlist-' + projId); if (!list) return;
-    const afterEl = _stAfterEl(list, e.clientY);
-    if (afterEl) list.insertBefore(stPlaceholder, afterEl); else list.appendChild(stPlaceholder);
-  }
-  function _stListDrop(e, projId) {
-    e.preventDefault(); if (!stDragId) return;
-    const list = document.getElementById('stlist-' + projId); if (!list) return;
-    const placeholderIdx = [...list.children].indexOf(stPlaceholder);
-    const newIdx = [...list.children].slice(0, placeholderIdx).filter(el => el.classList.contains('subtask-row-item') || el.classList.contains('subtask-item')).length;
-    // Pending (new-project modal) path
-    if (projId === _pendingProjectId) {
-      const fromIdx = _pendingSubtasks.findIndex(s => s.id === stDragId);
-      if (fromIdx >= 0) {
-        const [moved] = _pendingSubtasks.splice(fromIdx, 1);
-        _pendingSubtasks.splice(newIdx > fromIdx ? newIdx - 1 : newIdx, 0, moved);
-      }
-      stPlaceholder?.remove(); stPlaceholder = null;
-      list.innerHTML = _pendingSubtasks.map(st => _buildModalSubtaskRow(st, projId, true)).join('');
-      return;
-    }
-    const proj = Data.findProject(projId); if (!proj) return;
-    const fromIdx = proj.subtasks.findIndex(s => s.id === stDragId);
-    if (fromIdx >= 0) {
-      const [moved] = proj.subtasks.splice(fromIdx, 1);
-      proj.subtasks.splice(newIdx > fromIdx ? newIdx - 1 : newIdx, 0, moved);
-      Data.upsertProject(proj);
-    }
-    stPlaceholder?.remove(); stPlaceholder = null;
-    list.innerHTML = proj.subtasks.map(st => _renderSubtaskRow(st, projId)).join('');
-  }
-  function _stAfterEl(container, y) {
-    return [...container.querySelectorAll('.subtask-row-item:not(.is-dragging),.subtask-item:not(.is-dragging)')].reduce((closest, el) => {
-      const box = el.getBoundingClientRect();
-      const offset = y - box.top - box.height / 2;
-      if (offset < 0 && offset > closest.offset) return { offset, element: el };
-      return closest;
-    }, { offset: Number.NEGATIVE_INFINITY }).element;
+  // ── Project space: child-task list (first-class tasks) ──
+  // A project's tasks are `tasks` rows linked by parentProject. The project-space
+  // modal shows them grouped by status with an inline quick-add.
+  let _projAddDest    = 'inbox';   // inline-add destination: 'inbox' | 'now'
+  let _newParentProject = null;    // when the New-Task modal was opened from a project
+
+  const _PSPACE_GROUPS = [
+    { id: 'backlog',   label: 'Inbox' },
+    { id: 'this-week', label: 'This Week' },
+    { id: 'next',      label: 'Next' },
+    { id: 'doing',     label: 'Doing' },
+    { id: 'done',      label: 'Done' },
+  ];
+
+  function _renderProjTaskList(projId) {
+    const tasks = _projectTasks(projId);
+    if (!tasks.length) return `<div class="pspace-empty">No tasks yet — capture one below.</div>`;
+    return _PSPACE_GROUPS.map(g => {
+      const gt = tasks.filter(t => t.status === g.id);
+      if (!gt.length) return '';
+      return `<div class="pspace-group">
+        <div class="pspace-group-head">${g.label}<span>${gt.length}</span></div>
+        ${gt.map(t => _renderProjTaskRow(t, projId)).join('')}
+      </div>`;
+    }).join('');
   }
 
-  // ── Two-way subtask sync ──
-  // When a task is marked done on the board, check off its parent subtask.
-  function _syncSubtaskFromTask(taskId) {
-    const task = Data.findItem(taskId);
-    if (!task || task.type !== 'task' || !task.parentProject) return;
-    const proj = Data.findProject(task.parentProject);
-    if (!proj) return;
-    const st = (proj.subtasks || []).find(s => s.promotedTaskId === taskId);
-    if (st && !st.done) {
-      st.done = true;
-      Data.upsertProject(proj);
-    }
-  }
-
-  // ── Subtask actions ──
-  function _toggleSubtask(projId, stId, checked) {
-    // Pending (new-project modal) path
-    if (projId === _pendingProjectId) {
-      const st = _pendingSubtasks.find(s => s.id === stId);
-      if (st) st.done = checked;
-      const span = document.getElementById('stspan-' + stId);
-      if (span) span.className = 'st-title' + (checked ? ' done' : '');
-      return;
-    }
-    const proj = Data.findProject(projId); if (!proj) return;
-    const st = proj.subtasks.find(s => s.id === stId);
-    if (!st) return;
-    st.done = checked;
-    // Two-way sync: if checking a promoted subtask, mark the promoted task done
-    if (checked && st.promoted && st.promotedTaskId) {
-      const promotedTask = Data.findItem(st.promotedTaskId);
-      if (promotedTask && promotedTask.status !== 'done') {
-        promotedTask.status = 'done';
-        _saveCompletionDate(promotedTask.id);
-        Data.upsertTask(promotedTask);
-      }
-    }
-    Data.upsertProject(proj);
-    const span = document.getElementById('stspan-' + stId);
-    if (span) span.className = 'st-title' + (checked ? ' done' : '');
-    renderBoard();
-  }
-  // Replaces a subtask row element in-place with fresh HTML from _buildModalSubtaskRow.
-  function _refreshSubtaskRow(projId, st) {
-    const row = document.getElementById('sti-' + st.id);
-    if (!row) return;
-    const tmp = document.createElement('div');
-    tmp.innerHTML = _buildModalSubtaskRow(st, projId);
-    row.replaceWith(tmp.firstElementChild);
-  }
-
-  function _promoteSubtask(projId, stId) {
-    const proj = Data.findProject(projId); if (!proj) return;
-    const st = proj.subtasks.find(s => s.id === stId);
-    if (!st || st.promoted) return;
-    const newTaskId = 't' + Date.now();
-    st.promoted = true; st.loc = 'this-week'; st.promotedTaskId = newTaskId;
-    Data.upsertProject(proj);
-    Data.upsertTask({ id: newTaskId, type:'task', title:st.title, status:'this-week',
-      parentProject:projId, dueDate:'', scheduledDate:'', notes:'', dateAdded:_today(), blocked:false, tags:[...(proj.tags||[])] });
-    _refreshSubtaskRow(projId, st);
-    renderBoard();
-  }
-
-  function _recallSubtask(projId, stId) {
-    const proj = Data.findProject(projId); if (!proj) return;
-    const st = proj.subtasks.find(s => s.id === stId);
-    if (!st || !st.promoted) return;
-    const promotedTaskId = st.promotedTaskId;
-    st.promoted = false; st.loc = 'backlog';
-    delete st.promotedTaskId;
-    Data.upsertProject(proj);
-    if (promotedTaskId) Data.deleteItem(promotedTaskId);
-    _refreshSubtaskRow(projId, st);
-    renderBoard();
-  }
-  function _addSubtask(projId) {
-    const input = document.getElementById('new-st-' + projId);
-    const title = input?.value.trim(); if (!title) return;
-    const st = { id:'st'+Date.now(), title, done:false, promoted:false, loc:'backlog' };
-    // Pending (new-project modal) path — project not yet saved
-    if (projId === _pendingProjectId) {
-      _pendingSubtasks.push(st);
-      input.value = '';
-      const list = document.getElementById('stlist-' + projId);
-      if (list) {
-        document.getElementById('st-empty-hint')?.remove();
-        list.insertAdjacentHTML('beforeend', _buildModalSubtaskRow(st, projId, true));
-      }
-      input.focus();
-      return;
-    }
-    const proj = Data.findProject(projId); if (!proj) return;
-    proj.subtasks = proj.subtasks || [];
-    proj.subtasks.push(st); Data.upsertProject(proj);
-    input.value = '';
-    const list = document.getElementById('stlist-' + projId);
-    if (list) list.insertAdjacentHTML('beforeend', _buildModalSubtaskRow(st, projId));
-    input.focus(); renderBoard();
-  }
-  function _removeSubtask(projId, stId) {
-    // Pending (new-project modal) path
-    if (projId === _pendingProjectId) {
-      _pendingSubtasks = _pendingSubtasks.filter(s => s.id !== stId);
-      document.getElementById('sti-' + stId)?.remove();
-      const list = document.getElementById('stlist-' + projId);
-      if (list && !_pendingSubtasks.length) {
-        list.insertAdjacentHTML('afterbegin', '<div id="st-empty-hint" style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0;font-family:var(--font-body)">No tasks yet</div>');
-      }
-      return;
-    }
-    const proj = Data.findProject(projId); if (!proj) return;
-    proj.subtasks = proj.subtasks.filter(s => s.id !== stId); Data.upsertProject(proj);
-    document.getElementById('sti-' + stId)?.remove(); renderBoard();
-  }
-
-  function _editSubtask(projId, stId, spanEl) {
-    const proj = Data.findProject(projId); if (!proj) return;
-    const st = proj.subtasks.find(s => s.id === stId); if (!st) return;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = st.title;
-    input.className = 'st-title-edit';
-    let saved = false;
-    function commit() {
-      if (saved) return; saved = true;
-      const val = input.value.trim();
-      if (val && val !== st.title) {
-        st.title = val;
-        Data.upsertProject(proj);
-        // Keep promoted task title in sync
-        if (st.promotedTaskId) {
-          const task = Data.findItem(st.promotedTaskId);
-          if (task) { task.title = val; Data.upsertTask(task); }
-        }
-      }
-      _refreshSubtaskRow(projId, st);
-    }
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
-      if (e.key === 'Escape') { input.value = st.title; saved = true; input.blur(); _refreshSubtaskRow(projId, st); }
-    });
-    spanEl.replaceWith(input);
-    input.focus(); input.select();
-  }
-
-  // Modal subtask row — hover-reveal promote, recall only if task not done
-  // hidePromote = true when the project isn't saved yet (new-project modal)
-  function _buildModalSubtaskRow(st, projId, hidePromote = false) {
-    // Check if the promoted task is already done (no recall in that case)
-    const promotedTask = st.promoted && st.promotedTaskId ? Data.findItem(st.promotedTaskId) : null;
-    const promotedTaskDone = promotedTask && promotedTask.status === 'done';
-
-    const onBoardBadge = st.promoted
-      ? `<span class="st-on-board-badge">on board ↩</span>` : '';
-    const recallBtn = st.promoted && !promotedTaskDone
-      ? `<button class="st-recall" onclick="event.stopPropagation();App._recallSubtask('${projId}','${st.id}')">recall</button>` : '';
-    const promoteBtn = !st.promoted && !st.done && !hidePromote
-      ? `<button class="st-promote-btn" onclick="event.stopPropagation();App._promoteSubtask('${projId}','${st.id}')">↑ promote</button>` : '';
-    const delBtn = !st.promoted && !hidePromote
-      ? `<button class="st-del" onclick="event.stopPropagation();App._removeSubtask('${projId}','${st.id}')">✕</button>` : '';
-    const newDelBtn = hidePromote && !st.promoted
-      ? `<button class="st-del" onclick="event.stopPropagation();App._removeSubtask('${projId}','${st.id}')">✕</button>` : '';
-
-    return `<div class="subtask-row-item" id="sti-${st.id}" draggable="true"
-      ondragstart="App._stDragStart(event,'${projId}','${st.id}')"
-      ondragend="App._stDragEnd(event)">
-      <span class="st-handle">⠿</span>
-      <input type="checkbox" ${st.done ? 'checked' : ''}
-        onclick="event.stopPropagation()"
-        onchange="App._toggleSubtask('${projId}','${st.id}',this.checked)" />
-      <span class="st-title${st.done ? ' done' : ''}" id="stspan-${st.id}"
-        onclick="event.stopPropagation();App._editSubtask('${projId}','${st.id}',this)"
-        title="Click to edit">${esc(st.title)}</span>
-      ${onBoardBadge}
-      ${promoteBtn}
-      ${recallBtn}
-      ${hidePromote ? newDelBtn : delBtn}
+  function _renderProjTaskRow(t, projId) {
+    const sched = t.scheduledDate ? `<span class="pst-meta">${_fmtDate(t.scheduledDate)}</span>` : '';
+    const due   = t.dueDate ? `<span class="pst-meta pst-due">Due ${_fmtDate(t.dueDate)}</span>` : '';
+    const blocked = t.blocked ? `<span class="pst-meta pst-blocked">blocked</span>` : '';
+    return `<div class="pspace-task${t.status === 'done' ? ' done' : ''}" data-id="${t.id}">
+      <input type="checkbox" ${t.status === 'done' ? 'checked' : ''}
+        onchange="App._projTaskToggleDone('${t.id}','${projId}',this.checked)" />
+      <span class="pst-title" onclick="App.openDetail('${t.id}')" title="Open task">${esc(t.title)}</span>
+      ${blocked}${sched}${due}
+      <button class="pst-del" title="Delete" onclick="App._projTaskDelete('${t.id}','${projId}')">✕</button>
     </div>`;
+  }
+
+  // Re-render the open project-space modal's task list + progress, and the canvas.
+  function _refreshProjModal(projId) {
+    const listEl = document.getElementById('pspace-tasklist-' + projId);
+    if (listEl) listEl.innerHTML = _renderProjTaskList(projId);
+    const prog = _projectProgress(projId);
+    const fill = document.getElementById('pspace-progfill-' + projId);
+    if (fill) fill.style.width = prog.pct + '%';
+    const lbl = document.getElementById('pspace-proglbl-' + projId);
+    if (lbl) lbl.textContent = prog.total ? `${prog.done}/${prog.total} done` : 'No tasks';
+    renderBoard();
+  }
+
+  function _projTaskToggleDone(taskId, projId, checked) {
+    const task = Data.findItem(taskId); if (!task) return;
+    task.status = checked ? 'done' : 'this-week';
+    if (checked) _saveCompletionDate(taskId); else _clearCompletionDate(taskId);
+    Data.upsertTask(task);
+    _refreshProjModal(projId);
+  }
+
+  function _projTaskDelete(taskId, projId) {
+    Data.deleteItem(taskId);
+    _refreshProjModal(projId);
+  }
+
+  function _projSetAddDest(dest) {
+    _projAddDest = dest;
+    document.querySelectorAll('#pspace-dest .pdest-opt')
+      .forEach(b => b.classList.toggle('active', b.dataset.d === dest));
+  }
+
+  // Inline quick-add inside the project space. Default → Inbox; "Start now" → This Week.
+  function _addProjectTask(projId) {
+    const input = document.getElementById('pspace-add-' + projId);
+    const title = input?.value.trim(); if (!title) return;
+    const proj = Data.findProject(projId); if (!proj) return;
+    const status = _projAddDest === 'now' ? 'this-week' : 'backlog';
+    Data.upsertTask({
+      id: 't' + Date.now(), type: 'task', title, status, parentProject: projId,
+      tags: [...(proj.tags || [])], dueDate: '', scheduledDate: '', scheduledTime: '',
+      notes: '', dateAdded: _today(),
+      backlogEnteredAt: status === 'backlog' ? _today() : '', laterCount: 0, blocked: false,
+    });
+    input.value = '';
+    _refreshProjModal(projId);
+    document.getElementById('pspace-add-' + projId)?.focus();
+  }
+
+  // "More fields" — open the shared New-Task modal with this project preset/locked.
+  function _addProjectTaskDetailed(projId) {
+    openNewModal({ parentProject: projId, defaultStatus: 'backlog' });
+  }
+
+  // ── New-project modal: pending tasks captured before the project is saved ──
+  function _addPendingTask() {
+    const input = document.getElementById('new-proj-task-input');
+    const title = input?.value.trim(); if (!title) return;
+    _pendingSubtasks.push({ id: 'pt' + Date.now(), title });
+    input.value = '';
+    const list = document.getElementById('new-proj-tasklist');
+    if (list) list.innerHTML = _renderPendingTaskList();
+    input.focus();
+  }
+  function _removePendingTask(id) {
+    _pendingSubtasks = _pendingSubtasks.filter(s => s.id !== id);
+    const list = document.getElementById('new-proj-tasklist');
+    if (list) list.innerHTML = _renderPendingTaskList();
+  }
+  function _renderPendingTaskList() {
+    if (!_pendingSubtasks.length) return `<div class="pspace-empty">No tasks yet</div>`;
+    return _pendingSubtasks.map(s => `<div class="pspace-task" data-id="${s.id}">
+      <span class="pst-title">${esc(s.title)}</span>
+      <button class="pst-del" onclick="App._removePendingTask('${s.id}')">✕</button>
+    </div>`).join('');
   }
 
   // ── Detail modal ──
@@ -1687,10 +1592,10 @@ const App = (() => {
         `<option value="${c.id}"${item.status === c.id ? ' selected' : ''}>${c.label}</option>`
       ).join('');
 
-      // Sort subtasks: undone first, done below
-      const sortedSubs = [...(item.subtasks || [])].sort((a, b) => (a.done === b.done) ? 0 : a.done ? 1 : -1);
-      const subtaskRows = sortedSubs.map(st => _buildModalSubtaskRow(st, item.id)).join('') ||
-        '<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0;font-family:var(--font-body)">No tasks yet</div>';
+      // Project space — child tasks (first-class) grouped by status, with progress.
+      _projAddDest = 'inbox';
+      const prog = _projectProgress(item.id);
+      const progLabel = prog.total ? `${prog.done}/${prog.total} done` : 'No tasks';
 
       const stateIsWaiting = item.waiting;
       const stateIsBlocked = item.blocked;
@@ -1702,6 +1607,7 @@ const App = (() => {
       const capSection = _buildCapacitiesSection(item);
 
       _showModal(`
+        <div class="proj-space"></div>
         <input type="text" class="proj-modal-title-input" id="d-title" value="${esc(item.title)}" />
         <div class="modal-section">
           <div class="fg"><label class="modal-label">Tags</label>
@@ -1724,19 +1630,23 @@ const App = (() => {
             <textarea class="modal-input" id="d-notes" style="height:52px;resize:vertical">${esc(item.notes || '')}</textarea></div>
         </div>
         <div class="modal-section">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px">
+          <div class="pspace-tasks-head">
             <label class="modal-label" style="margin-bottom:0">Tasks</label>
-            <span style="font-size:9px;color:var(--muted);font-style:italic">drag to reorder</span>
+            <span class="pspace-prog-label" id="pspace-proglbl-${item.id}">${progLabel}</span>
           </div>
-          <div class="subtask-list" id="stlist-${item.id}"
-            ondragover="App._stListDragOver(event,'${item.id}')"
-            ondrop="App._stListDrop(event,'${item.id}')">
-            ${subtaskRows}
+          <div class="pspace-progbar"><div class="pspace-progfill" id="pspace-progfill-${item.id}" style="width:${prog.pct}%"></div></div>
+          <div class="pspace-tasklist" id="pspace-tasklist-${item.id}">
+            ${_renderProjTaskList(item.id)}
           </div>
-          <div style="display:flex;gap:5px;margin-top:7px">
-            <input type="text" class="modal-input" id="new-st-${item.id}" placeholder="Add task..."
-              onkeydown="if(event.key==='Enter')App._addSubtask('${item.id}')" />
-            <button class="btn-close" onclick="App._addSubtask('${item.id}')">+ add</button>
+          <div class="pspace-add">
+            <input type="text" class="modal-input" id="pspace-add-${item.id}" placeholder="Add a task..."
+              onkeydown="if(event.key==='Enter')App._addProjectTask('${item.id}')" />
+            <div class="pdest" id="pspace-dest">
+              <button class="pdest-opt active" data-d="inbox" onclick="App._projSetAddDest('inbox')">Inbox</button>
+              <button class="pdest-opt" data-d="now" onclick="App._projSetAddDest('now')">Start now</button>
+            </div>
+            <button class="btn-close" onclick="App._addProjectTask('${item.id}')">+ add</button>
+            <button class="btn-close pspace-more" title="More fields" onclick="App._addProjectTaskDetailed('${item.id}')">⋯</button>
           </div>
         </div>
         <div class="modal-section">
@@ -1845,7 +1755,7 @@ const App = (() => {
     const msg     = document.getElementById('status-done-msg');
     const saveBtn = document.querySelector('#modal-root .btn-save');
     if (sel.value === 'done') {
-      const activeTasks = Data.get().tasks.filter(t => t.parentProject === id);
+      const activeTasks = Data.get().tasks.filter(t => t.parentProject === id && t.status !== 'done');
       if (activeTasks.length > 0) {
         const n = activeTasks.length;
         if (msg) { msg.textContent = `${n} task${n > 1 ? 's' : ''} still active — complete or delete them first`; msg.style.display = 'block'; }
@@ -2074,7 +1984,7 @@ const App = (() => {
     if (item) {
       const old = item.status; item.status = status;
       if (status === 'backlog' && old !== 'backlog') item.backlogEnteredAt = _today();
-      if (status === 'done') { _saveCompletionDate(id); _syncSubtaskFromTask(id); }
+      if (status === 'done') { _saveCompletionDate(id); }
       else _clearCompletionDate(id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
@@ -2305,7 +2215,7 @@ const App = (() => {
       if (statusSel) {
         const newStatus = statusSel.value;
         if (newStatus === 'done') {
-          const activeTasks = Data.get().tasks.filter(t => t.parentProject === id);
+          const activeTasks = Data.get().tasks.filter(t => t.parentProject === id && t.status !== 'done');
           if (activeTasks.length > 0) return; // hard block — validation should have caught this
           if (!item.completedAt || item.status !== 'done') {
             item.completedAt = new Date().toISOString();
@@ -2359,19 +2269,30 @@ const App = (() => {
   let _pendingProjectId = null;   // pre-generated ID for the new-project modal
   let _pendingSubtasks  = [];     // subtasks accumulated before the project is saved
 
-  function openNewModal(defaultStatus) {
+  // openNewModal(opts) — opts: { parentProject?, defaultStatus? }. Legacy callers
+  // pass a status string (column "+ add"); that's normalized to defaultStatus.
+  function openNewModal(opts) {
+    if (typeof opts === 'string') opts = { defaultStatus: opts };
+    opts = opts || {};
     openItemId = null;
-    _newType = view === 'projects' ? 'project' : 'standalone';
-    _pendingProjectId = view === 'projects' ? 'p' + Date.now() : null;
+    const presetParent  = opts.parentProject || null;
+    _newParentProject   = presetParent;
+    const isProjectModal = view === 'projects' && !presetParent;
+    _newType = isProjectModal ? 'project' : (presetParent ? 'task' : 'standalone');
+    _pendingProjectId = isProjectModal ? 'p' + Date.now() : null;
     _pendingSubtasks  = [];
-    const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
+    const defaultStatus = opts.defaultStatus || (presetParent ? 'backlog' : undefined);
+    const cols = isProjectModal ? PROJECT_COLS : TASK_COLS;
     const statusOpts = cols.map(c =>
       `<option value="${c.id}"${c.id === defaultStatus ? ' selected' : ''}>${c.label}</option>`
     ).join('');
     const projOpts = Data.get().projects.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('');
     const allTags = _loadTags();
+    const parentName = presetParent ? (Data.findProject(presetParent)?.title || '') : '';
 
-    const taskExtra = view === 'tasks' ? `
+    const taskExtra = isProjectModal ? '' : (presetParent ? `
+      <div class="fg"><label class="modal-label">Project</label>
+        <div class="new-parent-lock">${esc(parentName)}</div></div>` : `
       <div class="fg"><label class="modal-label">Type</label>
         <div class="type-toggle" id="type-seg">
           <button class="type-opt active" data-t="standalone" onclick="App._setNewType('standalone',this)">Standalone</button>
@@ -2380,25 +2301,21 @@ const App = (() => {
       <div class="fg" id="proj-link-group" style="display:none">
         <label class="modal-label">Project</label>
         <select class="modal-input" id="f-parent">${projOpts}</select>
-      </div>` : '';
+      </div>`);
 
-    const newProjSubtaskHtml = view === 'projects' ? `
+    const newProjTaskHtml = isProjectModal ? `
       <div class="modal-section">
-        <label class="modal-label">Tasks <span class="modal-label-hint">drag to reorder</span></label>
-        <div class="subtask-list" id="stlist-${_pendingProjectId}"
-          ondragover="App._stListDragOver(event,'${_pendingProjectId}')"
-          ondrop="App._stListDrop(event,'${_pendingProjectId}')">
-          <div id="st-empty-hint" style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0;font-family:var(--font-body)">No tasks yet</div>
-        </div>
-        <div style="display:flex;gap:5px;margin-top:7px">
-          <input type="text" class="modal-input" id="new-st-${_pendingProjectId}" placeholder="Add task..."
-            onkeydown="if(event.key==='Enter')App._addSubtask('${_pendingProjectId}')" />
-          <button class="btn-close" onclick="App._addSubtask('${_pendingProjectId}')">+ add</button>
+        <label class="modal-label">Tasks <span class="modal-label-hint">added to Inbox on save</span></label>
+        <div class="pspace-tasklist" id="new-proj-tasklist">${_renderPendingTaskList()}</div>
+        <div class="pspace-add" style="margin-top:7px">
+          <input type="text" class="modal-input" id="new-proj-task-input" placeholder="Add a task..."
+            onkeydown="if(event.key==='Enter')App._addPendingTask()" />
+          <button class="btn-close" onclick="App._addPendingTask()">+ add</button>
         </div>
       </div>` : '';
 
     _showModal(`
-      <div class="modal-title">New ${view === 'projects' ? 'Project' : 'Task'}</div>
+      <div class="modal-title">New ${isProjectModal ? 'Project' : 'Task'}</div>
       <div class="fg"><label class="modal-label">Title</label>
         <input type="text" class="modal-input" id="f-title" placeholder="Name..." /></div>
       ${taskExtra}
@@ -2413,9 +2330,9 @@ const App = (() => {
             onkeydown="if(event.key==='Enter'){event.preventDefault();App._addNewTag();}" />
           <button onclick="App._addNewTag()">+ add</button>
         </div></div>
-      <div class="fg"><label class="modal-label">Status</label>
+      <div class="fg"><label class="modal-label">${presetParent ? 'Destination' : 'Status'}</label>
         <select class="modal-input" id="f-status">${statusOpts}</select></div>
-      ${view === 'tasks' ? `<div class="field-row">
+      ${!isProjectModal ? `<div class="field-row">
         <div class="fg"><label class="modal-label">Scheduled date</label>
           <input type="date" class="modal-input" id="f-sched" /></div>
         <div class="fg"><label class="modal-label">Scheduled time</label>
@@ -2425,7 +2342,7 @@ const App = (() => {
         <input type="date" class="modal-input" id="f-due" /></div>
       <div class="fg"><label class="modal-label">Notes</label>
         <textarea class="modal-input" id="f-notes" placeholder="Optional..."></textarea></div>
-      ${newProjSubtaskHtml}
+      ${newProjTaskHtml}
       <div class="modal-footer">
         <div></div>
         <div class="modal-footer-right">
@@ -2450,17 +2367,29 @@ const App = (() => {
     const schedTime = document.getElementById('f-sched-time')?.value || '';
     const notes  = document.getElementById('f-notes')?.value || '';
     const tags   = [...document.querySelectorAll('.modal-tag-pill.active')].map(b => b.dataset.tag).filter(Boolean);
-    const id = view === 'projects' ? (_pendingProjectId || 'p' + Date.now()) : 't' + Date.now();
-    if (view === 'projects') {
-      const subtasks = [..._pendingSubtasks];
+    const isProjectModal = _newType === 'project';
+    const id = isProjectModal ? (_pendingProjectId || 'p' + Date.now()) : 't' + Date.now();
+    const reopenProj = _newParentProject;   // set when the modal was opened from a project space
+    _newParentProject = null;
+    if (isProjectModal) {
+      const pending = [..._pendingSubtasks];
       _pendingProjectId = null; _pendingSubtasks = [];
-      Data.upsertProject({ id, type:'project', title, status, tags, dueDate:due, notes, dateAdded:_today(), subtasks, blocked:false });
+      Data.upsertProject({ id, type:'project', title, status, tags, dueDate:due, notes, dateAdded:_today(), subtasks:[], blocked:false });
+      // Pending tasks become first-class child tasks in the Inbox.
+      pending.forEach((s, i) => Data.upsertTask({
+        id: 't' + (Date.now() + i + 1), type:'task', title:s.title, status:'backlog',
+        parentProject:id, tags:[...tags], dueDate:'', scheduledDate:'', scheduledTime:'', notes:'',
+        dateAdded:_today(), backlogEnteredAt:_today(), laterCount:0, blocked:false,
+      }));
     } else {
-      const parent = _newType === 'task' ? (document.getElementById('f-parent')?.value || null) : null;
+      const parent = reopenProj || (_newType === 'task' ? (document.getElementById('f-parent')?.value || null) : null);
+      const type = parent ? 'task' : 'standalone';
       const backlogEnteredAt = status === 'backlog' ? _today() : '';
-      Data.upsertTask({ id, type:_newType, title, status, tags, parentProject:parent, dueDate:due, scheduledDate:sched, scheduledTime:schedTime, notes, dateAdded:_today(), backlogEnteredAt, blocked:false });
+      Data.upsertTask({ id, type, title, status, tags, parentProject:parent, dueDate:due, scheduledDate:sched, scheduledTime:schedTime, notes, dateAdded:_today(), backlogEnteredAt, laterCount:0, blocked:false });
     }
     document.getElementById('modal-root').innerHTML = '';
+    // Re-opened from a project space → return to it so the user can keep capturing.
+    if (reopenProj) { openDetail(reopenProj); return; }
     renderBoard();
     // Animate the new card's entrance
     setTimeout(() => {
@@ -2675,10 +2604,9 @@ const App = (() => {
     _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleArchiveProject, _restoreDoneProject, _deleteDoneProject,
-    _toggleSubtask, _promoteSubtask, _recallSubtask, _editSubtask, _addSubtask, _removeSubtask,
+    _projTaskToggleDone, _projTaskDelete, _projSetAddDest, _addProjectTask, _addProjectTaskDetailed,
+    _addPendingTask, _removePendingTask,
     _setNewType, _saveNew,
-    _stDragStart, _stDragEnd, _stListDragOver, _stListDrop,
-    _toggleProjOpen, _inlineAddSubtask,
     _toggleItemTag, _addCustomTag, _addNewTag,
     _showTagMenu, _confirmDeleteTag, _executeDeleteTag, _setTagColor, _dismissTagMenu,
     _filterToggleTag, _filterSetDate,

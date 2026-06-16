@@ -1903,3 +1903,173 @@ select.modal-input { cursor: pointer; }
   transition: opacity 130ms;
 }
 .btn-logout:hover { opacity: 1; }
+
+/* ════════════════════════════════════════════════════════════
+   Projects spatial canvas (redesign phase 3)
+   Soft tag-coloured orbs drifting on paper. Distinct from the
+   Focus breathing orb (reserved for Focus) — these drift, not breathe.
+   ════════════════════════════════════════════════════════════ */
+.proj-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 60vh;
+}
+.proj-canvas-empty {
+  padding: 70px 0; text-align: center;
+  color: var(--muted); font-family: var(--font-body); font-style: italic;
+}
+
+.proj-orb {
+  position: absolute;
+  transform: translate(-50%, 0);
+  cursor: pointer;
+  animation: proj-drift 16s ease-in-out infinite;
+  transition: filter 180ms ease;
+}
+.proj-orb:hover { z-index: 20; filter: brightness(1.04); }
+.proj-orb.status-on-hold { opacity: 0.58; }
+.proj-orb.status-someday { opacity: 0.82; }
+
+.proj-orb-glow {
+  position: absolute; inset: -12%;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--orb-color) 0%, transparent 65%);
+  filter: blur(26px);
+  opacity: 0.4;
+}
+.proj-orb-body {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%,
+    var(--orb-color) 0%,
+    color-mix(in srgb, var(--orb-color) 52%, transparent) 40%,
+    transparent 72%);
+  filter: blur(5px);
+  opacity: 0.9;
+}
+.proj-orb-label {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; gap: 4px;
+  padding: 0 12px; pointer-events: none;
+}
+.orb-title {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: 15px; line-height: 1.15; letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.orb-meta {
+  display: flex; gap: 8px; align-items: center;
+  font-family: var(--font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--steel-soft);
+}
+.orb-meta-due { color: var(--amber); }
+.proj-orb-hover {
+  position: absolute; left: 50%; top: 100%;
+  transform: translateX(-50%); margin-top: 7px;
+  display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+  max-width: 220px;
+  opacity: 0; transition: opacity 160ms ease; pointer-events: none;
+}
+.proj-orb:hover .proj-orb-hover { opacity: 1; }
+
+@keyframes proj-drift {
+  0%, 100% { transform: translate(-50%, 0) scale(1); }
+  25%      { transform: translate(calc(-50% + 6px), -6px) scale(1.008); }
+  50%      { transform: translate(-50%, -11px) scale(1.015); }
+  75%      { transform: translate(calc(-50% - 6px), -5px) scale(1.008); }
+}
+
+.proj-legend {
+  position: absolute; top: 6px; right: 6px;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 13px; z-index: 30;
+  background: color-mix(in srgb, var(--card) 72%, transparent);
+  border: 1px solid var(--line); border-radius: 10px;
+  font-family: var(--font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--steel-soft);
+  backdrop-filter: blur(4px);
+}
+.legend-row { display: flex; align-items: center; gap: 8px; }
+.legend-dot { border-radius: 50%; background: var(--muted); display: inline-block; flex-shrink: 0; }
+.lg-active  { width: 14px; height: 14px; }
+.lg-upnext  { width: 11px; height: 11px; }
+.lg-someday { width: 9px;  height: 9px; }
+.lg-onhold  { width: 7px;  height: 7px; opacity: 0.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .proj-orb { animation: none; }
+}
+
+/* ── Project space modal — enlarged; child-task list (first-class tasks) ── */
+.modal:has(.proj-space) { width: 680px; }
+.proj-space { display: none; }
+
+.pspace-tasks-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+}
+.pspace-prog-label {
+  font-family: var(--font-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--steel-soft);
+}
+.pspace-progbar {
+  height: 4px; background: var(--line); border-radius: 3px;
+  overflow: hidden; margin-bottom: 13px;
+}
+.pspace-progfill {
+  height: 100%; background: var(--sage-deep);
+  border-radius: 3px; transition: width 240ms ease;
+}
+.pspace-tasklist {
+  display: flex; flex-direction: column; gap: 15px;
+  max-height: 340px; overflow-y: auto;
+}
+.pspace-group-head {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin-bottom: 5px; padding-bottom: 3px; border-bottom: 1px solid var(--line);
+}
+.pspace-group-head span { color: var(--steel-soft); }
+.pspace-task { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+.pspace-task input[type="checkbox"] { flex-shrink: 0; cursor: pointer; }
+.pst-title {
+  flex: 1; font-family: var(--font-body); font-size: 13.5px;
+  color: var(--ink); cursor: pointer;
+}
+.pst-title:hover { text-decoration: underline; text-underline-offset: 2px; }
+.pspace-task.done .pst-title { text-decoration: line-through; color: var(--muted); }
+.pst-meta { font-family: var(--font-mono); font-size: 9.5px; color: var(--steel-soft); white-space: nowrap; }
+.pst-due { color: var(--amber); }
+.pst-blocked { color: var(--red); }
+.pst-del {
+  flex-shrink: 0; background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 12px; opacity: 0; transition: opacity 120ms; padding: 2px 4px;
+}
+.pspace-task:hover .pst-del { opacity: 1; }
+.pst-del:hover { color: var(--red); }
+.pspace-empty {
+  padding: 14px 0; color: var(--muted); font-style: italic;
+  font-family: var(--font-body); font-size: 12.5px;
+}
+.pspace-add { display: flex; align-items: center; gap: 6px; margin-top: 13px; }
+.pspace-add .modal-input { flex: 1; }
+.pdest {
+  display: flex; border: 1px solid var(--line-md);
+  border-radius: 7px; overflow: hidden; flex-shrink: 0;
+}
+.pdest-opt {
+  background: var(--card); border: none; padding: 7px 9px;
+  font-family: var(--font-mono); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); cursor: pointer;
+}
+.pdest-opt.active { background: var(--ink); color: var(--paper); }
+.pspace-more { padding: 7px 10px; }
+.new-parent-lock {
+  padding: 8px 11px; background: var(--card-warm);
+  border: 1px solid var(--line-md); border-radius: 8px;
+  font-family: var(--font-body); font-size: 13px; color: var(--steel);
+}

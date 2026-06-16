@@ -9,6 +9,7 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 - [Mobile responsive layer](./claude/rules/mobile.md) — sticky header offsets, show/hide pattern, `mobileTab` state, bottom sheet wiring, Inbox/backlog relabel map.
 - [Focus Mode orb](./claude/rules/focus-mode.md) — full-screen `#focus-zone` overlay, persistent-orb/class-swap render, stable-id mapping, `_renderTimerTrack` now a no-op, `--focus-*` tokens, mobile `!important` hide.
 - [Inbox Review wheel](./claude/rules/inbox-review.md) — Inbox removed from board columns (now This Week/Next/Done); full-screen `#inbox-review` 3D task-wheel review; `_reviewSeq`/`_reviewOutcome`/`_reviewCenterId` model; due→oldest order; staged-delete-on-close + undo; `later_count` column.
+- [Projects canvas](./claude/rules/projects-canvas.md) — Projects Kanban replaced by a spatial drifting-orb canvas (`_renderProjCanvas`/`_renderProjOrb`, size-by-status, tag-colour, hash scatter, `proj-drift`). Subtasks are now **first-class `tasks` rows** (`parentProject`); enlarged project-space modal (`.proj-space`, 680px) shows grouped child tasks + inline quick-add (Inbox default / "Start now"). Unified add via `openNewModal({parentProject,defaultStatus})`. One-time subtask→task migration pending.
 
 ---
 
@@ -97,7 +98,7 @@ Four Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
 | capacitiesUrl | capacities_url | text or null — deep link to the linked Capacities object |
 | — | user_id | injected by `_projToDb()` |
 
-Subtask object shape: `{ id, title, done, promoted, loc, promotedTaskId? }`
+Subtask object shape (**deprecated — phase 3**): `{ id, title, done, promoted, loc, promotedTaskId? }`. The `subtasks` jsonb column is kept for backward-compat/archive rows but is no longer read or written by the app. A project's tasks are now first-class `tasks` rows linked by `parentProject`. See [Projects canvas rule](./claude/rules/projects-canvas.md).
 
 ### `tasks` table
 
@@ -177,10 +178,9 @@ create policy "Users manage own tags" on tags
 
 ### DOM stability — do not rename these
 Drag-and-drop and dynamic rendering depend on these selectors being stable:
-- Column drop zones: `data-col="{colId}"` on `.col-body` elements
-- Card identification: `data-id="{itemId}"` on `.card` and `.proj-card`
-- Subtask list containers: `id="stlist-{projId}"`
-- Subtask row items: `.subtask-row-item` and `.subtask-item`
+- Column drop zones: `data-col="{colId}"` on `.col-body` elements (Tasks board only)
+- Card identification: `data-id="{itemId}"` on `.card` (tasks) and `.proj-orb` (projects canvas)
+- ~~Subtask list containers / row items~~ — **retired in phase 3.** Embedded subtasks no longer exist; a project's tasks are first-class `tasks` rows (`parentProject`). The project-space list uses `id="pspace-tasklist-{projId}"`.
 - Modal container: `id="modal-root"` — cleared by setting `.innerHTML = ''`
 - Doing zone drop target: `id="doing-cards-row"`
 - Focus clock display: `id="focus-clock-time"`
@@ -208,7 +208,8 @@ This app is intended for use across multiple devices (desktop and eventually mob
 ## Feature Status
 
 ### Complete and working
-- **Dual Kanban boards**: Tasks (`this-week → next → done` on the board; `backlog`/Inbox is no longer a board column — see Inbox Review) and Projects (`active → up-next → on-hold → someday`). Drag-and-drop between columns. `+ add` button per column (except Done). The Tasks `.columns` grid is sized to the rendered column count via `data-cols`.
+- **Tasks Kanban board**: `this-week → next → done` (`backlog`/Inbox is no longer a board column — see Inbox Review). Drag-and-drop between columns. `+ add` button per column (except Done). The `.columns` grid is sized to the rendered column count via `data-cols`.
+- **Projects spatial canvas (redesign phase 3)**: replaces the Projects Kanban with a **drifting-orb canvas** (`#board` → `_renderProjCanvas`/`_renderProjOrb`). Each project is a soft tag-coloured orb, **sized by status** (Active largest → On Hold smallest/faded), deterministic hash scatter + gentle `proj-drift` (distinct from the Focus breathing orb). Click an orb → enlarged **project-space modal** (`.proj-space`, 680px) showing the project's **first-class child tasks** grouped by status with a progress bar and an **inline quick-add** (Inbox default / "Start now" → This Week). Legend in the corner. Subtasks are no longer embedded — they are `tasks` rows linked by `parentProject`. Unified add: `openNewModal({parentProject,defaultStatus})` is shared by the board "+ New Task" and the project space. See [Projects canvas rule](./claude/rules/projects-canvas.md). **One-time subtask→task migration still pending (see rule).**
 - **Archive view**: Time-grouped layout (Today / This Week / Last Week / Earlier). Restore, delete, and Clear Archive actions.
 - **Focus Mode orb (redesign phase 1)**: Starting a task (tap "start →" on a Next card, or drag-swap onto the orb) opens a **full-screen breathing-orb overlay** (`#focus-zone`), covering the board + topbar. Warm amber orb while working, cool blue on breaks, with a slow breathing + organic-morph animation; smooth 1.6s color crossfade between segments. Task title + large timer sit top-left (`#focus-meta`); the orb carries no text (`work`/`break` shown under the timer). Minimal bottom controls: Pause/Resume, Skip, Done, Return to Next. **Exit only via Done or Return to Next; Pause stays on the page.** Desktop only — hidden at ≤640px. See [focus-mode rule](./claude/rules/focus-mode.md). A **Float ↗** control pops the orb into an always-on-top **Document Picture-in-Picture** window that follows the user across apps (Chromium only; manual, gesture-triggered) — Dock orb / native close returns it; the boundary cue is a brief ring-pulse nudge that settles, not an alarm. See the PiP section of the focus-mode rule.
 - **Focus timer**: Progressive sequence (5m work → 5m break → 10m → 5m → 25m → 5m → 50m → 5m → 50m). Wall-clock drift correction (immune to browser background tab throttling). Pause/resume, skip segment. Calm boundary state after work ends; pushy boundary state after break ends (both surfaced in the orb meta). Elapsed-minutes counter. Browser notification on segment completion. *(The old inline doing strip + linear segment track were replaced by the orb; `_renderTimerTrack()` is now a no-op stub.)*
@@ -233,6 +234,8 @@ This app is intended for use across multiple devices (desktop and eventually mob
   Tapping either view's rows opens the Phase 2 bottom sheet (`_openInboxSheet` → `#modal-root`). Sheet actions work correctly from both views: Complete removes item from Today; rescheduling to a different date removes it from Today; moving out of backlog removes it from Inbox. Desktop layout fully unaffected.
 
 ### Not yet built / known gaps
-- **Projects spatial canvas (redesign phase 3)** and **Calendar week view (phase 4)** — designed in `REDESIGN-BRIEF.md`, not started. Projects still uses the legacy Kanban columns.
+- **Inbox Review grouping by project (phase 3.6)** — first-class project tasks now flow into the global Inbox; grouping `backlog` tasks by `parentProject` in the review wheel (with a "Later — whole project" bulk action) is designed but not yet built. Without it, the Inbox can get crowded once the subtask→task migration runs.
+- **Tasks board redesign (phase 3.5)** and **Calendar week view (phase 4)** — designed in `REDESIGN-BRIEF.md`, not started.
+- **Subtask→task data migration** — the code reads first-class child tasks, but existing projects' embedded `subtasks` have not yet been expanded into `tasks` rows. Until run, legacy subtasks won't appear in project spaces. See [Projects canvas rule](./claude/rules/projects-canvas.md).
 - **PWA update strategy**: `sw.js` is now **network-first** for same-origin assets (cache `gf-shell-v3`) so deploys appear on the next online refresh; cache is the offline fallback. (Was cache-first, which served stale assets until `sw.js` itself changed.)
 - **Search**: The `searchQuery` state variable and filter logic exist in `app.js`, but there is no search input in `index.html`. The feature is partially scaffolded but not exposed in the UI.
