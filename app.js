@@ -1047,22 +1047,24 @@ const App = (() => {
   function _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak }) {
     const hover = _pipWin && _pipWin.document.getElementById('pip-hover');
     if (!hover) return;
+    // Uniform buttons (no .primary emphasis) — the tiny float reads calmer, and
+    // every control only brightens on hover. The PiP title bar's native
+    // back-to-tab button already docks the orb, so no custom Dock button here.
     const back = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return</button>`;
     const done = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
-    const dock = `<button class="oc-btn" onclick="App.closeFocusPip()">Dock</button>`;
     let mid;
     if (atBoundary) {
       const n = TIMER_SEQ[timerSegIdx].m;
-      mid = `<button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}m ${isBreak ? 'break' : 'work'} ›</button>`;
+      mid = `<button class="oc-btn" onclick="App.startNextSegment()">Start ${n}m ${isBreak ? 'break' : 'work'} ›</button>`;
     } else if (!isActive) {
-      mid = `<button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start</button>`;
+      mid = `<button class="oc-btn" onclick="App.activateTask('${task.id}')">Start</button>`;
     } else {
-      mid = `<button class="oc-btn primary" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
+      mid = `<button class="oc-btn" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
         <button class="oc-btn" onclick="App.skipSegment()">Skip</button>`;
     }
     hover.innerHTML = `
       <div class="pip-clock" id="pip-clock-time">--<span class="fc-colon">:</span>--</div>
-      <div class="pip-controls">${back}${mid}${done}${dock}</div>`;
+      <div class="pip-controls">${back}${mid}${done}</div>`;
   }
 
   // ── Doing drop zone handlers ──
