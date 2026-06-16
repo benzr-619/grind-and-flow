@@ -2,6 +2,42 @@
 
 This design system document functions as an explicit instruction guide to implement the UI/UX architecture of **Grind & Flow**. It is derived directly from the extracted design token matrices and element metrics across the application's artboards.
 
+> **Token source of truth:** the *live* palette/spacing/radius values are the CSS custom properties in `style.css :root` (e.g. `--paper: #F8F5F0`). Where the archetype hexes in §1 below differ, the `:root` values win — §1 is conceptual reference, not the authority.
+
+---
+
+## 0. REDESIGN DIRECTION — NORTH STAR (current, 2026)
+
+The app is being rebuilt (see `REDESIGN-BRIEF.md`) around **four distinct modes, each with its own visual personality.** Build order: Focus → Planning → Projects → Calendar.
+
+1. **Planning** — the task board. Columns are **This Week / Next / Done**. **Inbox is no longer a column** — it's a deliberate *review activity* (see Inbox Review). Capture into Inbox still happens via "+ New Task".
+2. **Focus** — an immersive full-screen **breathing orb** + timer (shipped).
+3. **Projects** — a spatial floating canvas (planned; not built).
+4. **Calendar** — a week-view planning surface for the weekly review ritual (planned; not built).
+
+### 0.1 The core aesthetic axis — **Flow vs Grind**
+
+The two halves of the product name are two distinct visual languages. **Do not mix them.**
+
+* **FLOW = calm / soft.** This is the **Focus** experience *only*. Soft radial-gradient **orbs** with blurred, imperfect (organically morphing) edges; a slow ~8s breathing animation; warm-amber (work) ↔ cool-blue (break) with a slow 1.6s colour crossfade. Dreamy, ambient, low-contrast chrome.
+  * **Soft orbs/auras/blur are reserved exclusively for Focus Mode.** Do not reuse the orb language anywhere else — it dilutes the one calm moment in the app.
+* **GRIND = firm / structured.** Everything about *processing, triage, planning, organizing*. **Firm flat shapes** — solid circles, connected spines/nodes on a subtle grid — in a **vivid flat palette** (coral, green, blue, pink, yellow, charcoal). No blur, no soft glow. Deliberate, tactile, structured. The **Inbox Review wheel** is the canonical Grind surface.
+
+### 0.2 Immersive activity overlays
+
+Deliberate, single-purpose activities **take over the full screen** as fixed overlays (`position: fixed; inset: 0; z-index: 200`) rather than living inline on the board: you *enter* the activity, do it, and *leave*. Both shipped overlays use the **paper ground + ink type + minimal chrome** language and fade in via an `.active` class. Desktop-only — hidden at ≤640px (mobile keeps its own simpler flows).
+* `#focus-zone` — Focus Mode orb. See `.claude/rules/focus-mode.md`.
+* `#inbox-review` — Inbox Review wheel. See `.claude/rules/inbox-review.md`.
+
+### 0.3 New palettes introduced by the redesign
+
+* **Focus orb (Flow):** `--focus-amber-core/mid/edge` (work, anchored to the `--amber` family) and `--focus-blue-core/mid/edge` (break, a cool blue not otherwise in the palette), plus `--focus-break-paper` (overlay tint on break). Radial gradients fading to transparent; never hard-edged.
+* **Inbox Review (Grind):** a **vivid, display-only** palette mapped from each task's tag — work→coral `#E85D3A`, school→green `#6FB08C`, personal→blue `#5E9BD4`, custom slots→violet/pink/coral/yellow/green; untagged→charcoal `#2A2A28`. These are **brighter than the muted card tag colours on purpose** and live only in the review (`REVIEW_COLORS` in `app.js`) — they do **not** replace the muted board palette.
+
+### 0.4 What's superseded
+
+§4.4 (Timer Bar & Control Strip) and parts of §4.5 below describe the **pre-redesign inline timer strip**, which has been **replaced by the Focus orb** (`_renderTimerTrack()` is now a no-op). They're retained for historical context only. The Calm/Pushy boundary framework (§4.5) survives conceptually — it now renders inside the orb meta, not a banner.
+
 ---
 
 ## 1. COLOR PALETTE (TOKEN SYSTEM)

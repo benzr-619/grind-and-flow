@@ -316,6 +316,52 @@ input, textarea, select { font: inherit; color: inherit; }
   .focus-zone { transition: opacity 200ms ease, background 200ms ease; }
 }
 
+/* ── PiP float: the orb detached into an always-on-top window ──
+   Same JS realm as the main page; this styles the cloned stylesheet inside the
+   PiP document. Reads as "just the orb" on paper — no text until hover. */
+body.pip-orb { margin: 0; overflow: hidden; background: var(--paper); }
+.pip-stage { position: fixed; inset: 0; }
+.pip-stage .orb-wrap { width: 150px; height: 150px; }
+.pip-stage .orb-glow { inset: 28%; }
+/* Boundary ring — pulses behind the orb. Brief stronger pulse (nudge) settles into
+   a slow soft pulse (settle): a reminder to move on, not a sustained alarm. */
+.pip-stage::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 150px; height: 150px; margin: -75px 0 0 -75px;
+  border-radius: 50%; pointer-events: none;
+}
+.pip-stage.boundary-settle::after { animation: orb-settle 3.2s ease-in-out infinite; }
+.pip-stage.boundary-nudge::after  { animation: orb-nudge 0.85s ease-in-out infinite; }
+
+/* Hover overlay — remaining time + compact controls, hidden until hover */
+.pip-hover {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; opacity: 0; pointer-events: none;
+  background: color-mix(in srgb, var(--paper) 72%, transparent);
+  transition: opacity 160ms ease;
+}
+.pip-stage:hover .pip-hover { opacity: 1; pointer-events: auto; }
+.pip-clock {
+  font-family: var(--font-display); font-size: 30px; font-weight: 700;
+  color: var(--ink); letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+}
+.pip-clock .fc-colon { color: var(--muted); }
+.pip-controls { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 200px; }
+.pip-controls .oc-btn { padding: 5px 9px; font-size: 9px; }
+
+@keyframes orb-nudge {
+  0%,100% { box-shadow: 0 0 0 2px rgba(217,122,46,0);    transform: scale(1); }
+  50%     { box-shadow: 0 0 0 7px rgba(217,122,46,0.42); transform: scale(1.05); }
+}
+@keyframes orb-settle {
+  0%,100% { box-shadow: 0 0 0 1px rgba(217,122,46,0); }
+  50%     { box-shadow: 0 0 0 4px rgba(217,122,46,0.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pip-stage.boundary-nudge::after, .pip-stage.boundary-settle::after { animation: none; }
+}
+
 /* ════════════════════════════════════════
    INBOX REVIEW — full-screen triage overlay
 ════════════════════════════════════════ */
