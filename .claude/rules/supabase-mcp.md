@@ -26,7 +26,7 @@ All four app tables exist in the `public` schema with RLS enabled:
 | Table | Key columns | Notes |
 |---|---|---|
 | `projects` | id, title, status, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), subtasks (jsonb), user_id, capacities_url, waiting, waiting_reason, waiting_auto | 35 rows |
-| `tasks` | id, type, title, status, parent_project, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), backlog_entered_at, user_id | 21 rows |
+| `tasks` | id, type, title, status, parent_project, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), backlog_entered_at, `later_count` (int, default 0 — Inbox Review "bumped N×"; migration `add_later_count_to_tasks`), user_id | 21 rows |
 | `archive` | same as tasks + original_status, archived_at, subtasks | 5 rows |
 | `tags` | user_id (PK), name (PK), color_slot, created_at | 1 row |
 

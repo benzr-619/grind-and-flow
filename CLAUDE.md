@@ -7,6 +7,8 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 **After every session where a bug was fixed, a schema fact was discovered, or a gotcha was identified: update the relevant `.claude/rules/<area>.md` file immediately — do not wait to be asked.** If no rules file fits, create a new one under `.claude/rules/`. This is mandatory, not optional.
 
 - [Mobile responsive layer](./claude/rules/mobile.md) — sticky header offsets, show/hide pattern, `mobileTab` state, bottom sheet wiring, Inbox/backlog relabel map.
+- [Focus Mode orb](./claude/rules/focus-mode.md) — full-screen `#focus-zone` overlay, persistent-orb/class-swap render, stable-id mapping, `_renderTimerTrack` now a no-op, `--focus-*` tokens, mobile `!important` hide.
+- [Inbox Review wheel](./claude/rules/inbox-review.md) — Inbox removed from board columns (now This Week/Next/Done); full-screen `#inbox-review` 3D task-wheel review; `_reviewSeq`/`_reviewOutcome`/`_reviewCenterId` model; due→oldest order; staged-delete-on-close + undo; `later_count` column.
 
 ---
 
@@ -113,6 +115,7 @@ Subtask object shape: `{ id, title, done, promoted, loc, promotedTaskId? }`
 | blockedReason | blocked_reason | |
 | tags | tags | jsonb array |
 | backlogEnteredAt | backlog_entered_at | set when item enters backlog; drives the "time in Inbox" age counter |
+| laterCount | later_count | integer, default 0 — times the task has been bumped to "Later" in Inbox Review; shown as "bumped N×" |
 | — | user_id | injected by `_taskToDb()` |
 
 ### `archive` table
@@ -203,10 +206,11 @@ This app is intended for use across multiple devices (desktop and eventually mob
 ## Feature Status
 
 ### Complete and working
-- **Dual Kanban boards**: Tasks (`backlog → this-week → next → done`) and Projects (`active → up-next → on-hold → someday`). Drag-and-drop between columns. `+ add` button per column (except Done).
+- **Dual Kanban boards**: Tasks (`this-week → next → done` on the board; `backlog`/Inbox is no longer a board column — see Inbox Review) and Projects (`active → up-next → on-hold → someday`). Drag-and-drop between columns. `+ add` button per column (except Done). The Tasks `.columns` grid is sized to the rendered column count via `data-cols`.
 - **Archive view**: Time-grouped layout (Today / This Week / Last Week / Earlier). Restore, delete, and Clear Archive actions.
-- **Doing zone**: Drag any task from the board into the focus strip. Left flank sends it back to Next; right flank marks it Done. Only one task in Doing at a time — dropping a new one bumps the existing one back to Next.
-- **Focus timer**: Progressive sequence (5m work → 5m break → 10m → 5m → 25m → 5m → 50m → 5m → 50m). Wall-clock drift correction (immune to browser background tab throttling). Pause/resume, segment jump by clicking track. "Calm" boundary state after work ends; "Pushy" boundary state after break ends. Elapsed-minutes counter. Browser notification on segment completion.
+- **Focus Mode orb (redesign phase 1)**: Starting a task (tap "start →" on a Next card, or drag-swap onto the orb) opens a **full-screen breathing-orb overlay** (`#focus-zone`), covering the board + topbar. Warm amber orb while working, cool blue on breaks, with a slow breathing + organic-morph animation; smooth 1.6s color crossfade between segments. Task title + large timer sit top-left (`#focus-meta`); the orb carries no text (`work`/`break` shown under the timer). Minimal bottom controls: Pause/Resume, Skip, Done, Return to Next. **Exit only via Done or Return to Next; Pause stays on the page.** Desktop only — hidden at ≤640px. See [focus-mode rule](./claude/rules/focus-mode.md). PiP "float" is a deferred reach goal.
+- **Focus timer**: Progressive sequence (5m work → 5m break → 10m → 5m → 25m → 5m → 50m → 5m → 50m). Wall-clock drift correction (immune to browser background tab throttling). Pause/resume, skip segment. Calm boundary state after work ends; pushy boundary state after break ends (both surfaced in the orb meta). Elapsed-minutes counter. Browser notification on segment completion. *(The old inline doing strip + linear segment track were replaced by the orb; `_renderTimerTrack()` is now a no-op stub.)*
+- **Inbox Review (redesign phase 2)**: "Review Inbox" button (Tasks header) opens a **full-screen vertical 3D task-wheel** (`#inbox-review`, desktop only). Walks `backlog` items one at a time — order **by due date, then oldest** — as a connected spine of tag-colored dots (info to the right of each); the centered task is enlarged with triage actions **This Week / Later / Delete**. Acting rotates it up into faded **history** (scroll/click back to **Undo**); the next unprocessed task centers. "Later" increments a persistent `laterCount` ("bumped N×") and keeps the task in Inbox; **deletes are staged and applied on Close** (so undoable mid-pass). This Week cards also get a hover `← later` to demote back to Inbox. See [inbox-review rule](./claude/rules/inbox-review.md).
 - **Task cards**: Color-coded tag pills, age counter (time in Inbox via `_ageLabel()` — e.g. "3d ago", "1w ago"; stale at 7d amber, old at 14d red), scheduled date/day display, blocked badge + reason inline, parent project reference.
 - **Project cards**: Subtask list (inline add, checkbox toggle, drag reorder, progress bar + percentage). Promote subtask to task board as a `this-week` task. Recall a promoted subtask back to the project. Three-state blocking: Blocked (amber), Waiting (gold `#c49a2a`), or Clear — each with an optional reason line. Waiting auto-sets when a linked task card is blocked and auto-clears when all linked blocked tasks are resolved. Manual waiting is sticky (not auto-cleared). Tags. Collapsed/expanded toggle with animated collapse.
 - **Detail modal**: Edit title, move status, toggle tags, scheduled date/time, due date, notes, blocked state + reason, subtask management (projects), delete with confirmation.
