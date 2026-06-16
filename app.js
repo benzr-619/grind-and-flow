@@ -495,15 +495,6 @@ const App = (() => {
       `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
     ).join('');
 
-    // Subtask count
-    const subHtml = (item.subtasks && item.subtasks.length)
-      ? `<span class="card-subtask-count">
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-            <rect x="1.5" y="2.5" width="13" height="3" rx="0.5"/>
-            <rect x="1.5" y="7" width="13" height="3" rx="0.5"/>
-            <rect x="1.5" y="11.5" width="13" height="3" rx="0.5"/>
-          </svg> ${item.subtasks.length}
-        </span>` : '';
 
     // Scheduled day + time
     let schedHtml = '', dayHtml = '';
@@ -552,7 +543,7 @@ const App = (() => {
         </div>
       </div>
       <div class="card-meta">
-        ${tagPills}${subHtml}${schedHtml}${dayHtml}${ageHtml}
+        ${tagPills}${schedHtml}${dayHtml}${ageHtml}
       </div>
       ${focusBtn}
     </div>`;
@@ -590,58 +581,124 @@ const App = (() => {
     return REVIEW_COLORS[_tagClasses(t, _loadTags())] || '#8A8378';
   }
 
-  // Build the canvas: a meandering vertical stream of softly drifting orbs.
+  // Build the canvas: row-packed orbs that fill the full width and minimise scrolling.
   function _renderProjCanvas(items) {
     if (!items.length) {
       return `<div class="proj-canvas"><div class="proj-canvas-empty">No projects yet — add one to begin.</div></div>`;
     }
     const ordered = [...items].sort((a, b) =>
       PROJ_STATUS_ORDER.indexOf(a.status) - PROJ_STATUS_ORDER.indexOf(b.status));
-    let y = 60;
-    const orbs = ordered.map((item, i) => {
+
+    // Pack into rows using a reference canvas width (~1000px usable area).
+    // % positions then work at any actual screen size.
+    const REF_W = 1000, GAP = 28, MARGIN = 7;
+    const AVAIL = REF_W * (1 - MARGIN * 2 / 100);
+    const rows = [];
+    let cur = { items: [], usedPx: 0, maxH: 0 };
+    for (const item of ordered) {
       const size = PROJ_ORB_SIZE[item.status] || 140;
-      const xPct = 12 + _hashStr(item.id) * 58;   // horizontal scatter within margins
-      const top  = y;
-      y += size * 0.6 + 28;                         // vertical flow, no overlap
-      return _renderProjOrb(item, { size, xPct, top, idx: i });
-    }).join('');
+      const add  = cur.items.length ? size + GAP : size;
+      if (cur.items.length && cur.usedPx + add > AVAIL) {
+        rows.push(cur); cur = { items: [], usedPx: 0, maxH: 0 };
+      }
+      cur.items.push({ item, size });
+      cur.usedPx += add;
+      cur.maxH = Math.max(cur.maxH, size);
+    }
+    if (cur.items.length) rows.push(cur);
+
+    let y = 50;
+    const orbs = [];
+    rows.forEach(r => {
+      const n = r.items.length;
+      const usablePct = 100 - MARGIN * 2;
+      r.items.forEach(({ item, size }, i) => {
+        const slot  = usablePct / (n + 1);
+        const xPct  = MARGIN + slot * (i + 1) + (_hashStr(item.id) - 0.5) * slot * 0.3;
+        const top   = y + (r.maxH - size) / 2 + (_hashStr(item.id + 'v') - 0.5) * 14;
+        orbs.push(_renderProjOrb(item, { size, xPct, top: Math.max(10, top), idx: orbs.length }));
+      });
+      y += r.maxH * 0.7 + 30;
+    });
+
     return `<div class="proj-canvas" style="height:${y + 80}px">
       ${_renderCanvasLegend()}
-      ${orbs}
+      ${orbs.join('')}
     </div>`;
   }
 
   function _renderProjOrb(item, pos) {
-    const color   = _projOrbColor(item);
-    const open    = _projectOpenCount(item.id);
-    const tags    = item.tags || [];
+    const color    = _projOrbColor(item);
+    const tags     = item.tags || [];
     const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}">${t.toUpperCase()}</span>`).join('');
     const statePill = item.blocked
       ? `<span class="proj-pill-blocked">Blocked</span>`
       : item.waiting ? `<span class="proj-pill-waiting">Waiting</span>` : '';
     const dueHtml  = item.dueDate ? `<span class="orb-meta-due">Due ${_fmtDate(item.dueDate)}</span>` : '';
-    const countHtml = open ? `<span class="orb-meta-count">${open} open</span>` : '';
-    const drift    = (pos.idx % 6) * -2.6;          // negative delay desyncs each orb's drift
+    const drift    = (pos.idx % 6) * -2.6;
     return `<div class="proj-orb status-${item.status}" data-id="${item.id}"
+      draggable="true"
+      ondragstart="event.stopPropagation();App._projOrbDragStart(event,'${item.id}')"
+      ondragend="App._projOrbDragEnd()"
       style="--orb-color:${color};left:${pos.xPct}%;top:${pos.top}px;width:${pos.size}px;height:${pos.size}px;animation-delay:${drift}s"
       onclick="App.openDetail('${item.id}')">
       <div class="proj-orb-glow"></div>
       <div class="proj-orb-body"></div>
       <div class="proj-orb-label">
         <span class="orb-title">${esc(item.title)}</span>
-        <span class="orb-meta">${countHtml}${dueHtml}</span>
+        ${dueHtml ? `<span class="orb-meta">${dueHtml}</span>` : ''}
       </div>
       <div class="proj-orb-hover">${tagPills}${statePill}</div>
     </div>`;
   }
 
   function _renderCanvasLegend() {
+    const STATUS_LABELS = { 'active': 'Active', 'up-next': 'Up next', 'someday': 'Someday', 'on-hold': 'On hold' };
+    const LG_CLASS     = { 'active': 'lg-active', 'up-next': 'lg-upnext', 'someday': 'lg-someday', 'on-hold': 'lg-onhold' };
     return `<div class="proj-legend">
-      <div class="legend-row"><span class="legend-dot lg-active"></span>Active</div>
-      <div class="legend-row"><span class="legend-dot lg-upnext"></span>Up next</div>
-      <div class="legend-row"><span class="legend-dot lg-someday"></span>Someday</div>
-      <div class="legend-row"><span class="legend-dot lg-onhold"></span>On hold</div>
+      <div class="legend-hint">drag to change status</div>
+      ${PROJ_STATUS_ORDER.map(s => `<div class="legend-row legend-drop" data-status="${s}"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="event.preventDefault();this.classList.remove('over');App._projDropStatus('${s}')">
+        <span class="legend-dot ${LG_CLASS[s]}"></span>${STATUS_LABELS[s]}
+      </div>`).join('')}
     </div>`;
+  }
+
+  // ── Project orb drag-to-status ──
+  let _projDragId = null;
+
+  function _projOrbDragStart(evt, id) {
+    _projDragId = id;
+    evt.dataTransfer.effectAllowed = 'move';
+    const el = evt.currentTarget;
+    requestAnimationFrame(() => { if (el) el.style.opacity = '0.4'; });
+  }
+
+  function _projOrbDragEnd() {
+    document.querySelectorAll('.proj-orb').forEach(el => { el.style.opacity = ''; });
+    _projDragId = null;
+  }
+
+  function _projDropStatus(newStatus) {
+    if (!_projDragId) return;
+    const proj = Data.findProject(_projDragId);
+    if (!proj) { _projDragId = null; return; }
+    if (newStatus === 'done') {
+      const activeTasks = Data.get().tasks.filter(t => t.parentProject === _projDragId && t.status !== 'done');
+      if (activeTasks.length) {
+        const n = activeTasks.length;
+        const hint = document.querySelector('.legend-hint');
+        if (hint) { hint.textContent = `${n} task${n > 1 ? 's' : ''} still active`; setTimeout(() => { hint.textContent = 'drag to change status'; }, 2500); }
+        _projDragId = null;
+        return;
+      }
+    }
+    proj.status = newStatus;
+    Data.upsertProject(proj);
+    _projDragId = null;
+    renderBoard();
   }
 
   // ── Archive ──
@@ -1603,54 +1660,63 @@ const App = (() => {
       _showModal(`
         <div class="proj-space"></div>
         <input type="text" class="proj-modal-title-input" id="d-title" value="${esc(item.title)}" />
-        <div class="modal-section">
-          <div class="fg"><label class="modal-label">Tags</label>
-            <div class="modal-tags-row" id="modal-tags-row">${tagPillsHtml}</div>
-            <div class="modal-tag-add" style="margin-top:7px">
-              <input type="text" id="new-tag-input" placeholder="New tag..." />
-              <button onclick="App._addCustomTag('${id}')">+ add tag</button>
+        <div class="proj-modal-cols">
+          <div class="proj-modal-left">
+            <div class="modal-section">
+              <label class="modal-label">Tags</label>
+              <div class="modal-tags-row" id="modal-tags-row">${tagPillsHtml}</div>
+              <div class="modal-tag-add" style="margin-top:7px">
+                <input type="text" id="new-tag-input" placeholder="New tag..." />
+                <button onclick="App._addCustomTag('${id}')">+ add tag</button>
+              </div>
+            </div>
+            <div class="modal-section">
+              <div class="proj-modal-grid" style="grid-template-columns:1fr 1fr">
+                <div class="fg"><label class="modal-label">Status</label>
+                  <select class="modal-input" id="d-status" data-prev="${item.status}"
+                    onchange="App._onProjStatusChange('${id}',this)">${statusOpts}</select>
+                  <div id="status-done-msg" style="display:none;font-size:10px;color:#C98B2A;margin-top:5px"></div>
+                </div>
+                <div class="fg"><label class="modal-label">Due date</label>
+                  <input type="date" class="modal-input" id="d-due" value="${item.dueDate || ''}" /></div>
+              </div>
+            </div>
+            <div class="modal-section" style="flex:1">
+              <label class="modal-label">Notes</label>
+              <textarea class="modal-input proj-notes-tall" id="d-notes">${esc(item.notes || '')}</textarea>
+            </div>
+            <div class="modal-section">
+              <label class="modal-label" style="margin-bottom:7px">State</label>
+              <div class="proj-state-seg">
+                <button class="proj-state-seg-btn${stateIsClear ? ' active' : ''}" id="pstate-clear" onclick="App._setProjState('${id}','clear')">Clear</button>
+                <button class="proj-state-seg-btn${stateIsWaiting ? ' active' : ''}" id="pstate-waiting" onclick="App._setProjState('${id}','waiting')">Waiting</button>
+                <button class="proj-state-seg-btn${stateIsBlocked ? ' active' : ''}" id="pstate-blocked" onclick="App._setProjState('${id}','blocked')">Blocked</button>
+              </div>
+              ${autoWaitNote}
+              <textarea class="modal-input" id="d-waiting-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsWaiting ? 'block' : 'none'}" placeholder="Reason...">${esc(item.waitingReason || '')}</textarea>
+              <textarea class="modal-input" id="d-blocked-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsBlocked ? 'block' : 'none'}" placeholder="Reason...">${esc(item.blockedReason || '')}</textarea>
             </div>
           </div>
-          <div class="proj-modal-grid" style="grid-template-columns:1fr 1fr">
-            <div class="fg"><label class="modal-label">Status</label>
-              <select class="modal-input" id="d-status" data-prev="${item.status}"
-                onchange="App._onProjStatusChange('${id}',this)">${statusOpts}</select>
-              <div id="status-done-msg" style="display:none;font-size:10px;color:#C98B2A;margin-top:5px"></div>
+          <div class="proj-modal-right">
+            <div class="modal-section pspace-section">
+              <label class="modal-label" style="margin-bottom:8px;display:block">Tasks</label>
+              <div class="pspace-tasklist" id="pspace-tasklist-${item.id}">
+                ${_renderProjTaskList(item.id)}
+              </div>
+              <div class="pspace-add">
+                <input type="text" class="modal-input" id="pspace-add-${item.id}" placeholder="Add a task..."
+                  onkeydown="if(event.key==='Enter')App._addProjectTask('${item.id}')" />
+                <div class="pdest" id="pspace-dest">
+                  <button class="pdest-opt active" data-d="inbox" onclick="App._projSetAddDest('inbox')">Inbox</button>
+                  <button class="pdest-opt" data-d="now" onclick="App._projSetAddDest('now')">Start now</button>
+                </div>
+                <button class="btn-close" onclick="App._addProjectTask('${item.id}')">+ add</button>
+                <button class="btn-close pspace-more" title="More fields" onclick="App._addProjectTaskDetailed('${item.id}')">⋯</button>
+              </div>
             </div>
-            <div class="fg"><label class="modal-label">Due date</label>
-              <input type="date" class="modal-input" id="d-due" value="${item.dueDate || ''}" /></div>
-          </div>
-          <div class="fg"><label class="modal-label">Notes</label>
-            <textarea class="modal-input" id="d-notes" style="height:52px;resize:vertical">${esc(item.notes || '')}</textarea></div>
-        </div>
-        <div class="modal-section">
-          <label class="modal-label" style="margin-bottom:8px;display:block">Tasks</label>
-          <div class="pspace-tasklist" id="pspace-tasklist-${item.id}">
-            ${_renderProjTaskList(item.id)}
-          </div>
-          <div class="pspace-add">
-            <input type="text" class="modal-input" id="pspace-add-${item.id}" placeholder="Add a task..."
-              onkeydown="if(event.key==='Enter')App._addProjectTask('${item.id}')" />
-            <div class="pdest" id="pspace-dest">
-              <button class="pdest-opt active" data-d="inbox" onclick="App._projSetAddDest('inbox')">Inbox</button>
-              <button class="pdest-opt" data-d="now" onclick="App._projSetAddDest('now')">Start now</button>
-            </div>
-            <button class="btn-close" onclick="App._addProjectTask('${item.id}')">+ add</button>
-            <button class="btn-close pspace-more" title="More fields" onclick="App._addProjectTaskDetailed('${item.id}')">⋯</button>
+            ${capSection}
           </div>
         </div>
-        <div class="modal-section">
-          <label class="modal-label" style="margin-bottom:7px">State</label>
-          <div class="proj-state-seg">
-            <button class="proj-state-seg-btn${stateIsClear ? ' active' : ''}" id="pstate-clear" onclick="App._setProjState('${id}','clear')">Clear</button>
-            <button class="proj-state-seg-btn${stateIsWaiting ? ' active' : ''}" id="pstate-waiting" onclick="App._setProjState('${id}','waiting')">Waiting</button>
-            <button class="proj-state-seg-btn${stateIsBlocked ? ' active' : ''}" id="pstate-blocked" onclick="App._setProjState('${id}','blocked')">Blocked</button>
-          </div>
-          ${autoWaitNote}
-          <textarea class="modal-input" id="d-waiting-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsWaiting ? 'block' : 'none'}" placeholder="Reason...">${esc(item.waitingReason || '')}</textarea>
-          <textarea class="modal-input" id="d-blocked-reason" style="margin-top:8px;height:36px;resize:none;display:${stateIsBlocked ? 'block' : 'none'}" placeholder="Reason...">${esc(item.blockedReason || '')}</textarea>
-        </div>
-        ${capSection}
         <div class="modal-footer">
           <div id="del-zone"><button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button></div>
           <div class="modal-footer-right">
@@ -2594,6 +2660,7 @@ const App = (() => {
     _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleArchiveProject, _restoreDoneProject, _deleteDoneProject,
+    _projOrbDragStart, _projOrbDragEnd, _projDropStatus,
     _projTaskToggleDone, _projTaskDelete, _projSetAddDest, _addProjectTask, _addProjectTaskDetailed,
     _addPendingTask, _removePendingTask,
     _setNewType, _saveNew,
