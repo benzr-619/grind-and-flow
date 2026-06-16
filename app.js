@@ -270,6 +270,7 @@ const App = (() => {
       if (!archiveOpen) {
         actEl.innerHTML = `
           <button class="btn" onclick="App.openNewModal()">+ New ${view === 'projects' ? 'Project' : 'Task'}</button>
+          ${view === 'tasks' ? `<button class="btn btn-review-inbox" onclick="App.openInboxReview()">Review Inbox</button>` : ''}
           <button class="btn btn-primary" id="filter-btn" onclick="App.toggleFilter(event)">Filters${filterTags.length || filterDate ? ' · ' + (filterTags.length + (filterDate ? 1 : 0)) : ''}</button>`;
       } else {
         const archiveCount = (Data.get().archive?.length || 0) +
@@ -283,7 +284,10 @@ const App = (() => {
     if (archiveOpen) {
       _renderArchive(board);
     } else {
-      const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS;
+      // Inbox (backlog) is no longer a board column — it's handled by the Inbox
+      // Review overlay. TASK_COLS itself is kept intact (it feeds the New Task
+      // status dropdown); we only filter backlog out of the rendered columns.
+      const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS.filter(c => c.id !== 'backlog');
       const state = Data.get();
       // Done projects live in Archive view only — exclude from the kanban board
       let items = view === 'projects'
@@ -312,7 +316,7 @@ const App = (() => {
         items = items.filter(i => i.scheduledDate === filterDate);
       }
 
-      board.innerHTML = `<div class="columns">${cols.map(col => {
+      board.innerHTML = `<div class="columns" data-cols="${cols.length}">${cols.map(col => {
         let colItems = items.filter(i => i.status === col.id);
         // Backlog: sort oldest first
         if (col.id === 'backlog') {
@@ -524,7 +528,9 @@ const App = (() => {
 
     const isActive = timerTask && timerTask.id === item.id;
     const focusBtn = colId === 'next' && !isActive
-      ? `<button class="focus-btn" onclick="event.stopPropagation();App.startTask('${item.id}')">start →</button>` : '';
+      ? `<button class="focus-btn" onclick="event.stopPropagation();App.startTask('${item.id}')">start →</button>`
+      : colId === 'this-week'
+        ? `<button class="later-btn" onclick="event.stopPropagation();App._sendToLater('${item.id}')">← later</button>` : '';
 
     return `<div class="card ${tagClass}${isActive ? ' card-active' : ''}" draggable="true" data-id="${item.id}"
       ondragstart="App._onDragStart(event,'${item.id}')"
@@ -893,67 +899,79 @@ const App = (() => {
     renderBoard();
   }
 
-  // ── Doing row ──
+  // ── Focus Mode orb (full-screen overlay) ──
   function _renderFocusRow() {
-    const sec = document.getElementById('doing-section');
-    if (!sec) return;
-    const state = Data.get();
-    const doingTasks = state.tasks.filter(t => t.status === 'doing');
-    const task = doingTasks[0] || null;
-
-    // Hide entire focus zone (doing + timer track) when no active task
     const fz = document.getElementById('focus-zone');
-    if (fz) fz.style.display = task ? '' : 'none';
+    const meta = document.getElementById('focus-meta');
+    const controls = document.getElementById('focus-orb-controls');
+    const orbEl = document.getElementById('focus-orb');
+    const glowEl = document.getElementById('focus-orb-glow');
+    if (!fz || !meta || !controls) return;
+
+    const state = Data.get();
+    const task = state.tasks.filter(t => t.status === 'doing')[0] || null;
 
     if (!task) {
-      sec.innerHTML = '';
-    } else {
-      const isActive = timerTask && timerTask.id === task.id;
-      const isRunning = isActive && timerRunning;
-      const isCalm  = timerAtBoundary && isActive && TIMER_SEQ[timerSegIdx].kind === 'break';
-      const isPushy = timerAtBoundary && isActive && TIMER_SEQ[timerSegIdx].kind !== 'break';
-      const tags = task.tags || [];
-      sec.innerHTML = `
-        <div class="doing-strip">
-          <button class="doing-flank doing-flank-left"
-            onclick="event.stopPropagation();App.removeFromDoing('${task.id}')"
-            title="Back to Next">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
-            <span>next</span>
-          </button>
-          <div class="doing-band${isActive ? ' now' : ''}${isCalm ? ' boundary-calm' : ''}${isPushy ? ' boundary-pushy' : ''}"
-            id="doing-cards-row" data-id="${task.id}"
-            ondragover="App._onDoingDragOver(event)"
-            ondragleave="App._onDoingDragLeave(event)"
-            ondrop="App._onDoingDrop(event)">
-            <button class="doing-play-btn${isRunning ? ' running' : ''}"
-              onclick="${isRunning ? 'App.timerTogglePlay()' : `App.activateTask('${task.id}')`}">
-              ${isRunning
-                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`
-                : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8-13-8z"/></svg>`}
-            </button>
-            <div class="doing-identity">
-              <div class="doing-meta-top">
-                ${tags.slice(0,2).map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}">${t.toUpperCase()}</span>`).join('')}
-              </div>
-              <div class="doing-task-title">${esc(task.title)}</div>
-            </div>
-            <div class="doing-divider"></div>
-            <div class="doing-timer-zone">
-              <div class="focus-clock">
-                <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
-                ${isActive ? `<div class="doing-elapsed-val">${timerTask._elapsed || 0}m</div>` : ''}
-              </div>
-            </div>
-          </div>
-          <button class="doing-flank doing-flank-right"
-            onclick="event.stopPropagation();App.markDoingDone('${task.id}')"
-            title="Mark Done">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-            <span>done</span>
-          </button>
-        </div>`;
+      fz.style.display = 'none';
+      fz.classList.remove('active', 'break');
+      meta.innerHTML = '';
+      controls.innerHTML = '';
+      _renderClock();
+      return;
     }
+
+    const isActive    = timerTask && timerTask.id === task.id;
+    const isRunning   = isActive && timerRunning;
+    const atBoundary  = isActive && timerAtBoundary;
+    // At a boundary, timerSegIdx has already advanced to the NEXT segment — its
+    // kind drives the orb colour and copy (work just ended → break next = calm).
+    const isBreak     = isActive ? TIMER_SEQ[timerSegIdx].kind === 'break' : false;
+    const isCalm      = atBoundary && isBreak;
+    const paused      = isActive && !timerRunning && !timerAtBoundary;
+    const stateClass  = isBreak ? 'break' : 'work';
+
+    // Show overlay + drive orb visuals via class swaps (keeps colour/breathe smooth)
+    // display:flex overrides the base .focus-zone{display:none}; mobile hides via !important
+    fz.style.display = 'flex';
+    requestAnimationFrame(() => fz.classList.add('active'));
+    fz.classList.toggle('break', isBreak);
+    if (orbEl)  orbEl.className  = `orb ${stateClass}${paused ? ' paused' : ''}`;
+    if (glowEl) glowEl.className = `orb-glow ${stateClass}${paused ? ' paused' : ''}`;
+    document.getElementById('doing-cards-row')?.setAttribute('data-id', task.id);
+
+    // Top-left meta: label · tags · title · big timer · sub (work/break + elapsed, or boundary copy)
+    const boundaryMsg = isCalm
+      ? '✓ Focus block done. Take five — you earned it.'
+      : "Break's over. Time to get back to it.";
+    const elapsed = (isActive && timerTask ? timerTask._elapsed : 0) || 0;
+    const subHtml = atBoundary
+      ? `<span class="fmeta-boundary ${isCalm ? 'calm' : 'pushy'}">${boundaryMsg}</span>`
+      : isBreak
+        ? 'break · step away'
+        : `work · <span class="doing-elapsed-val">${elapsed}m</span> elapsed`;
+    meta.innerHTML = `
+      <p class="fmeta-label">${isBreak ? 'Breathe' : 'Flow state'}</p>
+      <p class="fmeta-title">${esc(task.title)}</p>
+      <div class="focus-clock-time" id="focus-clock-time">--<span class="fc-colon">:</span>--</div>
+      <p class="fmeta-sub">${subHtml}</p>`;
+
+    // Bottom controls — minimal, low contrast.
+    // Layout reads spatially: Return to Next (backward) left · main action middle · Done (forward) right.
+    const backBtn = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return to Next</button>`;
+    const doneBtn = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
+    if (atBoundary) {
+      const n = TIMER_SEQ[timerSegIdx].m;
+      controls.innerHTML = `${backBtn}
+        <button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}`;
+    } else if (!isActive) {
+      controls.innerHTML = `${backBtn}
+        <button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}`;
+    } else {
+      controls.innerHTML = `${backBtn}
+        <button class="oc-btn primary" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
+        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>${doneBtn}`;
+    }
+
     _renderClock();
   }
 
@@ -1023,47 +1041,10 @@ const App = (() => {
   }
 
   // ── Timer track ──
-  function _renderTimerTrack() {
-    const track = document.getElementById('timer-track');
-    if (!track) return;
-    const hasTask = !!timerTask;
-    const segs = TIMER_SEQ.map((seg, i) => {
-      const done = hasTask && i < timerSegIdx;
-      const cur  = hasTask && i === timerSegIdx;
-      const isBreak = seg.kind === 'break';
-      const w = isBreak ? 'tseg-brk' : `tseg-${seg.m}`;
-      const fillPct = cur ? Math.max(0, 1 - timerSecsRemaining / (seg.m * 60)) : 0;
-      return `<div class="tseg ${w}${isBreak ? ' break' : ''}${done ? ' done' : ''}${cur ? ' current' : ''}"
-        onclick="App._timerJump(${i})"
-        title="${seg.m}-min ${seg.kind}">
-        ${cur ? `<div class="fill" style="transform:scaleX(${fillPct})"></div>` : ''}
-      </div>`;
-    }).join('');
-    const labels = TIMER_SEQ.map((seg, i) => {
-      const w = seg.kind === 'break' ? 'tl-brk' : `tseg-${seg.m}`;
-      return `<div class="tl-seg ${w}${hasTask && i === timerSegIdx ? ' active' : ''}">${seg.kind !== 'break' ? seg.label : ''}</div>`;
-    }).join('');
-    // Boundary state banner (shown when a segment just finished and user must start the next)
-    let boundaryBanner = '';
-    if (timerAtBoundary && timerTask) {
-      const nextSeg = TIMER_SEQ[timerSegIdx];
-      if (nextSeg.kind === 'break') {
-        // Calm: work just ended — gentle nudge toward a break
-        boundaryBanner = `<div class="timer-boundary calm">
-          <span class="timer-boundary-msg">✓ Focus block done. Take five — you earned it.</span>
-          <button class="timer-boundary-btn" onclick="App.startNextSegment()">START ${nextSeg.m}-MIN BREAK</button>
-        </div>`;
-      } else {
-        // Pushy: break just ended — firm call back to work
-        boundaryBanner = `<div class="timer-boundary pushy">
-          <span class="timer-boundary-msg">Break's over. Time to get back to it.</span>
-          <button class="timer-boundary-btn" onclick="App.startNextSegment()">START ${nextSeg.m}-MIN WORK ›</button>
-        </div>`;
-      }
-    }
-
-    track.innerHTML = `<div class="timer-segments">${segs}</div>${boundaryBanner}`;
-  }
+  // Superseded by the Focus Mode orb. Kept as a no-op so the ~9 existing call
+  // sites (activate/tick/jump/boundary) don't need to change. Orb state is
+  // rendered by _renderFocusRow(); segment progress lives in the orb itself.
+  function _renderTimerTrack() {}
 
   // ── Timer logic ──
   function _startClock() {
@@ -1194,14 +1175,24 @@ const App = (() => {
     timerSegIdx = idx; timerSecsRemaining = TIMER_SEQ[idx].m * 60;
     timerAtBoundary = false;
     if (timerTask && timerRunning) _startTimer();
-    _renderTimerTrack(); _renderClock();
+    _renderFocusRow(); _renderClock();
   }
 
   function startNextSegment() {
     if (!timerTask) return;
     timerAtBoundary = false;
     _startTimer();
-    _renderTimerTrack(); _renderFocusRow();
+    _renderFocusRow();
+  }
+
+  // Skip the current segment and start the next one immediately
+  function skipSegment() {
+    if (!timerTask) return;
+    timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
+    timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
+    timerAtBoundary = false;
+    _startTimer();
+    _renderFocusRow();
   }
 
   function _updateSegFill() {
@@ -1982,6 +1973,207 @@ const App = (() => {
     renderBoard();
   }
 
+  // ── Inbox Review (vertical 3D task wheel) ──
+  // Inbox is a review activity, not a browseable column. A wheel of tag-colored
+  // dots turns one task to center at a time; you triage it (This Week / Later /
+  // Delete), it rotates up into faded history (scroll back to Undo), and the next
+  // unprocessed task centers. Deletes are staged and only applied on Close so they
+  // stay undoable for the whole pass.
+  const REVIEW_COLORS = {
+    'tag-work': '#E85D3A', 'tag-school': '#6FB08C', 'tag-personal': '#5E9BD4',
+    'tag-slot-0': '#8E86C9', 'tag-slot-1': '#E58AAE', 'tag-slot-2': '#E85D3A',
+    'tag-slot-3': '#F2C94C', 'tag-slot-4': '#6FB08C',
+  };
+  let _reviewSeq = [];           // task ids in review order (snapshot at open)
+  let _reviewOutcome = new Map(); // id → { action, snap:{status,backlogEnteredAt,laterCount} }
+  let _reviewCenterId = null;
+
+  function _reviewColor(item) {
+    const t = (item.tags || [])[0];
+    if (!t) return '#2A2A28';
+    return REVIEW_COLORS[_tagClasses(t, _loadTags())] || '#2A2A28';
+  }
+
+  function _reviewOrder(items) {
+    return items.slice().sort((a, b) => {
+      const ad = a.dueDate || '', bd = b.dueDate || '';
+      if (ad && bd && ad !== bd) return ad.localeCompare(bd);
+      if (ad && !bd) return -1;
+      if (!ad && bd) return 1;
+      const aa = a.backlogEnteredAt || a.dateAdded || '';
+      const ba = b.backlogEnteredAt || b.dateAdded || '';
+      return aa.localeCompare(ba);
+    });
+  }
+
+  function openInboxReview() {
+    const backlog = Data.get().tasks.filter(t => t.status === 'backlog');
+    _reviewSeq = _reviewOrder(backlog).map(t => t.id);
+    _reviewOutcome = new Map();
+    _reviewCenterId = _reviewSeq[0] || null;
+    const el = document.getElementById('inbox-review');
+    if (!el) return;
+    el.style.display = 'flex';
+    requestAnimationFrame(() => el.classList.add('active'));
+    _renderInboxReview();
+  }
+
+  function closeInboxReview() {
+    // Flush staged deletes
+    _reviewOutcome.forEach((o, id) => { if (o.action === 'delete') Data.deleteItem(id); });
+    const el = document.getElementById('inbox-review');
+    if (el) { el.classList.remove('active'); el.style.display = 'none'; el.innerHTML = ''; }
+    renderBoard();
+  }
+
+  function _reviewAdvance() {
+    _reviewCenterId = _reviewSeq.find(id => !_reviewOutcome.has(id)) || null;
+    _renderInboxReview();
+  }
+  function _reviewCenter(id) { _reviewCenterId = id; _renderInboxReview(); }
+  function _reviewScroll(dir) {
+    const ci = _reviewSeq.indexOf(_reviewCenterId);
+    const ni = Math.max(0, Math.min(_reviewSeq.length - 1, ci + (dir > 0 ? 1 : -1)));
+    if (ni !== ci) { _reviewCenterId = _reviewSeq[ni]; _renderInboxReview(); }
+  }
+
+  const _REVIEW_OUTCOME_LABEL = { 'this-week': '→ This week', 'later': 'Deferred', 'delete': 'Will delete' };
+
+  function _renderInboxReview() {
+    const el = document.getElementById('inbox-review');
+    if (!el) return;
+    const total = _reviewSeq.length;
+    const processed = _reviewSeq.filter(id => _reviewOutcome.has(id)).length;
+
+    // Inbox zero — all processed (or nothing to review)
+    if (!total || processed >= total) {
+      el.innerHTML = `
+        <div class="ir-empty">
+          <div class="ir-empty-mark">✓</div>
+          <div class="ir-empty-title">Inbox zero</div>
+          <div class="ir-empty-sub">Nothing left to review.</div>
+          <button class="btn" onclick="App.closeInboxReview()">Close</button>
+        </div>`;
+      return;
+    }
+
+    const centerIdx = _reviewSeq.indexOf(_reviewCenterId);
+    const MAXOFF = 4;
+    const nodes = _reviewSeq.map((id, i) => {
+      const off = i - centerIdx;
+      if (Math.abs(off) > MAXOFF) return '';
+      const item = Data.findItem(id);
+      if (!item) return '';
+      const isCenter = off === 0;
+      const ad = Math.abs(off);
+      const outcome = _reviewOutcome.get(id);
+      // Curved wheel: sine spacing compresses toward the edges + perspective tilt
+      const yPx = 330 + 270 * Math.sin(off * 0.34);
+      const scale = isCenter ? 1 : Math.max(0.55, 1 - ad * 0.13);
+      const opacity = isCenter ? 1 : Math.max(0.16, 1 - ad * 0.28);
+      const tilt = Math.max(-60, Math.min(60, off * 14));
+      const dotSize = isCenter ? 30 : 15;
+      const color = _reviewColor(item);
+
+      const dot = `<div class="ir-dot${isCenter ? ' center' : ''}${outcome ? ' done' : ''}"
+        style="top:${yPx}px;width:${dotSize}px;height:${dotSize}px;background:${color};opacity:${opacity}"
+        onclick="App._reviewCenter('${id}')"></div>`;
+
+      let body;
+      if (isCenter) {
+        let ageHtml = '';
+        if (item.backlogEnteredAt) {
+          const days = _daysDiff(item.backlogEnteredAt);
+          const cls = days >= 14 ? 'old' : days >= 7 ? 'stale' : '';
+          ageHtml = `<span class="age-counter${cls ? ' ' + cls : ''}">${_ageLabel(item.backlogEnteredAt)}</span>`;
+        }
+        let dueHtml = '';
+        if (item.dueDate) {
+          const dd = new Date(item.dueDate + 'T00:00:00');
+          dueHtml = `<span class="ir-due">due ${dd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>`;
+        }
+        const bumped = item.laterCount > 0 ? `<span class="ir-bumped">bumped ${item.laterCount}×</span>` : '';
+        const meta = [dueHtml, ageHtml, bumped].filter(Boolean).join('<span class="ir-dotsep">·</span>');
+        const actions = outcome
+          ? `<div class="ir-actions"><span class="ir-outcome o-${outcome.action}">${_REVIEW_OUTCOME_LABEL[outcome.action]}</span>
+               <button class="ir-act undo" onclick="App._reviewUndo('${id}')">Undo</button></div>`
+          : `<div class="ir-actions">
+               <button class="ir-act tw" onclick="App._reviewThisWeek('${id}')">This Week</button>
+               <button class="ir-act" onclick="App._sendToLater('${id}',true)">Later</button>
+               <button class="ir-act del" onclick="App._reviewDelete('${id}')">Delete</button>
+             </div>`;
+        body = `<div class="ir-title">${esc(item.title)}</div>
+          ${meta ? `<div class="ir-meta">${meta}</div>` : ''}
+          ${actions}`;
+      } else {
+        body = `<div class="ir-title sm">${esc(item.title)}</div>
+          ${outcome ? `<span class="ir-outcome o-${outcome.action} sm">${_REVIEW_OUTCOME_LABEL[outcome.action]}</span>` : ''}`;
+      }
+      const row = `<div class="ir-row${isCenter ? ' center' : ''}${outcome ? ' done' : ''}"
+        style="top:${yPx}px;transform:translateY(-50%) perspective(1200px) rotateX(${tilt}deg) scale(${scale});opacity:${opacity}"
+        onclick="${isCenter ? '' : `App._reviewCenter('${id}')`}">${body}</div>`;
+      return dot + row;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="ir-head">
+        <div class="ir-head-left">
+          <div class="ir-title-h">Inbox Review</div>
+          <div class="ir-sub">${processed} of ${total} reviewed</div>
+        </div>
+        <button class="ir-close" onclick="App.closeInboxReview()">Done</button>
+      </div>
+      <div class="ir-fade top"></div>
+      <div class="ir-fade bot"></div>
+      <div class="ir-spine"></div>
+      <div class="ir-wheel" id="ir-wheel">${nodes}</div>`;
+
+    if (!el._wheelBound) {
+      el._wheelBound = true;
+      el.addEventListener('wheel', (e) => { e.preventDefault(); _reviewScroll(e.deltaY); }, { passive: false });
+    }
+  }
+
+  function _reviewThisWeek(id) {
+    const item = Data.findItem(id); if (!item) return;
+    _reviewOutcome.set(id, { action: 'this-week', snap: { status: item.status, backlogEnteredAt: item.backlogEnteredAt, laterCount: item.laterCount || 0 } });
+    _moveItem(id, 'this-week');
+    _reviewAdvance();
+  }
+
+  function _sendToLater(id, fromReview) {
+    const item = Data.findItem(id);
+    if (!item) return;
+    if (fromReview) _reviewOutcome.set(id, { action: 'later', snap: { status: item.status, backlogEnteredAt: item.backlogEnteredAt, laterCount: item.laterCount || 0 } });
+    if (item.status !== 'backlog') item.backlogEnteredAt = _today();
+    item.status = 'backlog';
+    item.laterCount = (item.laterCount || 0) + 1;
+    Data.upsertTask(item);
+    if (fromReview) _reviewAdvance();
+    else renderBoard();
+  }
+
+  function _reviewDelete(id) {
+    // Staged — actual deletion happens on Close so it stays undoable this pass
+    _reviewOutcome.set(id, { action: 'delete', snap: null });
+    _reviewAdvance();
+  }
+
+  function _reviewUndo(id) {
+    const o = _reviewOutcome.get(id);
+    if (o && o.snap) {
+      const item = Data.findItem(id);
+      if (item) {
+        item.status = o.snap.status;
+        item.backlogEnteredAt = o.snap.backlogEnteredAt;
+        item.laterCount = o.snap.laterCount;
+        Data.upsertTask(item);
+      }
+    }
+    _reviewOutcome.delete(id);
+    _reviewCenter(id);
+  }
+
   function _saveDetail(id) {
     const item = Data.findItem(id); if (!item) return;
     const t  = document.getElementById('d-title');
@@ -2363,7 +2555,9 @@ const App = (() => {
     openDetail, openNewModal, toggleFilter, clearFilters,
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem, confirmClearArchive,
-    startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment,
+    startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment, skipSegment,
+    openInboxReview, closeInboxReview, _reviewThisWeek, _sendToLater,
+    _reviewDelete, _reviewUndo, _reviewCenter, _reviewScroll,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
     removeFromDoing, markDoingDone,

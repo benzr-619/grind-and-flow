@@ -88,6 +88,7 @@ const Data = (() => {
       blocked_reason:     t.blockedReason      || null,
       tags:               t.tags               || [],
       backlog_entered_at: t.backlogEnteredAt   || null,
+      later_count:        t.laterCount         || 0,
     };
   }
 
@@ -107,6 +108,7 @@ const Data = (() => {
       blockedReason:    r.blocked_reason       || '',
       tags:             r.tags                 || [],
       backlogEnteredAt: r.backlog_entered_at   || '',
+      laterCount:       r.later_count          || 0,
     };
   }
 
