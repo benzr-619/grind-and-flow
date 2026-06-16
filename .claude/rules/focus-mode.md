@@ -92,9 +92,12 @@ Session 2026-06-16. The deferred "float reach goal" is built. A **Float ↗** bu
 At a segment boundary `_timerTick` calls `_pipBoundaryNudge()`: one `_pipWin.focus()` raise + `.boundary-nudge` on `#pip-stage` (brief stronger ring pulse for 2.6s), which then settles into `.boundary-settle` (slow soft ring) kept on while `atBoundary`. CSS rings are `#pip-stage::after` box-shadow keyframes `orb-nudge`/`orb-settle` (amber, reduced-motion-gated). Intentionally **not** a sustained alarm — the user may want to finish a thought. Chime + browser Notification remain as backup.
 
 ### Styles (`style.css`, `body.pip-orb` scope)
-`.pip-stage` (fixed full-window), `.orb-wrap` shrunk to 150px, `.orb-glow` tightened to `inset:28%`, `.pip-hover` (opacity 0→1 on `.pip-stage:hover`, `color-mix` paper scrim), `.pip-clock`, `.pip-controls .oc-btn` (shrunk). Reuses all `--focus-*` tokens + orb gradients/keyframes via the cloned stylesheet.
+`body.pip-orb` is **dark** (`background:#18191b; color-scheme:dark`) to match the un-stylable title bar (see gotchas) — the window is one seamless dark surface, orb glowing on it. `.pip-stage` (fixed full-window), `.orb-wrap` shrunk to 150px, `.orb-glow` tightened to `inset:28%`. `.pip-hover` is a **light** dark scrim (`rgba(24,25,27,0.45)` + `backdrop-filter:blur(3px)`), opacity 0→1 on `.pip-stage:hover`, so the orb stays visible behind it. `.pip-clock` is paper-coloured; controls are light-on-dark via `body.pip-orb .pip-controls .oc-btn` (faint at rest, brighten on hover). **All overrides are `body.pip-orb`-scoped** because `style.css` is cloned into both docs — never recolour bare `html`/`:root` here. Reuses `--focus-*` tokens + orb gradients/keyframes via the cloned stylesheet.
+
+### Controls (`_renderPipExtras`)
+Return · Pause/Resume (+ Skip) / boundary Start · Done. **No `.primary` emphasis** (uniform, hover-only) and **no custom Dock button** — the PiP title bar's native **back-to-tab** button closes the window → `pagehide` → `closeFocusPip()` docks the orb. (The *full-screen* controls keep their `.primary` and the `Dock orb` button.)
 
 ### Constraints / gotchas
 - **Chromium only** — Safari/Firefox lack Document PiP; Float button is feature-gated.
 - **`requestWindow()` requires a user gesture** — so the float is manual (button), never auto-on-blur. Also means it can't be driven in automated preview.
-- The OS window has an **unavoidable thin native title bar** — can't be made fully borderless; we minimize footprint (tight transparent-ish paper window, orb fills it, text only on hover).
+- The OS window has an **unavoidable native title bar** — can't be recoloured, forced to light, or removed (confirmed: no CSS/`color-scheme`/`theme-color` lever works). Its black is `#18191b`; we match the window background to it for a seamless surface rather than fighting it.
