@@ -2,7 +2,7 @@
 // Caches the app shell so the PWA launches reliably from the home screen.
 // Supabase API calls are always sent to the network (never cached).
 
-const CACHE = 'gf-shell-v2';
+const CACHE = 'gf-shell-v3';
 
 const SHELL = [
   '/grind-and-flow/',
@@ -35,16 +35,25 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// ── Fetch: cache-first for shell, network-only for Supabase ──
+// ── Fetch: network-first for the app shell, network-only for everything else ──
+// Network-first means new deploys show up on the next online refresh; the cache
+// is only a fallback when offline. (The old cache-first strategy served stale
+// app.js/style.css/index.html forever unless sw.js itself changed.)
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
 
-  // Always hit the network for Supabase API and auth calls
-  if (url.hostname.includes('supabase.co') || url.hostname.includes('supabase.io')) {
-    return; // let the browser handle it normally
-  }
+  // Cross-origin (Supabase API + auth, CDN libs) — let the browser handle it
+  if (url.origin !== self.location.origin) return;
 
+  // Same-origin app shell: network-first, fall back to cache when offline
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request)
+      .then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, copy));
+        return res;
+      })
+      .catch(() => caches.match(e.request).then(c => c || caches.match('/grind-and-flow/index.html')))
   );
 });
