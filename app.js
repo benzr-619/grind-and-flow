@@ -576,10 +576,10 @@ const App = (() => {
   function _projectTasks(projId) {
     return Data.get().tasks.filter(t => t.parentProject === projId);
   }
-  function _projectProgress(projId) {
-    const ts = _projectTasks(projId);
-    const done = ts.filter(t => t.status === 'done').length;
-    return { done, total: ts.length, pct: ts.length ? Math.round(done / ts.length * 100) : 0 };
+  // Count of open (non-done) tasks — neutral "how much is here" signal for organizing,
+  // deliberately NOT a completion ratio/progress bar (projects gain tasks over time).
+  function _projectOpenCount(projId) {
+    return _projectTasks(projId).filter(t => t.status !== 'done').length;
   }
 
   // Vivid tag colour for an orb — reuses the Inbox-review palette for cohesion.
@@ -613,14 +613,14 @@ const App = (() => {
 
   function _renderProjOrb(item, pos) {
     const color   = _projOrbColor(item);
-    const prog    = _projectProgress(item.id);
+    const open    = _projectOpenCount(item.id);
     const tags    = item.tags || [];
     const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, _loadTags())}">${t.toUpperCase()}</span>`).join('');
     const statePill = item.blocked
       ? `<span class="proj-pill-blocked">Blocked</span>`
       : item.waiting ? `<span class="proj-pill-waiting">Waiting</span>` : '';
     const dueHtml  = item.dueDate ? `<span class="orb-meta-due">Due ${_fmtDate(item.dueDate)}</span>` : '';
-    const progHtml = prog.total ? `<span class="orb-meta-prog">${prog.done}/${prog.total}</span>` : '';
+    const countHtml = open ? `<span class="orb-meta-count">${open} open</span>` : '';
     const drift    = (pos.idx % 6) * -2.6;          // negative delay desyncs each orb's drift
     return `<div class="proj-orb status-${item.status}" data-id="${item.id}"
       style="--orb-color:${color};left:${pos.xPct}%;top:${pos.top}px;width:${pos.size}px;height:${pos.size}px;animation-delay:${drift}s"
@@ -629,7 +629,7 @@ const App = (() => {
       <div class="proj-orb-body"></div>
       <div class="proj-orb-label">
         <span class="orb-title">${esc(item.title)}</span>
-        <span class="orb-meta">${progHtml}${dueHtml}</span>
+        <span class="orb-meta">${countHtml}${dueHtml}</span>
       </div>
       <div class="proj-orb-hover">${tagPills}${statePill}</div>
     </div>`;
@@ -1446,15 +1446,10 @@ const App = (() => {
     </div>`;
   }
 
-  // Re-render the open project-space modal's task list + progress, and the canvas.
+  // Re-render the open project-space modal's task list, and the canvas (orb count).
   function _refreshProjModal(projId) {
     const listEl = document.getElementById('pspace-tasklist-' + projId);
     if (listEl) listEl.innerHTML = _renderProjTaskList(projId);
-    const prog = _projectProgress(projId);
-    const fill = document.getElementById('pspace-progfill-' + projId);
-    if (fill) fill.style.width = prog.pct + '%';
-    const lbl = document.getElementById('pspace-proglbl-' + projId);
-    if (lbl) lbl.textContent = prog.total ? `${prog.done}/${prog.total} done` : 'No tasks';
     renderBoard();
   }
 
@@ -1592,10 +1587,9 @@ const App = (() => {
         `<option value="${c.id}"${item.status === c.id ? ' selected' : ''}>${c.label}</option>`
       ).join('');
 
-      // Project space — child tasks (first-class) grouped by status, with progress.
+      // Project space — child tasks (first-class) grouped by status. No progress bar:
+      // this is for organizing, not tracking completion.
       _projAddDest = 'inbox';
-      const prog = _projectProgress(item.id);
-      const progLabel = prog.total ? `${prog.done}/${prog.total} done` : 'No tasks';
 
       const stateIsWaiting = item.waiting;
       const stateIsBlocked = item.blocked;
@@ -1630,11 +1624,7 @@ const App = (() => {
             <textarea class="modal-input" id="d-notes" style="height:52px;resize:vertical">${esc(item.notes || '')}</textarea></div>
         </div>
         <div class="modal-section">
-          <div class="pspace-tasks-head">
-            <label class="modal-label" style="margin-bottom:0">Tasks</label>
-            <span class="pspace-prog-label" id="pspace-proglbl-${item.id}">${progLabel}</span>
-          </div>
-          <div class="pspace-progbar"><div class="pspace-progfill" id="pspace-progfill-${item.id}" style="width:${prog.pct}%"></div></div>
+          <label class="modal-label" style="margin-bottom:8px;display:block">Tasks</label>
           <div class="pspace-tasklist" id="pspace-tasklist-${item.id}">
             ${_renderProjTaskList(item.id)}
           </div>

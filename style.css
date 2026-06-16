@@ -1966,6 +1966,7 @@ select.modal-input { cursor: pointer; }
   color: var(--steel-soft);
 }
 .orb-meta-due { color: var(--amber); }
+.orb-meta-count { color: var(--steel-soft); }
 .proj-orb-hover {
   position: absolute; left: 50%; top: 100%;
   transform: translateX(-50%); margin-top: 7px;
@@ -2007,22 +2008,6 @@ select.modal-input { cursor: pointer; }
 .modal:has(.proj-space) { width: 680px; }
 .proj-space { display: none; }
 
-.pspace-tasks-head {
-  display: flex; justify-content: space-between; align-items: baseline;
-  margin-bottom: 8px;
-}
-.pspace-prog-label {
-  font-family: var(--font-mono); font-size: 10px;
-  text-transform: uppercase; letter-spacing: 0.05em; color: var(--steel-soft);
-}
-.pspace-progbar {
-  height: 4px; background: var(--line); border-radius: 3px;
-  overflow: hidden; margin-bottom: 13px;
-}
-.pspace-progfill {
-  height: 100%; background: var(--sage-deep);
-  border-radius: 3px; transition: width 240ms ease;
-}
 .pspace-tasklist {
   display: flex; flex-direction: column; gap: 15px;
   max-height: 340px; overflow-y: auto;
