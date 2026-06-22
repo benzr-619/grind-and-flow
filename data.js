@@ -89,6 +89,8 @@ const Data = (() => {
       tags:               t.tags               || [],
       backlog_entered_at: t.backlogEnteredAt   || null,
       later_count:        t.laterCount         || 0,
+      day_order:          (t.dayOrder ?? null),
+      time_spent:         t.timeSpent          || 0,
     };
   }
 
@@ -109,6 +111,8 @@ const Data = (() => {
       tags:             r.tags                 || [],
       backlogEnteredAt: r.backlog_entered_at   || '',
       laterCount:       r.later_count          || 0,
+      dayOrder:         (r.day_order ?? null),
+      timeSpent:        r.time_spent           || 0,
     };
   }
 
@@ -130,6 +134,7 @@ const Data = (() => {
       blocked_reason:  a.blockedReason         || null,
       tags:            a.tags                  || [],
       subtasks:        a.subtasks              || [],
+      time_spent:      a.timeSpent             || 0,
     };
   }
 
@@ -145,6 +150,35 @@ const Data = (() => {
       user_id:    uid,
       name:       t.name,
       color_slot: t.colorSlot ?? null,
+    };
+  }
+
+  function _commitFromDb(r) {
+    return {
+      id:        r.id,
+      title:     r.title,
+      date:      r.date                  || '',
+      startTime: r.start_time            || '',
+      endTime:   r.end_time              || '',
+      endDate:   r.end_date              || null,
+      type:      r.type                  || null,
+      colorSlot: r.color_slot ?? null,
+      notes:     r.notes                 || '',
+    };
+  }
+
+  function _commitToDb(c, uid) {
+    return {
+      id:         c.id,
+      user_id:    uid,
+      title:      c.title,
+      date:       c.date,
+      start_time: c.startTime || null,
+      end_time:   c.endTime   || null,
+      end_date:   c.endDate   || null,
+      type:       c.type      || null,
+      color_slot: c.colorSlot ?? null,
+      notes:      c.notes     || null,
     };
   }
 
@@ -174,6 +208,8 @@ const Data = (() => {
       blockedReason:  r.blocked_reason         || '',
       tags:           _parseJson(r.tags, []),
       subtasks:       _parseJson(r.subtasks, []),
+      scheduledTime:  r.scheduled_time         || '',
+      timeSpent:      r.time_spent             || 0,
     };
   }
 
@@ -277,32 +313,35 @@ const Data = (() => {
   async function load() {
     if (!_client) {
       console.error('[Data] load called before setClient()');
-      _state = { projects: [], tasks: [], archive: [], tags: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [] };
       return _state;
     }
     await _migrateFromLocalStorage();
     try {
       const uid = await _uid();
       await _migrateTagsFromLocalStorage(uid);
-      const [pr, tr, ar, tg] = await Promise.all([
+      const [pr, tr, ar, tg, cm] = await Promise.all([
         _client.from('projects').select('*').eq('user_id', uid),
         _client.from('tasks').select('*').eq('user_id', uid),
         _client.from('archive').select('*').eq('user_id', uid),
         _client.from('tags').select('*').eq('user_id', uid),
+        _client.from('commitments').select('*').eq('user_id', uid),
       ]);
       if (pr.error) throw pr.error;
       if (tr.error) throw tr.error;
       if (ar.error) console.warn('[Data] archive load error:', ar.error.message);
       if (tg.error) console.warn('[Data] tags load error:', tg.error.message);
+      if (cm.error) console.warn('[Data] commitments load error:', cm.error.message);
       _state = {
-        projects: (pr.data || []).map(_projFromDb),
-        tasks:    (tr.data || []).map(_taskFromDb),
-        archive:  (ar.data || []).map(_archFromDb),
-        tags:     (tg.data || []).map(_tagFromDb),
+        projects:    (pr.data || []).map(_projFromDb),
+        tasks:       (tr.data || []).map(_taskFromDb),
+        archive:     (ar.data || []).map(_archFromDb),
+        tags:        (tg.data || []).map(_tagFromDb),
+        commitments: (cm.data || []).map(_commitFromDb),
       };
     } catch (e) {
       console.error('[Data] load failed:', e.message);
-      _state = { projects: [], tasks: [], archive: [], tags: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [] };
     }
     return _state;
   }
@@ -494,6 +533,35 @@ const Data = (() => {
     if (error) console.error('[Data] delete tag:', error.message);
   }
 
+  // ── Commitment mutations ──
+
+  function upsertCommitment(c) {
+    if (!_state.commitments) _state.commitments = [];
+    const idx = _state.commitments.findIndex(x => x.id === c.id);
+    if (idx >= 0) _state.commitments[idx] = c; else _state.commitments.push(c);
+    _syncCommit(c);
+  }
+
+  function deleteCommitment(id) {
+    if (!_state.commitments) _state.commitments = [];
+    _state.commitments = _state.commitments.filter(c => c.id !== id);
+    _delCommit(id);
+  }
+
+  async function _syncCommit(c) {
+    if (!_client) return;
+    const uid = await _uid();
+    const { error } = await _client.from('commitments').upsert(_commitToDb(c, uid));
+    if (error) console.error('[Data] sync commitment:', error.message);
+  }
+
+  async function _delCommit(id) {
+    if (!_client) return;
+    const uid = await _uid();
+    const { error } = await _client.from('commitments').delete().eq('user_id', uid).eq('id', id);
+    if (error) console.error('[Data] delete commitment:', error.message);
+  }
+
   // ─────────────────────────────────────────────
   // syncAll — pushes entire in-memory state to Supabase.
   // Called by _migrateData() in app.js after fixing legacy status values.
@@ -562,6 +630,7 @@ const Data = (() => {
     upsertProject, upsertTask, deleteItem,
     archiveItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive, clearArchive,
     upsertTag, deleteTag,
+    upsertCommitment, deleteCommitment,
     syncAll, replaceAll,
     save, saveNow, isDirty,
     showSaveBanner, hideSaveBanner,

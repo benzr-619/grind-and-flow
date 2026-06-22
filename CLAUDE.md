@@ -9,7 +9,8 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 - [Mobile responsive layer](./claude/rules/mobile.md) — sticky header offsets, show/hide pattern, `mobileTab` state, bottom sheet wiring, Inbox/backlog relabel map.
 - [Focus Mode orb](./claude/rules/focus-mode.md) — full-screen `#focus-zone` overlay, persistent-orb/class-swap render, stable-id mapping, `_renderTimerTrack` now a no-op, `--focus-*` tokens, mobile `!important` hide.
 - [Inbox Review wheel](./claude/rules/inbox-review.md) — Inbox removed from board columns (now This Week/Next/Done); full-screen `#inbox-review` 3D task-wheel review; `_reviewSeq`/`_reviewOutcome`/`_reviewCenterId` model; due→oldest order; staged-delete-on-close + undo; `later_count` column.
-- [Projects canvas](./claude/rules/projects-canvas.md) — Projects Kanban replaced by a spatial drifting-orb canvas (`_renderProjCanvas`/`_renderProjOrb`, size-by-status, tag-colour, hash scatter, `proj-drift`). Subtasks are now **first-class `tasks` rows** (`parentProject`); enlarged project-space modal (`.proj-space`, 680px) shows grouped child tasks + inline quick-add (Inbox default / "Start now"). **No progress bar** — orb shows a neutral "N open" count (organizing, not completion-tracking). Unified add via `openNewModal({parentProject,defaultStatus})`. Subtask→task migration **done 2026-06-16** (41 rows).
+- [Week (Calendar) view](./claude/rules/calendar-week.md) — phase-4 Grind weekly-review surface; top-level `view==='calendar'` rendered in `#board`; Monday-start `_weekOffset` with past (accomplishments) / current / future (tentative) states; `_isFutureWeek` removes future-placed `this-week` tasks from the live board column; drag sets `scheduledDate`+`dayOrder`; lightweight `commitments` table; `time_spent` focus-minute capture foundation.
+- [Projects canvas](./claude/rules/projects-canvas.md) — **Column-per-tag layout** (max 4 cols/row, adaptive overlap compression); orbs sized+colored by status (`PROJ_STATUS_COLORS`: amber/yellow/blue/pink); `.proj-orb-hit` child handles circular click target; hover via `:has(.proj-orb-hit:hover)`; `drop-shadow` filter provides ambient glow (escapes `clip-path`). Subtasks are first-class `tasks` rows (`parentProject`); project-space modal (880px) shows grouped child tasks + quick-add. Legend bar above canvas (always visible). Migration done 2026-06-16 (41 rows).
 
 ---
 
@@ -21,7 +22,7 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 
 Grind & Flow is a single-user personal productivity web app for managing projects, tasks, and focus sessions. It targets people who want the intentionality of an analog planner with the convenience of a digital tool. Users manage dual Kanban boards (Projects and Tasks), start tasks into a full-screen focus session, triage their Inbox in a dedicated review, and review completed work in a time-grouped Archive. The app is installable as a PWA on desktop and mobile.
 
-> **Active redesign — read `Design.md` §0 (North Star) + `REDESIGN-BRIEF.md` before UI work.** The app is being rebuilt around **four modes** (Planning · Focus · Projects · Calendar), governed by one aesthetic axis: **Flow = soft/calm (the breathing orb — reserved for Focus only); Grind = firm/structured (solid shapes, connected nodes, vivid flat colours — e.g. the Inbox Review wheel).** Deliberate activities are full-screen overlays (`z-index 200`). Shipped: Focus orb (phase 1), Inbox Review wheel + 3-column board (phase 2). Not yet built: Projects spatial canvas (phase 3), Calendar week view (phase 4). **Desktop-first; do not touch mobile during redesign passes.**
+> **Active redesign — read `Design.md` §0 (North Star) + `REDESIGN-BRIEF.md` before UI work.** The app is being rebuilt around **four modes** (Planning · Focus · Projects · Calendar), governed by one aesthetic axis: **Flow = soft/calm (the breathing orb — reserved for Focus only); Grind = firm/structured (solid shapes, connected nodes, vivid flat colours — e.g. the Inbox Review wheel).** Deliberate activities are full-screen overlays (`z-index 200`). Shipped: Focus orb (phase 1), Inbox Review wheel + 3-column board (phase 2), Projects spatial canvas (phase 3), **Calendar week view (phase 4)**. A **design polish pass** (2026-06-22) replaced the topbar wordmark/icon buttons with a see-vs-do nav split (quiet left tabs · firm right action buttons), introduced tag-colored orb bullets on the Tasks board, and redesigned the Week view as **"The Thread"** — editorial thread with station nodes + serif task lines. The four-mode redesign is now feature-complete on desktop. **Desktop-first; do not touch mobile during redesign passes.**
 
 ---
 
@@ -119,6 +120,8 @@ Subtask object shape (**deprecated — phase 3**): `{ id, title, done, promoted,
 | tags | tags | jsonb array |
 | backlogEnteredAt | backlog_entered_at | set when item enters backlog; drives the "time in Inbox" age counter |
 | laterCount | later_count | integer, default 0 — times the task has been bumped to "Later" in Inbox Review; shown as "bumped N×" |
+| dayOrder | day_order | numeric, nullable — within-day priority order in the Week (Calendar) view; nulls sort last |
+| timeSpent | time_spent | integer, default 0 — actual Focus work-minutes logged on the task (capture foundation for future duration estimates) |
 | — | user_id | injected by `_taskToDb()` |
 
 ### `archive` table
@@ -129,6 +132,7 @@ Same shape as `tasks`, plus two additional fields:
 |---|---|---|
 | archivedAt | archived_at | date stamped at archive time |
 | originalStatus | original_status | status before archiving |
+| timeSpent | time_spent | integer, default 0 — carried over from the task's logged Focus minutes |
 
 Archived projects also carry a `subtasks` jsonb array (same as the projects table).
 
@@ -155,6 +159,21 @@ create policy "Users manage own tags" on tags
 | name | name | tag string, e.g. `'exercise'` |
 | colorSlot | color_slot | 0–4 index into the 5-color rotation; null = use rotation default |
 | — | user_id | scopes rows to the authenticated user |
+
+### `commitments` table
+
+Lightweight non-task "busy" blocks the user drops onto days in the Week (Calendar) view as context to plan around — the app has no real-calendar sync, so these are manually entered. Scoped by `user_id`; RLS `auth.uid() = user_id`. Mapped in `data.js` (`_commitFromDb`/`_commitToDb`), CRUD via `Data.upsertCommitment` / `Data.deleteCommitment`. See [Week (Calendar) view rule](./claude/rules/calendar-week.md).
+
+| JS camelCase | DB snake_case | Notes |
+|---|---|---|
+| id | id | `'c' + Date.now()` format |
+| title | title | e.g. "Work shift" |
+| date | date | `YYYY-MM-DD` the block sits on |
+| startTime | start_time | time or null |
+| endTime | end_time | time or null |
+| colorSlot | color_slot | reserved; currently always null |
+| notes | notes | text or null |
+| — | user_id | scopes rows to the authenticated user (composite PK `(user_id, id)`) |
 
 ---
 
@@ -233,8 +252,11 @@ This app is intended for use across multiple devices (desktop and eventually mob
   - **Today** — tasks with `scheduledDate === today` across all non-`done` statuses, sorted by `scheduledTime`; shows time and status badge instead of age counter.
   Tapping either view's rows opens the Phase 2 bottom sheet (`_openInboxSheet` → `#modal-root`). Sheet actions work correctly from both views: Complete removes item from Today; rescheduling to a different date removes it from Today; moving out of backlog removes it from Inbox. Desktop layout fully unaffected.
 
+- **Week / Calendar view (redesign phase 4)**: The final mode — a desktop **weekly-review** surface in the **Grind** visual language (graph-paper grid, flat vivid tag-coloured chips). New "Week" tab → `view==='calendar'` rendered into `#board` (`_renderWeekView`). 7 Monday-start day-columns with prev/next/Today nav (`_weekOffset`). Three week states: **past** = accomplishment look-back (done + archived items via `_doneOnDate`, no rail); **current** = active placement + a "This Week · unplaced" rail (this-week tasks without a day); **future** = tentative planning (placing onto a future-week day keeps `this-week` status but `_isFutureWeek` removes it from the live This Week board column until its week arrives). Drag a rail/day chip → sets `scheduledDate` + within-day `dayOrder` (priority stack, top = first); drop back on the rail unschedules; rail chips have a `→ Later` (reuses `_sendToLater`). Today's column emphasised; the `doing` task shows a coral "now" marker (drag never starts Focus). **Commitment blocks** ("＋ busy") add lightweight non-task busy bands per day (`commitments` table) as planning context. **Focus-time capture**: actual work-segment minutes accrue to `time_spent` on Done/Return (shown as `Σ Nm` on chips + a "Focus time logged" line in the detail modal) — a foundation for future duration prediction. See [Week (Calendar) view rule](./claude/rules/calendar-week.md).
+
 ### Not yet built / known gaps
 - **Inbox Review grouping by project (phase 3.6)** — first-class project tasks now flow into the global Inbox; grouping `backlog` tasks by `parentProject` in the review wheel (with a "Later — whole project" bulk action) is designed but not yet built. Without it, the Inbox can get crowded once the subtask→task migration runs.
-- **Tasks board redesign (phase 3.5)** and **Calendar week view (phase 4)** — designed in `REDESIGN-BRIEF.md`, not started.
+- **Tasks board redesign (phase 3.5)** — designed in `REDESIGN-BRIEF.md`, not started. (Calendar week view, phase 4, is now **shipped** — see above.)
+- **Calendar follow-ups**: duration **prediction** from the new `time_spent` data, mid-stack within-day drop insertion (currently appends), and a **mobile** week view are all deferred.
 - **PWA update strategy**: `sw.js` is now **network-first** for same-origin assets (cache `gf-shell-v3`) so deploys appear on the next online refresh; cache is the offline fallback. (Was cache-first, which served stale assets until `sw.js` itself changed.)
 - **Search**: The `searchQuery` state variable and filter logic exist in `app.js`, but there is no search input in `index.html`. The feature is partially scaffolded but not exposed in the UI.
