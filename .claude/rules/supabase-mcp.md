@@ -26,9 +26,10 @@ All four app tables exist in the `public` schema with RLS enabled:
 | Table | Key columns | Notes |
 |---|---|---|
 | `projects` | id, title, status, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), subtasks (jsonb), user_id, capacities_url, waiting, waiting_reason, waiting_auto | 35 rows |
-| `tasks` | id, type, title, status, parent_project, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), backlog_entered_at, `later_count` (int, default 0 — Inbox Review "bumped N×"; migration `add_later_count_to_tasks`), user_id | 21 rows |
-| `archive` | same as tasks + original_status, archived_at, subtasks | 5 rows |
+| `tasks` | id, type, title, status, parent_project, due_date, scheduled_date, scheduled_time, notes, date_added, blocked, blocked_reason, tags (jsonb), backlog_entered_at, `later_count` (int, default 0 — Inbox Review "bumped N×"; migration `add_later_count_to_tasks`), `day_order` (numeric — Week view within-day priority), `time_spent` (int default 0 — Focus minutes; migration `add_day_order_and_time_spent`), user_id | 46 rows |
+| `archive` | same as tasks + original_status, archived_at, subtasks, `time_spent` (int default 0) | 47 rows |
 | `tags` | user_id (PK), name (PK), color_slot, created_at | 1 row |
+| `commitments` | composite PK (user_id, id); title, date, start_time, end_time, **end_date** (date — cross-midnight), **type** (text: `'work'`\|`'exercise'`\|null), color_slot, notes, created_at — Week-view "busy" blocks (migrations `create_commitments_table`, `add_end_date_and_type_to_commitments`) | 0 rows |
 
 ## Gotchas
 
