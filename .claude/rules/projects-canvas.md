@@ -24,26 +24,54 @@ Redesign Phase 3 (session 2026-06-16). Canvas layout and orb system iterated in 
 
 ```html
 <div class="proj-legend-bar">…</div>   <!-- always-visible status legend above canvas -->
-<div class="proj-canvas" style="height:Xpx">…orbs…labels…</div>
+<div class="proj-canvas" style="height:Xpx">
+  <div class="proj-grid-row" style="top:Ypx;height:Hpx">     <!-- one per row of ≤4 tag columns -->
+    <div class="proj-grid-divider" style="top:34px"></div>  <!-- below: column titles; above: nothing -->
+    <div class="proj-row-label" style="top:...">Active</div>  <!-- once per non-empty status band -->
+    <div class="proj-band-area" style="left:92px">            <!-- titles + orbs share this % frame -->
+      …proj-group-label column titles…
+      …proj-orb elements…
+    </div>
+  </div>
+  <!-- more .proj-grid-row siblings if >4 tag groups -->
+</div>
 ```
 
 ### Grouping & sort
 - Projects grouped by **first tag** (`(item.tags||[])[0] || ''`). Untagged goes last.
 - Within each group, sorted by `PROJ_STATUS_ORDER` (active → up-next → someday → on-hold).
-- Groups sorted alphabetically; untagged last.
+- Groups sorted by `_projSortedTagKeys(items)` (session 2026-07-01): tags with a stored `sortOrder` come first, ordered by that number; tags without one fall back alphabetically after them. Untagged (`''`) is always last regardless. See Column reordering below.
 
 ### Column grid
-- Max **4 columns per row**. More than 4 tag groups wrap into a second row below (`MAX_COLS = 4`).
-- Column center x: `(colIdx + 0.5) / n * 100%` where `n` = columns in that row.
-- Tag label: `.proj-group-label` centered at column x, `top = rowStartY + 14px`. No label for untagged group.
+- Max **4 columns per row**. More than 4 tag groups wrap into a second `.proj-grid-row` below (`MAX_COLS = 4`) — each grid-row is its own independent header + shared-band unit (see Shared status grid below); a second grid-row of tags does **not** share bands with the first.
+- Column center x: `(colIdx + 0.5) / n * 100%`, where `n` = columns in that grid-row, **relative to `.proj-band-area`'s width** (the grid-row minus the left row-label gutter — see below), not the full canvas width.
+- Tag label: `.proj-group-label`, centered at column x, `top:8px` inside `.proj-band-area` (i.e. in the header zone, above the divider). No label for the untagged group. **Bigger + higher-contrast** (session 2026-07-01): `font-display`, 15px, weight 700, `var(--ink)` — was 9px mono `var(--muted)`. Also the **column drag handle** — see below.
 
-### Vertical stacking
-- Orbs stack top-to-bottom by status with `stepFactor = 0.72` (~28% overlap).
-- x jitter: `colCenterPct + (_hashStr(id) - 0.5) * 8` — keeps a loose feel without rigid alignment.
-- **Adaptive compression**: if any column's raw height exceeds `TARGET_H = 620px`, a uniform `stepFactor = max(0.4, 0.72 * TARGET_H / tallestRawH)` is applied across all columns so they align.
+### Column reordering (session 2026-07-01)
+User-draggable via the `.proj-group-label` itself (`draggable="true"`, cursor `grab`). Persisted as `tags.sortOrder` (`sort_order` int column, migration `add_sort_order_to_tags`) — reuses the existing per-user `tags` table (already scoped `(user_id, name)` for color overrides) rather than a new table, since the canvas grouping key *is* the tag name.
+- `_loadProjColOrder()` — `{tagName: sortOrder}` map built from `Data.get().tags`.
+- `_projSortedTagKeys(items)` — shared by both the render and the drop handler so "current column order" is computed identically in both places.
+- Drag flow: `_projColDragStart/Over/Leave/Drop/End`, module state `_projColDragKey`. On drop, `_projColDrop` recomputes the current key order, splices the dragged key to the target's position, then persists `Data.upsertTag(key, existingColorSlot, index)` for **every** key (not just the two swapped) so the whole sequence gets a clean 0..N sortOrder — `upsertTag`'s 3rd param is optional specifically so *other* callers (color reassignment, new custom tag) don't need to know about or touch sortOrder; see `data.js` `upsertTag`.
+- `Data.upsertTag(name, colorSlot, sortOrder)` — `sortOrder` omitted → preserves the tag's existing stored order; passed explicitly → sets it. Works for built-in tags too (creates a `tags` row on first reorder, same precedent as color-override reassignment).
+
+### Shared status grid (session 2026-07-01 — replaces independent per-column stacking)
+User feedback on the legibility pass: independent per-column stacking meant the same status (e.g. "Active") landed at a different Y in every column, so nothing read as a row — and a column missing a status just had its other orbs float up to fill the gap. Reworked into a real grid: **every column in a grid-row shares the same status bands**, aligned at identical Y; a column with nothing in a given status simply leaves that band empty.
+- **Header above a divider**: each `.proj-grid-row` reserves `HEADER_H = 34px` for column titles, then a full-width `.proj-grid-divider` (1px line) at that offset. Bands start `CONTENT_TOP = HEADER_H + 20px` below the divider.
+- **Row labels, not per-column repeats**: status names ("Active"/"Up next"/"Ideation"/"On hold") render once per grid-row as `.proj-row-label`, in a fixed `ROW_LABEL_W = 92px` left gutter, vertically centered on their band (`CONTENT_TOP + band.top + band.height/2`). A status with **zero** projects anywhere in that grid-row gets no band and no label at all (not an empty reserved row) — only statuses actually present take up space.
+- **Band height** = `max` over that grid-row's columns of `_rawBandStack(tagKey, status, stepFactor)` = `size * (1 + (n-1) * stepFactor)` for that status's `n` orbs in the tallest column. Bands stack top-to-bottom with `BAND_GAP = 28px` between non-empty ones.
+- **Within a band**, a column's own orbs (if it has any for that status) still stack with the same-status overlap `stepFactor` (default `BASE_STEP = 0.88`, ~12% overlap) — unchanged in concept from before, just lighter (see Click-target fix below). A column with none just contributes nothing to that band.
+- **`.proj-band-area`** (`position:absolute; left:{ROW_LABEL_W}px; right:0`) is the coordinate frame both column titles and orbs use for their `left:%` — it's narrower than the full canvas (excludes the row-label gutter), so percentage centering lines up correctly under the gutter's row labels.
+- x jitter: `colCenterPct + altShift + (_hashStr(id) - 0.5) * 6` — keeps a loose feel without rigid alignment; see Click-target fix below for `altShift`.
+- **Adaptive compression**: if a grid-row's raw content height (`_rawBandStack` summed across its non-empty bands, at `BASE_STEP`, plus `BAND_GAP`s) exceeds `TARGET_H = 760px`, a single global `stepFactor = max(MIN_STEP, BASE_STEP * TARGET_H / contentH)` is computed and applied everywhere. Compression only ever scales the same-status overlap — `BAND_GAP` (the separation between different statuses) is never compressed, so bands stay visually distinct even when heavily compressed.
+
+### Click-target fix (session 2026-07-01, same day as the shared-grid rework)
+User feedback on the first version of the shared grid: heavy same-status overlap (28% at `BASE_STEP`, up to 60% under old compression) made individual orbs hard to click — a mostly-covered orb's `.proj-orb-hit` circle was almost entirely occluded by the sibling drawn after it. Fixed with three changes, all in `_renderProjCanvas`:
+- `BASE_STEP` raised `0.72 → 0.88` (28% → 12% overlap) and the compression floor raised via a new `MIN_STEP = 0.65` constant (was an inline `0.4` — i.e. compression could shrink to 60% overlap before; now caps at 35%).
+- `TARGET_H` raised `620 → 760px` so compression (which is what drives overlap back up) kicks in less often — the canvas just scrolls a bit taller instead of squeezing orbs together.
+- **Alternating left/right shift** for same-status siblings: `altShift = (i % 2 === 0 ? -1 : 1) * 7` (only applied when a band has >1 orb), on top of a smaller hash jitter (`±6%`, down from `±8%`). Pure random jitter could still unluckily place two consecutive same-status orbs at nearly the same x; alternating sides guarantees visual separation regardless of hash outcome, so a clickable sliver of each orb stays clear of its neighbors even when they vertically overlap.
 
 ### Canvas height
-`canvasH = rowStartY (after last row) + 60px`.
+Each grid-row's height = `CONTENT_TOP + (sum of non-empty band heights + BAND_GAPs between them)`. Grid-rows stack with `ROW_GAP = 56px` between them; `canvasH = last grid-row's bottom + 40px`.
 
 ---
 
@@ -133,7 +161,7 @@ Brightness and glow effects work against the dimmed baseline, making hover visua
 
 ## Project space modal
 
-- `.proj-space` marker widens the modal via `.modal:has(.proj-space){width:880px}`.
+- `.proj-space` marker widens the modal via `.modal:has(.proj-space){width:1040px}` (enlarged from 880px, session 2026-07-01, alongside a font-size pass scoped to `.modal:has(.proj-space) .*` — title 18→22px, `.modal-label` →11px, `.modal-input` →14.5px, `.pst-title` 13.5→15px, `.pst-meta`/`.pspace-group-head`/`.pdest-opt` →11px, `.pspace-empty` 12.5→13.5px, notes textarea 120→150px tall. `.proj-modal-cols` left column widened 300→350px to match). Purely a legibility pass — no new fields.
 - Child-task list `id="pspace-tasklist-{projId}"` (`_renderProjTaskList` → `_PSPACE_GROUPS`).
 - Inline quick-add: `_projAddDest` (`'inbox'` default / `'this-week'`), reset on open.
 - After any change: `_refreshProjModal(projId)` + `renderBoard()`.

@@ -91,6 +91,14 @@ const Data = (() => {
       later_count:        t.laterCount         || 0,
       day_order:          (t.dayOrder ?? null),
       time_spent:         t.timeSpent          || 0,
+      board_order:        (t.boardOrder ?? null),
+      recurrence:              t.recurrence            || null,
+      recurrence_series_id:    t.recurrenceSeriesId     || null,
+      recurrence_weekdays:     t.recurrenceWeekdays     || null,
+      recurrence_month_day:    (t.recurrenceMonthDay ?? null),
+      recurrence_interval_n:   (t.recurrenceIntervalN ?? null),
+      recurrence_interval_unit: t.recurrenceIntervalUnit || null,
+      recurrence_lead_days:    (t.recurrenceLeadDays ?? null),
     };
   }
 
@@ -113,6 +121,14 @@ const Data = (() => {
       laterCount:       r.later_count          || 0,
       dayOrder:         (r.day_order ?? null),
       timeSpent:        r.time_spent           || 0,
+      boardOrder:       (r.board_order ?? null),
+      recurrence:            r.recurrence              || null,
+      recurrenceSeriesId:    r.recurrence_series_id     || null,
+      recurrenceWeekdays:    r.recurrence_weekdays      || null,
+      recurrenceMonthDay:    (r.recurrence_month_day ?? null),
+      recurrenceIntervalN:   (r.recurrence_interval_n ?? null),
+      recurrenceIntervalUnit: r.recurrence_interval_unit || null,
+      recurrenceLeadDays:    (r.recurrence_lead_days ?? null),
     };
   }
 
@@ -135,6 +151,8 @@ const Data = (() => {
       tags:            a.tags                  || [],
       subtasks:        a.subtasks              || [],
       time_spent:      a.timeSpent             || 0,
+      recurrence:            a.recurrence            || null,
+      recurrence_series_id:  a.recurrenceSeriesId    || null,
     };
   }
 
@@ -142,6 +160,7 @@ const Data = (() => {
     return {
       name:      r.name,
       colorSlot: r.color_slot ?? null,
+      sortOrder: r.sort_order ?? null,
     };
   }
 
@@ -150,6 +169,7 @@ const Data = (() => {
       user_id:    uid,
       name:       t.name,
       color_slot: t.colorSlot ?? null,
+      sort_order: t.sortOrder ?? null,
     };
   }
 
@@ -162,6 +182,7 @@ const Data = (() => {
       endTime:   r.end_time              || '',
       endDate:   r.end_date              || null,
       type:      r.type                  || null,
+      shift:     r.shift                 || null,
       colorSlot: r.color_slot ?? null,
       notes:     r.notes                 || '',
     };
@@ -177,6 +198,7 @@ const Data = (() => {
       end_time:   c.endTime   || null,
       end_date:   c.endDate   || null,
       type:       c.type      || null,
+      shift:      c.shift     || null,
       color_slot: c.colorSlot ?? null,
       notes:      c.notes     || null,
     };
@@ -210,6 +232,8 @@ const Data = (() => {
       subtasks:       _parseJson(r.subtasks, []),
       scheduledTime:  r.scheduled_time         || '',
       timeSpent:      r.time_spent             || 0,
+      recurrence:         r.recurrence              || null,
+      recurrenceSeriesId: r.recurrence_series_id     || null,
     };
   }
 
@@ -507,9 +531,16 @@ const Data = (() => {
 
   // ── Tag mutations ──
 
-  function upsertTag(name, colorSlot) {
-    const tag = { name, colorSlot: colorSlot ?? null };
+  // sortOrder is optional — omit it to leave an existing tag's stored column-order
+  // untouched (e.g. when only reassigning color). Pass it explicitly to reorder.
+  function upsertTag(name, colorSlot, sortOrder) {
     const idx = _state.tags.findIndex(t => t.name === name);
+    const existing = idx >= 0 ? _state.tags[idx] : null;
+    const tag = {
+      name,
+      colorSlot: colorSlot ?? null,
+      sortOrder: sortOrder !== undefined ? sortOrder : (existing ? (existing.sortOrder ?? null) : null),
+    };
     if (idx >= 0) _state.tags[idx] = tag; else _state.tags.push(tag);
     _syncTag(tag);
   }

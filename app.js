@@ -8,6 +8,7 @@ const PROJECT_COLS = [
   { id: 'someday', label: 'Someday', hint: 'maybe' },
 ];
 const TASK_COLS = [
+  { id: 'recurring', label: 'Recurring',  hint: 'on repeat' },
   { id: 'backlog',   label: 'Inbox',      hint: 'move or leave' },
   { id: 'this-week', label: 'This Week',  hint: 'committed' },
   { id: 'next',      label: 'Next',       hint: 'lined up' },
@@ -193,13 +194,135 @@ const App = (() => {
     }
   }
 
-  // Schedules auto-archive to fire at the next midnight, then re-schedules itself.
+  // ── Recurring tasks ──
+  // Two kinds: 'rolling' (interval measured from the completion date — fully automatic)
+  // and 'anchored' (a real due date; the next due date is set by the user via a
+  // completion-time confirm prompt, optionally pre-filled from a weekday/month-day
+  // default rule). Daily recurrence is out of scope (habits). `recurrenceWeekdays`
+  // uses 0=Mon…6=Sun (matches _WEEK_DOW ordering elsewhere). Recurring tasks live
+  // permanently in the dedicated Recurring column — see openRecurringModal.
+  function _nextRollingDate(item, fromDateStr) {
+    const from = new Date(fromDateStr + 'T00:00:00');
+    const n = item.recurrenceIntervalN || 1;
+    const unit = item.recurrenceIntervalUnit || 'days';
+    const d = new Date(from);
+    if (unit === 'weeks') d.setDate(d.getDate() + n * 7);
+    else if (unit === 'months') d.setMonth(d.getMonth() + n);
+    else d.setDate(d.getDate() + n);
+    return _ymd(d);
+  }
+
+  // Suggests the next due date for an anchored task, used to pre-fill the completion
+  // confirm prompt. Prefers the optional weekday/month-day default rule; falls back to
+  // the just-completed task's own due date as a starting nudge (never a hard rule).
+  function _nextAnchoredSuggestedDate(item, fromDateStr) {
+    const from = new Date(fromDateStr + 'T00:00:00');
+    if (item.recurrenceWeekdays && item.recurrenceWeekdays.length) {
+      for (let i = 1; i <= 14; i++) {
+        const d = new Date(from); d.setDate(d.getDate() + i);
+        const dow = (d.getDay() + 6) % 7; // JS: 0=Sun…6=Sat → 0=Mon…6=Sun
+        if (item.recurrenceWeekdays.includes(dow)) return _ymd(d);
+      }
+    }
+    if (item.recurrenceMonthDay) {
+      const d = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(item.recurrenceMonthDay, lastDay));
+      return _ymd(d);
+    }
+    return item.dueDate || fromDateStr;
+  }
+
+  // Spawns the next occurrence of a recurring task on completion. Rolling occurrences
+  // are created silently (fully deterministic — completion date + interval). Anchored
+  // occurrences pop a small non-blocking confirm prompt for the next due date + lead
+  // time; dismissing it without confirming still creates the occurrence using the
+  // pre-filled suggestion (a series is never silently dropped). Both land in status
+  // 'recurring' — the permanent home for recurring tasks (see the Recurring column).
+  function _maybeSpawnRecurrence(item, completionDateStr) {
+    if (!item.recurrence || item.type === 'project') return;
+    const seriesId = item.recurrenceSeriesId || item.id;
+    const baseNew = {
+      id: 't' + Date.now(), type: item.type, title: item.title, status: 'recurring',
+      parentProject: item.parentProject || null,
+      scheduledTime: '', notes: item.notes || '', tags: [...(item.tags || [])],
+      dateAdded: _today(), backlogEnteredAt: '', laterCount: 0, blocked: false,
+      recurrence: item.recurrence,
+      recurrenceSeriesId: seriesId,
+      recurrenceWeekdays: item.recurrenceWeekdays || null,
+      recurrenceMonthDay: item.recurrenceMonthDay || null,
+      recurrenceIntervalN: item.recurrenceIntervalN || null,
+      recurrenceIntervalUnit: item.recurrenceIntervalUnit || null,
+      recurrenceLeadDays: item.recurrenceLeadDays ?? null,
+    };
+    if (item.recurrence === 'rolling') {
+      const nextDate = _nextRollingDate(item, completionDateStr);
+      Data.upsertTask({ ...baseNew, dueDate: '', scheduledDate: nextDate });
+      return;
+    }
+    if (item.recurrence === 'anchored') {
+      const suggested = _nextAnchoredSuggestedDate(item, completionDateStr);
+      _openRecurConfirm(baseNew, suggested, item.recurrenceLeadDays ?? 0);
+    }
+  }
+
+  // ── Anchored-recurrence completion prompt ──
+  let _recurConfirmState = null; // { baseNew, suggestedDate, suggestedLead }
+
+  function _openRecurConfirm(baseNew, suggestedDate, suggestedLead) {
+    _recurConfirmState = { baseNew, suggestedDate, suggestedLead: suggestedLead || 0 };
+    const root = document.getElementById('modal-root');
+    root.innerHTML = `
+      <div class="rc-overlay" onclick="App._recurConfirmDismiss()">
+        <div class="rc-modal" onclick="event.stopPropagation()">
+          <div class="rc-title">Schedule the next occurrence</div>
+          <div class="rc-sub">"${esc(baseNew.title)}" — pick the next due date, or keep the suggestion.</div>
+          <div class="fg"><label class="modal-label">Next due date</label>
+            <input type="date" class="modal-input" id="rc-date" value="${suggestedDate}" /></div>
+          <div class="fg"><label class="modal-label">Lead time (days before due to flag as due-soon)</label>
+            <input type="number" class="modal-input" id="rc-lead" min="0" value="${suggestedLead || 0}" /></div>
+          <div class="modal-footer">
+            <div></div>
+            <div class="modal-footer-right">
+              <button class="btn-close" onclick="App._recurConfirmDismiss()">Use suggestion</button>
+              <button class="btn-save" onclick="App._recurConfirmSave()">Confirm</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function _recurConfirmSave() {
+    if (!_recurConfirmState) return;
+    const { baseNew, suggestedDate, suggestedLead } = _recurConfirmState;
+    const dateVal = document.getElementById('rc-date')?.value || suggestedDate;
+    const leadVal = Math.max(0, +(document.getElementById('rc-lead')?.value ?? suggestedLead) || 0);
+    Data.upsertTask({ ...baseNew, dueDate: dateVal, scheduledDate: '', recurrenceLeadDays: leadVal });
+    _recurConfirmState = null;
+    document.getElementById('modal-root').innerHTML = '';
+    renderBoard();
+  }
+
+  // Dismissing (backdrop click or "Use suggestion") still creates the occurrence with
+  // the pre-filled defaults — a recurring series should never be silently dropped.
+  function _recurConfirmDismiss() {
+    if (!_recurConfirmState) return;
+    const { baseNew, suggestedDate, suggestedLead } = _recurConfirmState;
+    Data.upsertTask({ ...baseNew, dueDate: suggestedDate, scheduledDate: '', recurrenceLeadDays: suggestedLead });
+    _recurConfirmState = null;
+    document.getElementById('modal-root').innerHTML = '';
+    renderBoard();
+  }
+
+  // Schedules auto-archive + the daily rollover to fire at the next midnight (so a tab
+  // left open overnight stays current without a reload), then re-schedules itself.
   function _scheduleMidnightArchive() {
     const now = new Date();
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
     const ms = midnight - now;
     setTimeout(() => {
       _autoArchiveStaleDoneTasks();
+      _dailyRollover();           // advance overdue scheduled tasks + auto-promote to Next, live
       renderBoard();
       _scheduleMidnightArchive(); // reschedule for the next midnight
     }, ms);
@@ -336,7 +459,8 @@ const App = (() => {
     } else {
       // Inbox (backlog) is no longer a board column — it's handled by the Inbox
       // Review overlay. TASK_COLS itself is kept intact (it feeds the New Task
-      // status dropdown); we only filter backlog out of the rendered columns.
+      // status dropdown, minus 'recurring' which has its own dedicated modal); we
+      // only filter backlog out of the rendered columns. Recurring renders leftmost.
       const cols = view === 'projects' ? PROJECT_COLS : TASK_COLS.filter(c => c.id !== 'backlog');
       const state = Data.get();
       // Done projects live in Archive view only — exclude from the kanban board
@@ -384,9 +508,12 @@ const App = (() => {
             return ad.localeCompare(bd);
           });
         }
-        // This Week: scheduled items first (date + time), unscheduled at bottom
+        // This Week: manual boardOrder asc (nulls last) first, then scheduled items
+        // (date + time), unscheduled at bottom
         if (col.id === 'this-week') {
           colItems = [...colItems].sort((a, b) => {
+            const ao = a.boardOrder ?? Infinity, bo = b.boardOrder ?? Infinity;
+            if (ao !== bo) return ao - bo;
             const aKey = a.scheduledDate ? (a.scheduledDate + (a.scheduledTime || '')) : '9999';
             const bKey = b.scheduledDate ? (b.scheduledDate + (b.scheduledTime || '')) : '9999';
             return aKey.localeCompare(bKey);
@@ -402,6 +529,15 @@ const App = (() => {
             return (a.dateAdded || '').localeCompare(b.dateAdded || '');
           });
         }
+        // Done: manual boardOrder asc (nulls last); ties keep natural order
+        if (col.id === 'done') {
+          colItems = [...colItems].sort((a, b) => (a.boardOrder ?? Infinity) - (b.boardOrder ?? Infinity));
+        }
+        // Recurring: soonest-relevant-date first (anchored → dueDate, rolling → scheduledDate)
+        if (col.id === 'recurring') {
+          const relevantDate = i => (i.recurrence === 'anchored' ? i.dueDate : i.scheduledDate) || '9999';
+          colItems = [...colItems].sort((a, b) => relevantDate(a).localeCompare(relevantDate(b)));
+        }
         // First task indicator for Next column (top dayOrder task)
         const firstDayOrderId = col.id === 'next'
           ? colItems.find(i => i.dayOrder != null)?.id
@@ -412,29 +548,38 @@ const App = (() => {
           ? colItems.filter(i => i.scheduledDate === todayStr).length : 0;
         const waitingNote = waitingCount > 0
           ? `<div class="col-waiting-note">↓ ${waitingCount} ready for Next</div>` : '';
+        // Recurring column isn't a generic drag-drop target — dropping an arbitrary
+        // task here would set status:'recurring' without any recurrence config.
+        const dragAttrs = col.id !== 'recurring' ? `
+            ondragover="App._onDragOver(event,'${col.id}')"
+            ondragleave="App._onDragLeave(event)"
+            ondrop="App._onDrop(event,'${col.id}')"` : '';
+        const addBtn = col.id === 'recurring'
+          ? `<button class="add-col-btn" onclick="App.openRecurringModal()">+ new recurring</button>`
+          : (col.id !== 'done' ? `<button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>` : '');
         return `<div class="col-wrap">
           <div class="col-head${col.id === 'this-week' ? ' this-week' : ''}">
             <span class="col-name">${col.label.toUpperCase()}</span>
             <span class="col-count">${String(colItems.length).padStart(2,'0')}</span>
           </div>
-          <div class="col-body" data-col="${col.id}"
-            ondragover="App._onDragOver(event,'${col.id}')"
-            ondragleave="App._onDragLeave(event)"
-            ondrop="App._onDrop(event,'${col.id}')">
+          <div class="col-body" data-col="${col.id}"${dragAttrs}>
             ${waitingNote}
-            ${colItems.map(i => _renderTaskCard(i, col.id, { isFirst: i.id === firstDayOrderId })).join('')}
+            ${col.id === 'recurring'
+              ? colItems.map(i => _renderRecurringCard(i)).join('')
+              : colItems.map(i => _renderTaskCard(i, col.id, { isFirst: i.id === firstDayOrderId })).join('')}
             ${colItems.length === 0 ? `<div class="col-empty">empty</div>` : ''}
-            ${col.id !== 'done' ? `<button class="add-col-btn" onclick="App.openNewModal('${col.id}')">+ add</button>` : ''}
+            ${addBtn}
+            ${col.id === 'next' ? `
+            <div class="next-start-orb${firstDayOrderId ? '' : ' disabled'}" title="${firstDayOrderId ? 'Start focus' : 'Nothing queued'}"
+              ondragover="App._onFocusDragOver(event)"
+              ondragleave="App._onFocusDragLeave(event)"
+              ondrop="App._onFocusDrop(event)"
+              ${firstDayOrderId ? `onclick="event.stopPropagation();App.startTask('${firstDayOrderId}')"` : ''}>
+              <span class="nso-icon">▶</span>
+            </div>` : ''}
           </div>
         </div>`;
       }).join('')}
-      <div class="focus-drop-zone"
-        ondragover="App._onFocusDragOver(event)"
-        ondragleave="App._onFocusDragLeave(event)"
-        ondrop="App._onFocusDrop(event)">
-        <span class="fz-icon">▶</span>
-        <span class="fz-label">Start Focus</span>
-      </div>
     </div>`;
       }
     }
@@ -637,6 +782,57 @@ const App = (() => {
     </div>`;
   }
 
+  // ── Recurring card (Recurring column) ──
+  // Never promoted by status — a recurring task lives here permanently between
+  // occurrences. Styling (not status) reflects urgency: muted → due-soon (amber,
+  // within the lead window) → overdue (red). Clicking opens the dedicated recurring
+  // modal (see openRecurringModal), not the standard Detail modal.
+  function _renderRecurringCard(item) {
+    const tags = item.tags || [];
+    const allTags = _loadTags();
+    const firstTag = tags[0] || '';
+    const tagClass = firstTag ? _tagClasses(firstTag, allTags) : '';
+    const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, allTags)}">${t.toUpperCase()}</span>`).join('');
+
+    let scheduleHtml = '', stateClass = 'recur-muted';
+    if (item.recurrence === 'rolling') {
+      const n = item.recurrenceIntervalN || 1;
+      const unit = item.recurrenceIntervalUnit || 'days';
+      const nextHtml = item.scheduledDate ? ` · next ${_fmtDate(item.scheduledDate)}` : '';
+      scheduleHtml = `<div class="recur-schedule">every ${n} ${unit}${nextHtml}</div>`;
+    } else if (item.recurrence === 'anchored') {
+      if (item.dueDate) {
+        const daysUntil = -_daysDiff(item.dueDate);
+        const lead = item.recurrenceLeadDays ?? 0;
+        if (daysUntil < 0) stateClass = 'recur-overdue';
+        else if (daysUntil <= lead) stateClass = 'recur-due-soon';
+        const countdown = daysUntil === 0 ? 'due today' : daysUntil > 0 ? `in ${daysUntil}d` : `${-daysUntil}d overdue`;
+        scheduleHtml = `<div class="recur-schedule">due ${_fmtDate(item.dueDate)} · ${countdown}</div>`;
+      } else {
+        scheduleHtml = `<div class="recur-schedule">no due date set</div>`;
+      }
+    }
+
+    return `<div class="card recur-card ${tagClass} ${stateClass}" data-id="${item.id}"
+      onclick="App.openRecurringModal('${item.id}')">
+      <div class="card-top">
+        <div class="card-top-main">
+          <span class="task-orb"></span>
+          <div style="flex:1;min-width:0">
+            <div class="card-title">${esc(item.title)}</div>
+            ${scheduleHtml}
+          </div>
+        </div>
+      </div>
+      <div class="card-meta">${tagPills}</div>
+      <button class="recur-start-btn" title="Start focus"
+        ondragover="App._onFocusDragOver(event)"
+        ondragleave="App._onFocusDragLeave(event)"
+        ondrop="App._onFocusDrop(event)"
+        onclick="event.stopPropagation();App.startTask('${item.id}')">▶</button>
+    </div>`;
+  }
+
   // ── Project card ──
   // ── Projects spatial canvas ──
   // Orb size by project state — Active largest, On Hold smallest.
@@ -648,6 +844,7 @@ const App = (() => {
     'someday': '#8CAFD3',
     'on-hold': '#E5ADB8',
   };
+  const PROJ_STATUS_LABELS = { 'active': 'Active', 'up-next': 'Up next', 'someday': 'Ideation', 'on-hold': 'On hold' };
 
   // Deterministic hash → [0,1) from a string. Keeps each orb's scatter stable
   // across re-renders (no Math.random, which would make orbs jump every render).
@@ -675,6 +872,39 @@ const App = (() => {
   // Column-per-tag canvas: each tag group is a vertical lane; orbs stack top-to-bottom
   // by status with soft overlap. Max 4 columns per row; wraps to new rows below.
   // Adaptive step compression prevents any single column from forcing a scroll.
+  // User-set column order (tags.sortOrder). Tags the user hasn't dragged yet have no
+  // stored order and sort alphabetically after the ones that do — see _projSortedTagKeys.
+  function _loadProjColOrder() {
+    const order = {};
+    (Data.get()?.tags || []).forEach(t => {
+      if (t.sortOrder !== null && t.sortOrder !== undefined) order[t.name] = t.sortOrder;
+    });
+    return order;
+  }
+
+  // Ordered list of tag-group keys for the canvas (untagged '' always last).
+  function _projSortedTagKeys(items) {
+    const keys = new Set();
+    items.forEach(item => keys.add((item.tags || [])[0] || ''));
+    const colOrder = _loadProjColOrder();
+    return [...keys].sort((a, b) => {
+      if (a === '' && b !== '') return 1;
+      if (b === '' && a !== '') return -1;
+      const ao = colOrder[a], bo = colOrder[b];
+      if (ao !== undefined && bo !== undefined && ao !== bo) return ao - bo;
+      if (ao !== undefined && bo === undefined) return -1;
+      if (bo !== undefined && ao === undefined) return 1;
+      return a.localeCompare(b);
+    });
+  }
+
+  // Column-per-tag canvas: each tag group is its own independent vertical stack,
+  // sorted soonest-first (PROJ_STATUS_ORDER: active → up-next → someday → on-hold) and
+  // starting right below its own label — a column with no "active" projects just starts
+  // with whatever status it does have; there's no shared empty band reserved for
+  // statuses a column lacks. (Reverted 2026-07-01 from a shared-grid layout that aligned
+  // status bands across columns — that made empty statuses read clearly but the user
+  // preferred each column simply starting from its soonest status with no blank rows.)
   function _renderProjCanvas(items) {
     if (!items.length) {
       return `${_renderCanvasLegend()}<div class="proj-canvas"><div class="proj-canvas-empty">No projects yet — add one to begin.</div></div>`;
@@ -689,17 +919,15 @@ const App = (() => {
     }
     tagGroups.forEach(g => g.sort((a, b) =>
       PROJ_STATUS_ORDER.indexOf(a.status) - PROJ_STATUS_ORDER.indexOf(b.status)));
-    const sortedKeys = [...tagGroups.keys()].sort((a, b) => {
-      if (a === '' && b !== '') return 1;
-      if (b === '' && a !== '') return -1;
-      return a.localeCompare(b);
-    });
+    const sortedKeys = _projSortedTagKeys(items);
 
-    const MAX_COLS  = 4;
-    const TARGET_H  = 620;  // target max column height before compression kicks in
-    const ROW_GAP   = 48;
-    const LABEL_H   = 44;   // vertical space reserved at top of each column for the tag label
-    const BASE_STEP = 0.72; // default overlap factor (28% overlap)
+    const MAX_COLS   = 4;
+    const TARGET_H   = 760;  // target max column height before compression kicks in
+    const ROW_GAP    = 48;
+    const LABEL_H    = 44;   // vertical space reserved at top of each column for the tag label
+    const BASE_STEP  = 0.88; // default overlap factor within a status run (12% overlap — light, keeps orbs clickable)
+    const MIN_STEP   = 0.65; // compression floor — never overlap more than 35%, or orbs become hard to click
+    const STATUS_GAP = 28;   // extra flat gap when crossing into a different status within a column
 
     // Split groups into rows of at most MAX_COLS
     const gridRows = [];
@@ -715,10 +943,13 @@ const App = (() => {
         let h = LABEL_H;
         g.forEach((item, i) => {
           const sz = PROJ_ORB_SIZE[item.status] || 140;
-          h += i < g.length - 1 ? sz * BASE_STEP : sz;
+          if (i < g.length - 1) {
+            const sameStatus = g[i + 1].status === item.status;
+            h += sameStatus ? sz * BASE_STEP : sz + STATUS_GAP;
+          } else h += sz;
         });
         if (h > TARGET_H) {
-          const needed = Math.max(0.4, BASE_STEP * TARGET_H / h);
+          const needed = Math.max(MIN_STEP, BASE_STEP * TARGET_H / h);
           if (needed < stepFactor) stepFactor = needed;
         }
       });
@@ -736,13 +967,27 @@ const App = (() => {
       rowKeys.forEach((tagKey, colIdx) => {
         const groupItems = tagGroups.get(tagKey);
         const colCenterPct = (colIdx + 0.5) / n * 100;
+        const statusCounts = {};
+        groupItems.forEach(it => { statusCounts[it.status] = (statusCounts[it.status] || 0) + 1; });
         let y = rowStartY + LABEL_H;
+        let sameStatusIdx = 0;
 
         groupItems.forEach((item, i) => {
           const size = PROJ_ORB_SIZE[item.status] || 140;
-          const xPct = colCenterPct + (_hashStr(item.id) - 0.5) * 8;
+          // Alternate left/right so same-status siblings that overlap vertically don't
+          // also sit concentric — each orb keeps a clickable sliver clear of its neighbor.
+          const altShift = statusCounts[item.status] > 1 ? (sameStatusIdx % 2 === 0 ? -1 : 1) * 7 : 0;
+          const xPct = colCenterPct + altShift + (_hashStr(item.id) - 0.5) * 6;
           orbs.push(_renderProjOrb(item, { size, xPct, top: Math.max(10, y), idx: orbs.length }));
-          y += i < groupItems.length - 1 ? size * stepFactor : size;
+          if (i < groupItems.length - 1) {
+            // Same-status pairs keep the tight overlap; a status change gets a full
+            // non-overlapping gap plus breathing room, so status rows read as distinct.
+            const sameStatus = groupItems[i + 1].status === item.status;
+            y += sameStatus ? size * stepFactor : size + STATUS_GAP;
+            sameStatusIdx = sameStatus ? sameStatusIdx + 1 : 0;
+          } else {
+            y += size;
+          }
         });
 
         const colH = y - rowStartY;
@@ -754,8 +999,13 @@ const App = (() => {
       canvasH = rowStartY;
     });
 
-    const labelsHtml = groupLabels.map(gl =>
-      `<div class="proj-group-label" style="left:${gl.cx}%;top:${gl.y}px">${esc(gl.tagKey).toUpperCase()}</div>`
+    const labelsHtml = groupLabels.map(gl => `<div class="proj-group-label" draggable="true"
+      data-tag="${esc(gl.tagKey)}" style="left:${gl.cx}%;top:${gl.y}px"
+      ondragstart="App._projColDragStart(event,'${esc(gl.tagKey)}')"
+      ondragover="App._projColDragOver(event,'${esc(gl.tagKey)}')"
+      ondragleave="App._projColDragLeave(event)"
+      ondrop="App._projColDrop(event,'${esc(gl.tagKey)}')"
+      ondragend="App._projColDragEnd()">${esc(gl.tagKey).toUpperCase()}</div>`
     ).join('');
 
     return `${_renderCanvasLegend()}
@@ -763,6 +1013,39 @@ const App = (() => {
       ${labelsHtml}
       ${orbs.join('')}
     </div>`;
+  }
+
+  // ── Projects canvas — column (tag) reordering by drag ──
+  let _projColDragKey = null;
+  function _projColDragStart(e, key) {
+    _projColDragKey = key;
+    e.dataTransfer.effectAllowed = 'move';
+  }
+  function _projColDragOver(e, key) {
+    e.preventDefault();
+    if (key !== _projColDragKey) e.currentTarget.classList.add('drag-over');
+  }
+  function _projColDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+  function _projColDragEnd() {
+    _projColDragKey = null;
+    document.querySelectorAll('.proj-group-label.drag-over').forEach(el => el.classList.remove('drag-over'));
+  }
+  function _projColDrop(e, targetKey) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    const dragKey = _projColDragKey; _projColDragKey = null;
+    if (!dragKey || !targetKey || dragKey === targetKey) return;
+    const keys = _projSortedTagKeys(Data.get().projects || []).filter(k => k !== '');
+    const fromIdx = keys.indexOf(dragKey), toIdx = keys.indexOf(targetKey);
+    if (fromIdx === -1 || toIdx === -1) return;
+    keys.splice(fromIdx, 1);
+    keys.splice(toIdx, 0, dragKey);
+    const allTags = Data.get().tags || [];
+    keys.forEach((key, i) => {
+      const existingSlot = allTags.find(t => t.name === key)?.colorSlot ?? null;
+      Data.upsertTag(key, existingSlot, i);
+    });
+    renderBoard();
   }
 
   function _renderProjOrb(item, pos) {
@@ -783,14 +1066,13 @@ const App = (() => {
   }
 
   function _renderCanvasLegend() {
-    const STATUS_LABELS = { 'active': 'Active', 'up-next': 'Up next', 'someday': 'Ideation', 'on-hold': 'On hold' };
     const DOT_SIZES    = { 'active': 13, 'up-next': 10, 'someday': 8, 'on-hold': 7 };
     return `<div class="proj-legend-bar">
       ${PROJ_STATUS_ORDER.map(s => `<div class="legend-row legend-drop" data-status="${s}"
         ondragover="event.preventDefault();this.classList.add('over')"
         ondragleave="this.classList.remove('over')"
         ondrop="event.preventDefault();this.classList.remove('over');App._projDropStatus('${s}')">
-        <span class="legend-dot" style="background:${PROJ_STATUS_COLORS[s]};width:${DOT_SIZES[s]}px;height:${DOT_SIZES[s]}px"></span>${STATUS_LABELS[s]}
+        <span class="legend-dot" style="background:${PROJ_STATUS_COLORS[s]};width:${DOT_SIZES[s]}px;height:${DOT_SIZES[s]}px"></span>${PROJ_STATUS_LABELS[s]}
       </div>`).join('')}
     </div>`;
   }
@@ -923,8 +1205,7 @@ const App = (() => {
 
     // Commits for this date
     const commits = (state.commitments || [])
-      .filter(c => c.date === date || c.endDate === date)
-      .sort((a, b) => (a.startTime || '99').localeCompare(b.startTime || '99'));
+      .filter(c => c.date === date || c.endDate === date);
 
     let tasks = '', tally = '';
     if (isPast) {
@@ -942,12 +1223,20 @@ const App = (() => {
       `ondragover="App._onWeekDragOver(event)" ondragleave="App._onWeekDragLeave(event)" ondrop="App._onWeekDrop(event,'${date}')"`;
     const colClass = `day-col${isToday ? ' today-col' : ''}${isPast ? ' past-col' : ''}`;
 
+    // Shift washes shade the day-col's background directly (full/half-cell); the
+    // interactive content (chips, tasks, drop target) lives in the .day-content
+    // layer on top so drag/drop insertBefore targets stay unchanged.
+    const shiftWashes = commits.map(c => _renderShiftWash(c, date)).join('');
+
     const column = `
-      <div class="${colClass}" data-date="${date}" ${dropAttrs}>
-        ${commits.map(c => _renderCommitBand(c, date)).join('')}
-        ${tasks}
-        ${tally}
-        ${!isPast ? `<button class="wd-add-busy" onclick="App._openCommitEditor('${date}')">＋ busy</button>` : ''}
+      <div class="${colClass}" data-date="${date}">
+        ${shiftWashes}
+        <div class="day-content" ${dropAttrs}>
+          ${commits.map(c => _renderCommitBand(c, date)).join('')}
+          ${tasks}
+          ${tally}
+          ${!isPast ? `<button class="wd-add-busy" onclick="App._openCommitEditor('${date}')">＋ busy</button>` : ''}
+        </div>
       </div>`;
 
     return { station, column };
@@ -997,22 +1286,37 @@ const App = (() => {
       </div>`;
   }
 
+  // Fixed shift types (session 2026-07-01) — replaced the free-time-picker commitment
+  // editor. Shading is rendered separately by _renderShiftWash; this just renders the
+  // small clickable label/delete chip.
+  const _SHIFT_LABEL = { day: 'Day', night: 'Night', morning: 'Morning', evening: 'Evening' };
+
   function _renderCommitBand(c, renderDate) {
     const isContinued = renderDate && c.endDate && c.endDate === renderDate && c.date !== renderDate;
-    let timeStr = (c.startTime || c.endTime)
-      ? `${c.startTime || ''}${c.endTime ? '–' + c.endTime : ''}`.replace(/:00(?=–|$)/g, '')
-      : '';
-    if (!isContinued && c.endDate && c.endDate !== c.date) timeStr += ' →';
-    const typeCls = c.type ? ` cb-type-${c.type}` : '';
-    const typeLabel = c.type ? `<span class="cb-type-badge">${c.type}</span>` : '';
+    const shiftCls = c.shift ? ` cb-shift-${c.shift}` : '';
+    const shiftLabel = c.shift ? `<span class="cb-type-badge">${_SHIFT_LABEL[c.shift] || c.shift}</span>` : '';
     const contLabel = isContinued ? `<span class="cb-cont">(contd.)</span>` : '';
-    return `<div class="commit-band${typeCls}" data-id="${c.id}" title="${esc(c.notes || '')}"
+    return `<div class="commit-band${shiftCls}" data-id="${c.id}" title="${esc(c.notes || '')}"
         onclick="event.stopPropagation();App._openCommitEditor('${c.date}','${c.id}')">
-        ${typeLabel}${contLabel}
-        <span class="cb-time">${timeStr}</span>
+        ${shiftLabel}${contLabel}
         <span class="cb-title">${esc(c.title)}</span>
         <button class="cb-del" onclick="event.stopPropagation();App._deleteCommit('${c.id}')" aria-label="Remove">✕</button>
       </div>`;
+  }
+
+  // Full/half-cell background wash conveying the shift's busy window on the day-col
+  // itself. Night shows bottom-half on its start date and top-half on the following
+  // date (reuses the existing endDate cross-midnight rendering path).
+  function _renderShiftWash(c, renderDate) {
+    if (!c.shift) return '';
+    const isEnd = renderDate === c.endDate && c.date !== renderDate;
+    let posCls;
+    if (c.shift === 'day') posCls = 'sw-full';
+    else if (c.shift === 'morning') posCls = 'sw-top';
+    else if (c.shift === 'evening') posCls = 'sw-bottom';
+    else if (c.shift === 'night') posCls = isEnd ? 'sw-top' : 'sw-bottom';
+    else return '';
+    return `<div class="shift-wash sw-${c.shift} ${posCls}"></div>`;
   }
 
   // ── Week drag & drop ──
@@ -1118,32 +1422,29 @@ const App = (() => {
     renderBoard();
   }
 
-  // ── Commitment editor ──
+  // ── Commitment editor — fixed shift types, no time picker (session 2026-07-01) ──
   function _openCommitEditor(date, id) {
     const existing = id ? (Data.get().commitments || []).find(c => c.id === id) : null;
     const root = document.getElementById('modal-root');
-    const c = existing || { title: '', startTime: '', endTime: '', endDate: null, type: null, notes: '' };
-    const typeOpts = [
-      { val: '',         label: 'Busy'     },
-      { val: 'work',     label: 'Work'     },
-      { val: 'exercise', label: 'Exercise' },
+    const c = existing || { title: '', endDate: null, shift: 'day', notes: '' };
+    const shiftOpts = [
+      { val: 'day',     label: 'Day'     },
+      { val: 'night',   label: 'Night'   },
+      { val: 'morning', label: 'Morning' },
+      { val: 'evening', label: 'Evening' },
     ];
-    const typeButtons = typeOpts.map(o =>
-      `<button class="commit-type-btn${(c.type || '') === o.val ? ' active' : ''}" onclick="App._commitTypeSelect(this,'${o.val}')" data-type="${o.val}">${o.label}</button>`
+    const shiftButtons = shiftOpts.map(o =>
+      `<button class="commit-type-btn${(c.shift || 'day') === o.val ? ' active' : ''}" onclick="App._commitShiftSelect(this,'${o.val}','${date}')" data-shift="${o.val}">${o.label}</button>`
     ).join('');
     root.innerHTML = `
       <div class="modal-overlay" onclick="App._closeCommitEditor(event)">
         <div class="modal commit-modal" onclick="event.stopPropagation()">
           <div class="modal-title">${existing ? 'Edit' : 'Add'} commitment</div>
           <div class="commit-date-label">${_fmtDate(date)}</div>
-          <div class="commit-type-row">${typeButtons}</div>
-          <input type="text" id="commit-title" class="commit-input" placeholder="e.g. Work shift, Dentist" value="${esc(c.title)}" />
-          <div class="commit-times">
-            <label>From <input type="time" id="commit-start" value="${c.startTime || ''}" /></label>
-            <label>To <input type="time" id="commit-end" value="${c.endTime || ''}" /></label>
-          </div>
-          <div class="commit-enddate-row">
-            <label class="commit-enddate-label">Ends on (for night shifts)
+          <div class="commit-type-row">${shiftButtons}</div>
+          <input type="text" id="commit-title" class="commit-input" placeholder="e.g. Work shift" value="${esc(c.title)}" />
+          <div class="commit-enddate-row" id="commit-enddate-row" style="display:${(c.shift || 'day') === 'night' ? 'block' : 'none'}">
+            <label class="commit-enddate-label">Ends on
               <input type="date" id="commit-end-date" value="${c.endDate || ''}" />
             </label>
           </div>
@@ -1157,9 +1458,16 @@ const App = (() => {
       </div>`;
     setTimeout(() => document.getElementById('commit-title')?.focus(), 30);
   }
-  function _commitTypeSelect(btn, val) {
+  function _commitShiftSelect(btn, val, date) {
     btn.closest('.commit-type-row').querySelectorAll('.commit-type-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    const row = document.getElementById('commit-enddate-row');
+    if (row) row.style.display = val === 'night' ? 'block' : 'none';
+    const endInput = document.getElementById('commit-end-date');
+    if (val === 'night' && endInput && !endInput.value) {
+      const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + 1);
+      endInput.value = _ymd(d);
+    }
   }
   function _closeCommitEditor(evt) {
     if (evt && evt.target !== evt.currentTarget) return;
@@ -1168,17 +1476,21 @@ const App = (() => {
   function _saveCommit(date, id) {
     const title = document.getElementById('commit-title').value.trim();
     if (!title) { document.getElementById('commit-title').focus(); return; }
-    const activeTypeBtn = document.querySelector('.commit-type-btn.active');
-    const type = activeTypeBtn?.dataset.type || null;
-    const endDateVal = document.getElementById('commit-end-date')?.value || null;
+    const activeShiftBtn = document.querySelector('.commit-type-btn.active');
+    const shift = activeShiftBtn?.dataset.shift || 'day';
+    let endDateVal = null;
+    if (shift === 'night') {
+      endDateVal = document.getElementById('commit-end-date')?.value || null;
+      if (!endDateVal) { const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + 1); endDateVal = _ymd(d); }
+    }
     const c = {
       id: id || ('c' + Date.now()),
       title,
       date,
-      startTime: document.getElementById('commit-start').value || '',
-      endTime: document.getElementById('commit-end').value || '',
-      endDate: endDateVal || null,
-      type: type || null,
+      startTime: '', endTime: '',
+      endDate: endDateVal,
+      type: null,
+      shift,
       colorSlot: null,
       notes: document.getElementById('commit-notes').value.trim(),
     };
@@ -1654,6 +1966,7 @@ const App = (() => {
     item.status = 'done';
     _saveCompletionDate(item.id);
     Data.upsertTask(item);
+    _maybeSpawnRecurrence(item, _today());
     _renderFocusRow();
     renderBoard();
   }
@@ -1914,15 +2227,11 @@ const App = (() => {
   // ── Drag & drop (columns) ──
   function _onDragStart(e, id) {
     dragId = id; dragEl = e.currentTarget;
-    setTimeout(() => {
-      dragEl?.classList.add('is-dragging');
-      document.querySelector('.columns')?.classList.add('dragging-active');
-    }, 0);
+    setTimeout(() => { dragEl?.classList.add('is-dragging'); }, 0);
     e.dataTransfer.effectAllowed = 'move';
   }
   function _onDragEnd(e) {
     dragEl?.classList.remove('is-dragging');
-    document.querySelector('.columns')?.classList.remove('dragging-active');
     placeholder?.remove(); placeholder = null;
     document.querySelectorAll('.col-body').forEach(c => c.classList.remove('drag-over'));
     dragId = null; dragEl = null;
@@ -1932,7 +2241,6 @@ const App = (() => {
   function _onFocusDrop(e) {
     e.preventDefault();
     e.currentTarget.classList.remove('drag-over');
-    document.querySelector('.columns')?.classList.remove('dragging-active');
     if (dragId) startTask(dragId);
     dragId = null; dragEl = null;
   }
@@ -1947,7 +2255,7 @@ const App = (() => {
   }
   function _onDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
   function _dragAfterEl(container, y) {
-    return [...container.querySelectorAll('.card:not(.is-dragging),.proj-card:not(.is-dragging)')].reduce((closest, el) => {
+    return [...container.querySelectorAll('.card:not(.is-dragging),.proj-card:not(.is-dragging),.week-task:not(.dragging)')].reduce((closest, el) => {
       const box = el.getBoundingClientRect();
       const offset = y - box.top - box.height / 2;
       return (offset < 0 && offset > closest.offset) ? { offset, element: el } : closest;
@@ -1964,8 +2272,28 @@ const App = (() => {
         item.backlogEnteredAt = _today();
       }
       // Completion date tracking
-      if (colId === 'done') { _saveCompletionDate(item.id); }
+      if (colId === 'done') { _saveCompletionDate(item.id); if (oldStatus !== 'done') _maybeSpawnRecurrence(item, _today()); }
       else _clearCompletionDate(item.id);
+
+      // Persist manual reorder position within the target column (tasks only —
+      // 'next' reuses the Week view's dayOrder field, others use boardOrder).
+      if (item.type !== 'project') {
+        const orderField = colId === 'next' ? 'dayOrder' : 'boardOrder';
+        const container = e.currentTarget;
+        const afterEl = _dragAfterEl(container, e.clientY);
+        const cardEls = [...container.querySelectorAll('.card:not(.is-dragging)')];
+        const getOrder = el => el ? (Data.findItem(el.dataset.id)?.[orderField] ?? null) : null;
+        const afterOrder = getOrder(afterEl);
+        const beforeEl = afterEl ? afterEl.previousElementSibling : (cardEls.length ? cardEls[cardEls.length - 1] : null);
+        const beforeOrder = getOrder(beforeEl);
+        let newOrder;
+        if (beforeOrder !== null && afterOrder !== null) newOrder = (beforeOrder + afterOrder) / 2;
+        else if (afterOrder !== null) newOrder = afterOrder - 0.5;
+        else if (beforeOrder !== null) newOrder = beforeOrder + 1;
+        else newOrder = 1;
+        item[orderField] = newOrder;
+      }
+
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
     }
     placeholder?.remove(); placeholder = null;
@@ -2022,9 +2350,11 @@ const App = (() => {
 
   function _projTaskToggleDone(taskId, projId, checked) {
     const task = Data.findItem(taskId); if (!task) return;
+    const wasDone = task.status === 'done';
     task.status = checked ? 'done' : 'this-week';
     if (checked) _saveCompletionDate(taskId); else _clearCompletionDate(taskId);
     Data.upsertTask(task);
+    if (checked && !wasDone) _maybeSpawnRecurrence(task, _today());
     _refreshProjModal(projId);
   }
 
@@ -2136,6 +2466,7 @@ const App = (() => {
 
   function openDetail(id) {
     const item = Data.findItem(id); if (!item) return;
+    if (item.status === 'recurring') { openRecurringModal(id); return; }
     openItemId = id;
     history.replaceState(null, '', '#' + id);
     const isProject = item.type === 'project';
@@ -2231,6 +2562,7 @@ const App = (() => {
           <div id="del-zone"><button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button></div>
           <div class="modal-footer-right">
             <button class="btn-close" onclick="App._closeDetail()">Cancel</button>
+            ${item.status !== 'done' ? `<button class="btn-close" id="proj-done-btn" onclick="App._markProjectDone('${id}')">Done</button>` : ''}
             <button class="btn-save" onclick="App._saveDetail('${id}');App._closeDetail()">Save</button>
           </div>
         </div>`, id);
@@ -2238,7 +2570,9 @@ const App = (() => {
     }
 
     // ── Task detail modal — unchanged layout ──
-    const cols = TASK_COLS;
+    // 'recurring' isn't a Move-to destination here — recurring tasks are created/
+    // edited exclusively through the dedicated Recurring modal (openRecurringModal).
+    const cols = TASK_COLS.filter(c => c.id !== 'recurring');
     const moveBtns = cols.map(c =>
       `<button class="move-btn${item.status === c.id ? ' current' : ''}"
         onclick="App._moveItem('${id}','${c.id}',this)">${c.label}</button>`
@@ -2319,6 +2653,21 @@ const App = (() => {
     const blkTa  = document.getElementById('d-blocked-reason');
     if (waitTa) waitTa.style.display = state === 'waiting' ? 'block' : 'none';
     if (blkTa)  blkTa.style.display  = state === 'blocked'  ? 'block' : 'none';
+  }
+
+  function _markProjectDone(id) {
+    const item = Data.findProject(id); if (!item) return;
+    const activeTasks = Data.get().tasks.filter(t => t.parentProject === id && t.status !== 'done');
+    if (activeTasks.length > 0) {
+      const msg = document.getElementById('status-done-msg');
+      const n = activeTasks.length;
+      if (msg) { msg.textContent = `${n} task${n > 1 ? 's' : ''} still active — complete or delete them first`; msg.style.display = 'block'; }
+      return;
+    }
+    item.status = 'done';
+    Data.upsertProject(item);
+    _closeDetail();
+    renderBoard();
   }
 
   function _onProjStatusChange(id, sel) {
@@ -2557,6 +2906,7 @@ const App = (() => {
       if (status === 'done') { _saveCompletionDate(id); }
       else _clearCompletionDate(id);
       item.type === 'project' ? Data.upsertProject(item) : Data.upsertTask(item);
+      if (status === 'done' && old !== 'done') _maybeSpawnRecurrence(item, _today());
     }
     document.querySelectorAll('.move-btn').forEach(b => b.classList.remove('current'));
     btn?.classList.add('current');
@@ -2604,12 +2954,11 @@ const App = (() => {
   const _IR_R0   = 110, _IR_DR = 58;    // first-ring radius, ring spacing
   const _IR_FAN0 = 0.5, _IR_DFAN = 0.42, _IR_FANMAX = 2.5;  // fan width (rad) grows per ring
 
-  function _outcomeColor(outcome) {
-    const a = outcome && (outcome.action || outcome);
-    if (a === 'this-week') return 'var(--sage)';
-    if (a === 'later')     return 'var(--ir-pink)';
-    if (a === 'delete')    return 'var(--ir-never)';
-    return 'var(--ir-coral)';
+  // Dot color is purely decorative now — a fun, stable-per-task palette, unrelated
+  // to what the user decided (This Week / Later / Never all look the same).
+  const _IR_FUN_COLORS = ['#E85D3A', '#F2C94C', '#6FB08C', '#8E86C9', '#E58AAE', '#4FA8C9', '#F29B4C', '#C9556B'];
+  function _irFunColor(id) {
+    return _IR_FUN_COLORS[Math.floor(_hashStr(id) * _IR_FUN_COLORS.length) % _IR_FUN_COLORS.length];
   }
 
   // Minimum spanning tree (Prim's) over a point cloud, seeded at points[0] (the anchor).
@@ -2682,16 +3031,11 @@ const App = (() => {
     return pos;
   }
 
-  let _irHoverOutcome = null;
+  // Hover hint on the triage buttons — a subtle scale pulse, not a recolor (dot color
+  // no longer encodes the outcome, so there's nothing meaningful left to preview).
   function _irPreviewOutcome(outcome) {
-    _irHoverOutcome = outcome;
-    const color  = _outcomeColor(outcome);
-    const dot    = document.getElementById('ir-active-dot');
-    const pulse  = document.getElementById('ir-active-pulse');
-    const elbow  = document.getElementById('ir-active-elbow');
-    if (dot)   dot.setAttribute('fill', color);
-    if (pulse) pulse.setAttribute('fill', color);
-    if (elbow) elbow.setAttribute('stroke', outcome ? color : 'var(--ink)');
+    const dot = document.getElementById('ir-active-dot');
+    if (dot) dot.classList.toggle('ir-hint', !!outcome);
   }
 
   function openInboxReview() {
@@ -2711,7 +3055,8 @@ const App = (() => {
     _reviewOutcome.forEach((o, id) => { if (o.action === 'delete') Data.deleteItem(id); });
     const el = document.getElementById('inbox-review');
     if (el) { el.classList.remove('active'); el.style.display = 'none'; el.innerHTML = ''; }
-    renderBoard();
+    // Land on the Week view so any tasks just sent to This Week can be placed onto days.
+    switchView('calendar');
   }
 
   function _reviewAdvance() {
@@ -2764,25 +3109,24 @@ const App = (() => {
     const treeEdges  = _buildMST([activePos, ...decidedIds.map(id => posMap.get(id)).filter(Boolean)]);
     const dashedPath = _elbowPath([activePos, ...ghostPts]);
 
-    // Decided dots (no labels)
+    // Decided dots (no labels) — fun rotating palette, no outcome meaning
     const decidedSvg = decidedIds.map(id => {
       const p = posMap.get(id); if (!p) return '';
-      const color = _outcomeColor(_reviewOutcome.get(id));
       return `<g style="cursor:pointer" onclick="App._reviewCenter('${id}')">
-        <circle cx="${p.x}" cy="${p.y}" r="18" fill="${color}"/>
+        <circle cx="${p.x}" cy="${p.y}" r="18" fill="${_irFunColor(id)}"/>
       </g>`;
     }).join('');
 
-    // Ghost dots (upcoming, no labels)
+    // Ghost dots (upcoming, no labels) — same fun palette, dashed + faded to read as "not yet"
     const ghostSvg = ghostIds.map((id, i) => {
       const p = ghostPts[i]; if (!p) return '';
-      return `<circle cx="${p.x}" cy="${p.y}" r="11" fill="var(--ir-ghost)" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/>`;
+      return `<circle cx="${p.x}" cy="${p.y}" r="11" fill="${_irFunColor(id)}" opacity="0.45" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/>`;
     }).join('');
 
     // Active (pulsing) dot — fixed anchor, no label
     const activeSvg = `
-      <circle id="ir-active-pulse" class="ir-pulse" cx="${activePos.x}" cy="${activePos.y}" r="26" fill="var(--ir-coral)" opacity="0.5"/>
-      <circle id="ir-active-dot"   cx="${activePos.x}" cy="${activePos.y}" r="26" fill="var(--ir-coral)"/>`;
+      <circle id="ir-active-pulse" class="ir-pulse" cx="${activePos.x}" cy="${activePos.y}" r="26" fill="${_irFunColor(activeId)}" opacity="0.5"/>
+      <circle id="ir-active-dot"   cx="${activePos.x}" cy="${activePos.y}" r="26" fill="${_irFunColor(activeId)}"/>`;
 
     // Elbow connector: active dot → callout (edge-aware flip)
     const flipped    = activePos.x > _IR_VBW * 0.58;
@@ -2802,55 +3146,86 @@ const App = (() => {
     if (!item) return;
     const activeOutcome = _reviewOutcome.get(activeId);
 
-    const projTitle = item.parentProject ? (Data.findProject(item.parentProject) || {}).title : null;
-    const projHtml  = projTitle ? `<div class="ir-panel-project">${esc(projTitle)}</div>` : '';
+    // Project-cluster grouping: when the active task belongs to a project, show every
+    // still-pending inbox task of that project together in one card (grouping is a
+    // callout-level concept only — the tree above still has one dot per task).
+    const groupProjId = (!activeOutcome && item.parentProject) ? item.parentProject : null;
+    const groupIds = groupProjId
+      ? pendingIds.filter(gid => Data.findItem(gid)?.parentProject === groupProjId)
+      : null;
 
-    let ageHtml = '';
-    if (item.backlogEnteredAt) {
-      const days = _daysDiff(item.backlogEnteredAt);
-      const cls  = days >= 14 ? ' old' : days >= 7 ? ' stale' : '';
-      ageHtml = `<span class="age-counter${cls}">${_ageLabel(item.backlogEnteredAt)}</span>`;
+    let calloutBodyHtml, upNextHtml;
+
+    if (groupIds) {
+      calloutBodyHtml = _renderReviewGroupCard(groupProjId, groupIds);
+      const afterGroupIds = pendingIds.filter(pid => !groupIds.includes(pid));
+      const upNextIds = afterGroupIds.slice(0, 3);
+      upNextHtml = upNextIds.length ? `
+        <div class="ir-upnext">
+          <div class="ir-upnext-head">Up next</div>
+          <ul class="ir-upnext-list">${upNextIds.map((id, i) => {
+            const t = Data.findItem(id); if (!t) return '';
+            return `<li style="opacity:${1 - i * 0.25}">
+              <span class="ir-upnext-num">${String(_reviewSeq.indexOf(id) + 1).padStart(2, '0')}</span>${esc(t.title)}
+            </li>`;
+          }).join('')}</ul>
+        </div>` : '';
+    } else {
+      const projTitle = item.parentProject ? (Data.findProject(item.parentProject) || {}).title : null;
+      const projHtml  = projTitle ? `<div class="ir-panel-project">${esc(projTitle)}</div>` : '';
+
+      let ageHtml = '';
+      if (item.backlogEnteredAt) {
+        const days = _daysDiff(item.backlogEnteredAt);
+        const cls  = days >= 14 ? ' old' : days >= 7 ? ' stale' : '';
+        ageHtml = `<span class="age-counter${cls}">${_ageLabel(item.backlogEnteredAt)}</span>`;
+      }
+      let dueHtml = '';
+      if (item.dueDate) {
+        const dd = new Date(item.dueDate + 'T00:00:00');
+        dueHtml = `<span class="ir-due">due ${dd.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span>`;
+      }
+      const bumped   = item.laterCount > 0 ? `<span class="ir-bumped">bumped ${item.laterCount}×</span>` : '';
+      const metaParts = [dueHtml, ageHtml, bumped].filter(Boolean).join('<span class="ir-dotsep"> · </span>');
+
+      const actionsHtml = activeOutcome
+        ? `<div class="ir-actions">
+             <span class="ir-outcome o-${activeOutcome.action}">${_REVIEW_OUTCOME_LABEL[activeOutcome.action]}</span>
+             <button class="ir-act undo" onclick="App._reviewUndo('${activeId}')">Undo</button>
+           </div>`
+        : `<div class="ir-actions">
+             <button class="ir-act tw"
+               onmouseenter="App._irPreviewOutcome('this-week')" onmouseleave="App._irPreviewOutcome(null)"
+               onclick="App._reviewThisWeek('${activeId}')">This Week</button>
+             <button class="ir-act"
+               onmouseenter="App._irPreviewOutcome('later')" onmouseleave="App._irPreviewOutcome(null)"
+               onclick="App._sendToLater('${activeId}',true)">Later</button>
+             <button class="ir-act never"
+               onmouseenter="App._irPreviewOutcome('delete')" onmouseleave="App._irPreviewOutcome(null)"
+               onclick="App._reviewDelete('${activeId}')">Never</button>
+           </div>`;
+
+      calloutBodyHtml = `${projHtml}
+        <div class="ir-title">${esc(item.title)}</div>
+        ${metaParts ? `<div class="ir-meta">${metaParts}</div>` : ''}
+        ${actionsHtml}`;
+
+      // Up-next list in callout (tasks after active in the pending queue)
+      const activePendingIdx = pendingIds.indexOf(activeId);
+      const upNextIds = activePendingIdx >= 0
+        ? pendingIds.slice(activePendingIdx + 1, activePendingIdx + 4)
+        : pendingIds.slice(0, 3);
+      upNextHtml = upNextIds.length ? `
+        <div class="ir-upnext">
+          <div class="ir-upnext-head">Up next</div>
+          <ul class="ir-upnext-list">${upNextIds.map((id, i) => {
+            const t = Data.findItem(id); if (!t) return '';
+            return `<li style="opacity:${1 - i * 0.25}">
+              <span class="ir-upnext-num">${String(_reviewSeq.indexOf(id) + 1).padStart(2, '0')}</span>${esc(t.title)}
+            </li>`;
+          }).join('')}</ul>
+        </div>` : '';
     }
-    let dueHtml = '';
-    if (item.dueDate) {
-      const dd = new Date(item.dueDate + 'T00:00:00');
-      dueHtml = `<span class="ir-due">due ${dd.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span>`;
-    }
-    const bumped   = item.laterCount > 0 ? `<span class="ir-bumped">bumped ${item.laterCount}×</span>` : '';
-    const metaParts = [dueHtml, ageHtml, bumped].filter(Boolean).join('<span class="ir-dotsep"> · </span>');
-
-    const actionsHtml = activeOutcome
-      ? `<div class="ir-actions">
-           <span class="ir-outcome o-${activeOutcome.action}">${_REVIEW_OUTCOME_LABEL[activeOutcome.action]}</span>
-           <button class="ir-act undo" onclick="App._reviewUndo('${activeId}')">Undo</button>
-         </div>`
-      : `<div class="ir-actions">
-           <button class="ir-act tw"
-             onmouseenter="App._irPreviewOutcome('this-week')" onmouseleave="App._irPreviewOutcome(null)"
-             onclick="App._reviewThisWeek('${activeId}')">This Week</button>
-           <button class="ir-act"
-             onmouseenter="App._irPreviewOutcome('later')" onmouseleave="App._irPreviewOutcome(null)"
-             onclick="App._sendToLater('${activeId}',true)">Later</button>
-           <button class="ir-act never"
-             onmouseenter="App._irPreviewOutcome('delete')" onmouseleave="App._irPreviewOutcome(null)"
-             onclick="App._reviewDelete('${activeId}')">Never</button>
-         </div>`;
-
-    // Up-next list in callout (tasks after active in the pending queue)
-    const activePendingIdx = pendingIds.indexOf(activeId);
-    const upNextIds = activePendingIdx >= 0
-      ? pendingIds.slice(activePendingIdx + 1, activePendingIdx + 4)
-      : pendingIds.slice(0, 3);
-    const upNextHtml = upNextIds.length ? `
-      <div class="ir-upnext">
-        <div class="ir-upnext-head">Up next</div>
-        <ul class="ir-upnext-list">${upNextIds.map((id, i) => {
-          const t = Data.findItem(id); if (!t) return '';
-          return `<li style="opacity:${1 - i * 0.25}">
-            <span class="ir-upnext-num">${String(_reviewSeq.indexOf(id) + 1).padStart(2, '0')}</span>${esc(t.title)}
-          </li>`;
-        }).join('')}</ul>
-      </div>` : '';
 
     el.innerHTML = `
       <div class="ir-head">
@@ -2874,24 +3249,45 @@ const App = (() => {
         <path id="ir-active-elbow" class="ir-elbow" d="${elbowD}"/>
         ${activeSvg}
       </svg>
-      <div class="ir-callout" style="${calloutLeftCss};top:${calloutTopPct}%">
-        ${projHtml}
-        <div class="ir-title">${esc(item.title)}</div>
-        ${metaParts ? `<div class="ir-meta">${metaParts}</div>` : ''}
-        ${actionsHtml}
+      <div class="ir-callout${groupIds ? ' ir-callout-group' : ''}" style="${calloutLeftCss};top:${calloutTopPct}%">
+        ${calloutBodyHtml}
         ${upNextHtml}
-      </div>
-      <div class="ir-legend">
-        <div class="ir-legend-item"><span class="ir-legend-dot" style="background:var(--sage)"></span>This Week</div>
-        <div class="ir-legend-item"><span class="ir-legend-dot" style="background:var(--ir-pink)"></span>Later</div>
-        <div class="ir-legend-item"><span class="ir-legend-dot" style="background:var(--ir-never)"></span>Never</div>
-        <div class="ir-legend-item"><span class="ir-legend-dot" style="background:var(--ir-ghost);border:1px dashed var(--muted)"></span>Upcoming</div>
       </div>`;
 
     if (!el._wheelBound) {
       el._wheelBound = true;
       el.addEventListener('wheel', e => { e.preventDefault(); _reviewScroll(e.deltaY); }, { passive: false });
     }
+  }
+
+  // Project-cluster review card: lists every still-pending inbox task of one project
+  // together, with per-task triage plus a bulk "defer whole project" action.
+  function _renderReviewGroupCard(projId, groupIds) {
+    const proj = Data.findProject(projId);
+    const rows = groupIds.map(id => {
+      const t = Data.findItem(id); if (!t) return '';
+      const due = t.dueDate ? `<span class="ir-grp-due">due ${_fmtDate(t.dueDate)}</span>` : '';
+      return `<div class="ir-grp-row">
+        <span class="ir-grp-title">${esc(t.title)}</span>
+        ${due}
+        <div class="ir-grp-actions">
+          <button class="ir-grp-act tw" onclick="App._reviewThisWeek('${id}')">Week</button>
+          <button class="ir-grp-act" onclick="App._sendToLater('${id}',true)">Later</button>
+          <button class="ir-grp-act never" onclick="App._reviewDelete('${id}')">Never</button>
+        </div>
+      </div>`;
+    }).join('');
+    return `
+      <div class="ir-panel-project">${esc(proj?.title || 'Project')}</div>
+      <div class="ir-title ir-title-group">${groupIds.length} inbox task${groupIds.length > 1 ? 's' : ''}</div>
+      <div class="ir-grp-list">${rows}</div>
+      <button class="ir-act ir-grp-defer" onclick="App._reviewDeferProject('${projId}')">Defer whole project to Later</button>`;
+  }
+
+  // Bulk-defers every still-pending inbox task of one project in a single action.
+  function _reviewDeferProject(projId) {
+    const ids = _reviewSeq.filter(id => !_reviewOutcome.has(id) && Data.findItem(id)?.parentProject === projId);
+    ids.forEach(id => _sendToLater(id, true));
   }
 
   function _reviewThisWeek(id) {
@@ -3004,6 +3400,209 @@ const App = (() => {
     document.getElementById('modal-root').innerHTML = ''; renderBoard();
   }
 
+  // ── Recurring modal shared bits ──
+  const _RECUR_DOW = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+
+  // Past occurrences of a recurring series, shown in the dedicated Recurring modal.
+  function _recurHistoryHtml(item) {
+    if (!item.recurrenceSeriesId) return '';
+    const past = (Data.get().archive || [])
+      .filter(a => a.recurrenceSeriesId === item.recurrenceSeriesId && a.id !== item.id)
+      .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
+    if (!past.length) return '';
+    return `<div class="modal-section">
+      <label class="modal-label">Past occurrences</label>
+      <div class="recur-history">
+        ${past.slice(0, 12).map(a => `<div class="recur-history-row">
+          <span class="recur-history-date">${_fmtDate(a.archivedAt)}</span>
+          ${a.timeSpent ? `<span class="recur-history-time">${a.timeSpent}m</span>` : ''}
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // ── Dedicated Recurring Task modal (create + edit) ──
+  // Recurring tasks (status 'recurring') are never edited through the standard Detail
+  // modal or created through the generic New Item modal — openDetail redirects here for
+  // any 'recurring' item, and the Recurring column header has its own "+ new recurring"
+  // entry point. Reuses the same tags-row convention as the other modals: editing an
+  // existing task persists tag toggles immediately (via _toggleItemTag/_addCustomTag,
+  // row id "modal-tags-row"); creating a new one just collects active pills at save
+  // time (via _addNewTag, row id "new-modal-tags-row"), same as openNewModal.
+  let _recurModalType = 'rolling'; // 'rolling' | 'anchored' — current toggle state
+
+  function openRecurringModal(id) {
+    const item = id ? Data.findItem(id) : null;
+    _recurModalType = item?.recurrence === 'anchored' ? 'anchored' : 'rolling';
+    const allTags = _loadTags();
+    const itemTags = item?.tags || [];
+    const tagsRowId = item ? 'modal-tags-row' : 'new-modal-tags-row';
+    const tagPillsHtml = allTags.map(t => item
+      ? `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
+          onclick="App._toggleItemTag('${id}','${t}',this)"
+          oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
+      : `<button class="modal-tag-pill ${_tagClasses(t, allTags)}" data-tag="${t}"
+          onclick="this.classList.toggle('active')"
+          oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
+    ).join('');
+    const addTagBtn = item
+      ? `<button onclick="App._addCustomTag('${id}')">+ add tag</button>`
+      : `<button onclick="App._addNewTag()">+ add</button>`;
+
+    const n = item?.recurrenceIntervalN || 1;
+    const unit = item?.recurrenceIntervalUnit || 'days';
+    const due = item?.dueDate || '';
+    const lead = item?.recurrenceLeadDays ?? 0;
+    const days = item?.recurrenceWeekdays || [];
+    const monthDay = item?.recurrenceMonthDay || '';
+    const ruleType = days.length ? 'weekly' : monthDay ? 'monthly' : '';
+
+    _showModal(`
+      <div class="modal-title">${item ? 'Edit' : 'New'} Recurring Task</div>
+      <div class="modal-section">
+        <div class="fg"><label class="modal-label">Title</label>
+          <input type="text" class="modal-input" id="rm-title" value="${esc(item?.title || '')}" placeholder="Name..." /></div>
+        <div class="fg"><label class="modal-label">Tags</label>
+          <div class="modal-tags-row" id="${tagsRowId}">${tagPillsHtml}</div>
+          <div class="modal-tag-add" style="margin-top:7px">
+            <input type="text" id="new-tag-input" placeholder="New tag..."
+              onkeydown="if(event.key==='Enter'){event.preventDefault();${item ? `App._addCustomTag('${id}')` : 'App._addNewTag()'};}" />
+            ${addTagBtn}
+          </div>
+        </div>
+        <div class="fg"><label class="modal-label">Type</label>
+          <div class="type-toggle" id="rm-type-seg">
+            <button type="button" class="type-opt${_recurModalType === 'rolling' ? ' active' : ''}" data-t="rolling" onclick="App._recurModalSetType('rolling')">Rolling</button>
+            <button type="button" class="type-opt${_recurModalType === 'anchored' ? ' active' : ''}" data-t="anchored" onclick="App._recurModalSetType('anchored')">Date-anchored</button>
+          </div>
+        </div>
+        <div id="rm-rolling" style="display:${_recurModalType === 'rolling' ? 'block' : 'none'}">
+          <div class="fg">
+            <span class="recur-inline-label">every</span>
+            <input type="number" class="modal-input recur-num" id="rm-n" min="1" value="${n}" />
+            <select class="modal-input recur-unit" id="rm-unit">
+              <option value="days"${unit === 'days' ? ' selected' : ''}>days</option>
+              <option value="weeks"${unit === 'weeks' ? ' selected' : ''}>weeks</option>
+              <option value="months"${unit === 'months' ? ' selected' : ''}>months</option>
+            </select>
+            <span class="recur-inline-label">after completing</span>
+          </div>
+        </div>
+        <div id="rm-anchored" style="display:${_recurModalType === 'anchored' ? 'block' : 'none'}">
+          <div class="field-row">
+            <div class="fg"><label class="modal-label">Due date</label>
+              <input type="date" class="modal-input" id="rm-due" value="${due}" /></div>
+            <div class="fg"><label class="modal-label">Lead days</label>
+              <input type="number" class="modal-input" id="rm-lead" min="0" value="${lead}" /></div>
+          </div>
+          <div class="rm-rule-toggle" onclick="App._recurModalToggleRule()">
+            <span id="rm-rule-caret">${ruleType ? '▾' : '▸'}</span> Default repeat rule <span class="modal-label-hint">suggestion only, not enforced</span>
+          </div>
+          <div id="rm-rule-block" style="display:${ruleType ? 'block' : 'none'}">
+            <select class="modal-input" id="rm-rule-type" onchange="App._recurModalRuleTypeChange(this)">
+              <option value=""${ruleType === '' ? ' selected' : ''}>None</option>
+              <option value="weekly"${ruleType === 'weekly' ? ' selected' : ''}>Weekly</option>
+              <option value="monthly"${ruleType === 'monthly' ? ' selected' : ''}>Monthly</option>
+            </select>
+            <div id="rm-rule-weekly" class="recur-sub" style="display:${ruleType === 'weekly' ? 'flex' : 'none'}">
+              ${_RECUR_DOW.map((d, i) => `<button type="button" class="recur-day-btn${days.includes(i) ? ' active' : ''}" data-d="${i}" onclick="this.classList.toggle('active')">${d[0]}</button>`).join('')}
+            </div>
+            <div id="rm-rule-monthly" class="recur-sub" style="display:${ruleType === 'monthly' ? 'flex' : 'none'}">
+              <span class="recur-inline-label">on day</span>
+              <input type="number" class="modal-input recur-num" id="rm-rule-monthday" min="1" max="31" value="${monthDay || 1}" />
+              <span class="recur-inline-label">of the month</span>
+            </div>
+          </div>
+        </div>
+        <div class="fg"><label class="modal-label">Notes</label>
+          <textarea class="modal-input" id="rm-notes">${esc(item?.notes || '')}</textarea></div>
+      </div>
+      ${item ? _recurHistoryHtml(item) : ''}
+      <div class="modal-footer">
+        <div id="del-zone">${item ? `<button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button>` : ''}</div>
+        <div class="modal-footer-right">
+          <button class="btn-close" onclick="App._closeRecurModal()">Cancel</button>
+          <button class="btn-save" onclick="App._saveRecurModal('${id || ''}')">${item ? 'Save' : 'Add'}</button>
+        </div>
+      </div>`, null);
+    setTimeout(() => document.getElementById('rm-title')?.focus(), 50);
+  }
+
+  function _recurModalSetType(t) {
+    _recurModalType = t;
+    document.querySelectorAll('#rm-type-seg .type-opt').forEach(b => b.classList.toggle('active', b.dataset.t === t));
+    document.getElementById('rm-rolling').style.display = t === 'rolling' ? 'block' : 'none';
+    document.getElementById('rm-anchored').style.display = t === 'anchored' ? 'block' : 'none';
+  }
+
+  function _recurModalToggleRule() {
+    const block = document.getElementById('rm-rule-block');
+    const caret = document.getElementById('rm-rule-caret');
+    const open = block.style.display !== 'none';
+    block.style.display = open ? 'none' : 'block';
+    if (caret) caret.textContent = open ? '▸' : '▾';
+  }
+
+  function _recurModalRuleTypeChange(sel) {
+    const type = sel.value;
+    document.getElementById('rm-rule-weekly').style.display = type === 'weekly' ? 'flex' : 'none';
+    document.getElementById('rm-rule-monthly').style.display = type === 'monthly' ? 'flex' : 'none';
+  }
+
+  function _closeRecurModal() {
+    openItemId = null;
+    document.getElementById('modal-root').innerHTML = '';
+    renderBoard();
+  }
+
+  function _saveRecurModal(id) {
+    const title = document.getElementById('rm-title')?.value.trim(); if (!title) return;
+    const notes = document.getElementById('rm-notes')?.value || '';
+    const isAnchored = _recurModalType === 'anchored';
+    let fields;
+    if (isAnchored) {
+      const due  = document.getElementById('rm-due')?.value || '';
+      const lead = Math.max(0, +(document.getElementById('rm-lead')?.value || 0));
+      const ruleType = document.getElementById('rm-rule-type')?.value || '';
+      const ruleDays = ruleType === 'weekly'
+        ? [...document.querySelectorAll('#rm-rule-weekly .recur-day-btn.active')].map(b => +b.dataset.d) : null;
+      const ruleMonthDay = ruleType === 'monthly'
+        ? Math.min(31, Math.max(1, +(document.getElementById('rm-rule-monthday')?.value || 1))) : null;
+      fields = {
+        recurrence: 'anchored', dueDate: due, scheduledDate: '', recurrenceLeadDays: lead,
+        recurrenceWeekdays: ruleDays, recurrenceMonthDay: ruleMonthDay,
+        recurrenceIntervalN: null, recurrenceIntervalUnit: null,
+      };
+    } else {
+      const n = Math.max(1, +(document.getElementById('rm-n')?.value || 1));
+      const unit = document.getElementById('rm-unit')?.value || 'days';
+      fields = {
+        recurrence: 'rolling', dueDate: '', recurrenceLeadDays: null,
+        recurrenceIntervalN: n, recurrenceIntervalUnit: unit,
+        recurrenceWeekdays: null, recurrenceMonthDay: null,
+      };
+    }
+
+    if (id) {
+      const item = Data.findItem(id); if (!item) return;
+      item.title = title; item.notes = notes;
+      Object.assign(item, fields);
+      if (!item.recurrenceSeriesId) item.recurrenceSeriesId = item.id;
+      Data.upsertTask(item);
+    } else {
+      const tags = [...document.querySelectorAll('#new-modal-tags-row .modal-tag-pill.active')].map(b => b.dataset.tag).filter(Boolean);
+      const newId = 't' + Date.now();
+      Data.upsertTask({
+        id: newId, type: 'standalone', title, status: 'recurring', tags, parentProject: null,
+        notes, dateAdded: _today(), backlogEnteredAt: '', laterCount: 0, blocked: false,
+        scheduledTime: '', recurrenceSeriesId: newId, ...fields,
+      });
+    }
+    openItemId = null;
+    document.getElementById('modal-root').innerHTML = '';
+    renderBoard();
+  }
+
   // ── New item modal ──
   let _newType = 'standalone';
   let _pendingProjectId = null;   // pre-generated ID for the new-project modal
@@ -3022,7 +3621,9 @@ const App = (() => {
     _pendingProjectId = isProjectModal ? 'p' + Date.now() : null;
     _pendingSubtasks  = [];
     const defaultStatus = opts.defaultStatus || (presetParent ? 'backlog' : undefined);
-    const cols = isProjectModal ? PROJECT_COLS : TASK_COLS;
+    // 'recurring' isn't offered here — recurring tasks are created exclusively through
+    // the dedicated Recurring modal (openRecurringModal), which sets up the schedule.
+    const cols = isProjectModal ? PROJECT_COLS : TASK_COLS.filter(c => c.id !== 'recurring');
     const statusOpts = cols.map(c =>
       `<option value="${c.id}"${c.id === defaultStatus ? ' selected' : ''}>${c.label}</option>`
     ).join('');
@@ -3367,24 +3968,27 @@ const App = (() => {
     set _initialized(v) { _initialized = v; },
     init, switchView, toggleArchive, onSearch,
     openDetail, openNewModal, toggleFilter, clearFilters,
+    openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange,
+    _closeRecurModal, _saveRecurModal, _recurConfirmSave, _recurConfirmDismiss,
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem, confirmClearArchive,
     startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment, skipSegment,
     openFocusPip, closeFocusPip,
     openInboxReview, closeInboxReview, _reviewThisWeek, _sendToLater,
-    _reviewDelete, _reviewUndo, _reviewCenter, _reviewScroll, _irPreviewOutcome,
+    _reviewDelete, _reviewUndo, _reviewCenter, _reviewScroll, _irPreviewOutcome, _reviewDeferProject,
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _onFocusDragOver, _onFocusDragLeave, _onFocusDrop,
     _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
     removeFromDoing, markDoingDone,
-    _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _moveItem,
+    _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _markProjectDone, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleArchiveProject, _restoreDoneProject, _deleteDoneProject,
     _projOrbDragStart, _projOrbDragEnd, _projDropStatus,
+    _projColDragStart, _projColDragOver, _projColDragLeave, _projColDrop, _projColDragEnd,
     weekPrev, weekNext, weekToday,
     _onWeekChipDragStart, _onWeekChipDragEnd, _onWeekDragOver, _onWeekDragLeave, _onWeekDrop,
     _onWeekRailDragOver, _onWeekRailDragLeave, _onWeekRailDrop,
-    _openCommitEditor, _closeCommitEditor, _saveCommit, _deleteCommit, _commitTypeSelect,
+    _openCommitEditor, _closeCommitEditor, _saveCommit, _deleteCommit, _commitShiftSelect,
     _projTaskToggleDone, _projTaskDelete, _projSetAddDest, _addProjectTask, _addProjectTaskDetailed,
     _addPendingTask, _removePendingTask,
     _setNewType, _saveNew,
