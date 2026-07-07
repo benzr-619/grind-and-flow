@@ -33,9 +33,12 @@ migration added one new column.
 | recurrenceIntervalN | recurrence_interval_n | int — rolling-only |
 | recurrenceIntervalUnit | recurrence_interval_unit | `'days'` \| `'weeks'` \| `'months'` — rolling-only |
 | recurrenceLeadDays | recurrence_lead_days | int, nullable — **new**, anchored-only. "Start showing as due-soon N days before due_date." |
+| recurrenceLastCompletedAt | recurrence_last_completed_at | date, nullable — rolling-only; date the cadence last had any completion, drives the "+Nd overdue" badge (see below) |
+| recurrenceAlternate | recurrence_alternate | jsonb `{title, notes, tags}`, nullable — rolling-only; the "other side" of an alternating pair (see below) |
 
 `archive`'s lean subset is unchanged (`recurrence` + `recurrence_series_id` only — no
-weekday/month-day/lead-days granularity there; a historical row doesn't need the live rule).
+weekday/month-day/lead-days/last-completed/alternate granularity there; a historical row
+doesn't need any of the live scheduling/pairing state).
 
 ## The Recurring column — permanent home, not a holding pen
 `TASK_COLS` gained `{ id: 'recurring', label: 'Recurring' }` as its **first** entry, so
@@ -81,7 +84,8 @@ edits persist immediately; `new-modal-tags-row`/`_addNewTag` when creating, coll
 save time), Rolling/Date-anchored type toggle, the type-specific fields, and notes. The
 anchored branch has a collapsible "Default repeat rule" sub-section (`.rm-rule-toggle`)
 reusing the `_RECUR_DOW` weekday-chip UI or a day-of-month input — explicitly labeled
-"suggestion only, not enforced." Saving a new one creates the task directly with
+"suggestion only, not enforced." The rolling branch has an "Alternate with a second task"
+checkbox + sub-form — see Alternating pairs below. Saving a new one creates the task directly with
 `status:'recurring'` and `type:'standalone'` (no project-link field on this form — a
 recurring task's `parentProject` can still carry over from an *older* linked task, just
 not settable here). The Detail modal's "Move to" button row and the New Item modal's
@@ -112,6 +116,68 @@ guarded on the *old* status not already being `'done'`, calling
   pre-filled defaults** — a recurring series is never silently dropped; dismissal just
   means "accept the suggestion," not "cancel." `_recurConfirmSave`/`_recurConfirmDismiss`
   both end by clearing `modal-root` and re-rendering.
+
+## "+Nd overdue" escalation badge (rolling only)
+Later same session. Rolling tasks have no fixed due date to fall behind on, but a cadence
+can still slip (e.g. "every 7 days" and it's been 11) — this badge surfaces that. **Scoped
+to `recurrence === 'rolling'` only**; anchored tasks already have `dueDate`-based
+overdue styling (see above) and don't need a second mechanism.
+
+- **Schema**: `recurrence_last_completed_at` (date, nullable; migration
+  `add_recurrence_last_completed_at_to_tasks`), mapped as `recurrenceLastCompletedAt`.
+  Set in `_maybeSpawnRecurrence`'s rolling branch to the completion date of the occurrence
+  that just finished — "when this cadence last had *any* completion," independent of
+  whether the series uses an alternating pair. Pre-migration rolling tasks have this as
+  `null`; **null means "unknown, don't show a badge,"** never "assume today" (there's no
+  way to backfill real completion history retroactively).
+- **Calculation** (`_recurIntervalDays`/`_recurOverdueDays` in app.js): expected interval
+  in days from `recurrenceIntervalN`/`recurrenceIntervalUnit` (`weeks` ×7, `months` ×30 —
+  an approximation used **only** for this badge threshold; actual next-occurrence
+  scheduling stays calendar-accurate via `_nextRollingDate`, unchanged). `overdueDays =
+  (today − recurrenceLastCompletedAt in days) − intervalDays`. Badge only renders when
+  `overdueDays > 0` and `recurrenceLastCompletedAt` isn't null — otherwise the card looks
+  exactly as it did before this feature.
+- **Two tiers**: `.recur-overdue-badge` (1–6 days over, `--ir-coral`) and
+  `.recur-overdue-badge.tier-high` (7+ days over — bolder, larger, `--red`). Follows the
+  same escalation pattern as `.age-counter.stale`/`.age-counter.old` and the
+  `.blocked-badge` pill shape, in `.card-top-right` next to the title (same slot the
+  regular task card uses for its blocked badge).
+
+## Alternating pairs (rolling only)
+Later same session. Some rolling cadences aren't "the same task every time" — e.g. a
+fountain that alternates between "clean the pump" and "clean the basin" on one shared
+interval. Modeled as an **optional second template stored alongside the primary**, not as
+two independent tasks, because the whole point is that completion is turn-based on one
+shared cadence: only one side is ever "live" (`status:'recurring'`) at a time, and the
+next occurrence's *content* is whichever side didn't just run — there's no separate due
+date per side.
+
+- **Schema**: `recurrenceAlternate` (`{title, notes, tags}` jsonb, nullable, rolling-only
+  — see table above). Anchored recurrence is untouched; the field is explicitly nulled
+  when saving an anchored task from the Recurring modal, since it isn't meaningful there.
+- **Modal UX**: an "Alternate with a second task" checkbox under the shared interval
+  fields (`#rm-alt-enabled` → `_recurModalToggleAlt`) reveals a second title/tags/notes
+  sub-form (`#rm-alt-title`/`#rm-alt-tags-row`/`#rm-alt-notes`). The alternate side is
+  **always a jsonb snapshot, never a live task** — even when editing an existing recurring
+  task (whose *primary* tags persist immediately via `_toggleItemTag`), the alternate tag
+  pills always use the create-modal's toggle-in-place style (`data-tag` + `.active`,
+  collected by `_saveRecurModal` at save time via `_addNewTag('rm-alt-tag-input',
+  'rm-alt-tags-row')` — the two-arg form added to the existing `_addNewTag`, which
+  previously only ever targeted the New Item modal's row). Saving edits **either side
+  independently**: the primary title/tags/notes fields save onto the live task exactly as
+  before; the alternate sub-form only overwrites the stored `recurrenceAlternate` jsonb.
+- **Swap-on-completion** (`_maybeSpawnRecurrence`'s rolling branch): if the just-completed
+  task has `recurrenceAlternate` set, the spawned occurrence takes the alternate's
+  title/tags/notes, and *its* `recurrenceAlternate` becomes a fresh snapshot of whatever
+  the just-completed task's own title/tags/notes were — i.e. the two sides swap every
+  completion, ping-ponging indefinitely. `recurrenceSeriesId` carries forward unchanged
+  (both sides read as one continuous series in "Past occurrences" history). No alternate
+  set → unchanged existing behavior, same content repeats. `scheduledDate` is completion
+  date + the one shared interval either direction, exactly like a non-alternating rolling
+  task — there's no separate per-side schedule to track.
+- **Card**: when `recurrenceAlternate` is set, `_renderRecurringCard` shows a small
+  `.recur-alt-next` line ("next: {alternate title}") under `.recur-schedule`, so the
+  pairing is visible before the current occurrence is completed.
 
 ## What was removed from the original 2026-07-01 design
 - The `'recurring'` **holding-status semantics** — a recurring task no longer changes

@@ -257,7 +257,20 @@ const App = (() => {
     };
     if (item.recurrence === 'rolling') {
       const nextDate = _nextRollingDate(item, completionDateStr);
-      Data.upsertTask({ ...baseNew, dueDate: '', scheduledDate: nextDate });
+      // Alternating pair: the next occurrence swaps sides — it takes the stored
+      // alternate's title/tags/notes, and its own alternate becomes a snapshot of
+      // whichever content just completed. No alternate: unchanged, same content repeats.
+      // Either way scheduledDate is completion date + the shared interval — there's no
+      // separate per-side schedule, only whichever side is currently live.
+      const alt = item.recurrenceAlternate;
+      const swapFields = alt
+        ? { title: alt.title, notes: alt.notes || '', tags: [...(alt.tags || [])],
+            recurrenceAlternate: { title: item.title, notes: item.notes || '', tags: [...(item.tags || [])] } }
+        : { recurrenceAlternate: null };
+      // recurrenceLastCompletedAt is "when this cadence last had any completion" —
+      // set on every spawn regardless of whether the series uses an alternating pair,
+      // not a per-side field. Drives the overdue-escalation badge (see _recurOverdueDays).
+      Data.upsertTask({ ...baseNew, ...swapFields, dueDate: '', scheduledDate: nextDate, recurrenceLastCompletedAt: completionDateStr });
       return;
     }
     if (item.recurrence === 'anchored') {
@@ -782,6 +795,28 @@ const App = (() => {
     </div>`;
   }
 
+  // Days from a rolling task's recurrenceIntervalN/Unit, as a rough badge threshold
+  // (weeks ×7, months ×30 approximation) — NOT used for actual scheduling, which stays
+  // calendar-accurate via _nextRollingDate.
+  function _recurIntervalDays(item) {
+    const n = item.recurrenceIntervalN || 1;
+    const unit = item.recurrenceIntervalUnit || 'days';
+    if (unit === 'weeks') return n * 7;
+    if (unit === 'months') return n * 30;
+    return n;
+  }
+
+  // Overdue-escalation badge, rolling tasks only: how many days past the expected
+  // cadence since the cadence's last completion. Returns null (no badge) when the
+  // task isn't rolling, hasn't completed a prior occurrence yet (recurrenceLastCompletedAt
+  // null — existing pre-migration tasks included; null means "unknown," not "today"),
+  // or is still on-pace.
+  function _recurOverdueDays(item) {
+    if (item.recurrence !== 'rolling' || !item.recurrenceLastCompletedAt) return null;
+    const overdue = _daysDiff(item.recurrenceLastCompletedAt) - _recurIntervalDays(item);
+    return overdue > 0 ? overdue : null;
+  }
+
   // ── Recurring card (Recurring column) ──
   // Never promoted by status — a recurring task lives here permanently between
   // occurrences. Styling (not status) reflects urgency: muted → due-soon (amber,
@@ -813,6 +848,15 @@ const App = (() => {
       }
     }
 
+    const overdueDays = _recurOverdueDays(item);
+    const overdueBadgeHtml = overdueDays != null
+      ? `<span class="recur-overdue-badge${overdueDays >= 7 ? ' tier-high' : ''}">+${overdueDays}d</span>` : '';
+
+    // Alternating pair — surface what's next in the rotation before the current
+    // occurrence is even completed.
+    const altHtml = item.recurrence === 'rolling' && item.recurrenceAlternate
+      ? `<div class="recur-alt-next">next: ${esc(item.recurrenceAlternate.title)}</div>` : '';
+
     return `<div class="card recur-card ${tagClass} ${stateClass}" data-id="${item.id}"
       onclick="App.openRecurringModal('${item.id}')">
       <div class="card-top">
@@ -821,8 +865,10 @@ const App = (() => {
           <div style="flex:1;min-width:0">
             <div class="card-title">${esc(item.title)}</div>
             ${scheduleHtml}
+            ${altHtml}
           </div>
         </div>
+        <div class="card-top-right">${overdueBadgeHtml}</div>
       </div>
       <div class="card-meta">${tagPills}</div>
       <button class="recur-start-btn" title="Start focus"
@@ -2719,18 +2765,22 @@ const App = (() => {
     if (input) input.value = '';
   }
 
-  // Adds a new custom tag from the new-item modal (no existing item — just saves to
-  // localStorage and appends an active pill to the row so _saveNew() picks it up).
-  function _addNewTag() {
-    const input = document.getElementById('new-tag-input');
+  // Adds a new custom tag to a not-yet-persisted tags row (no live item to toggle a tag
+  // on immediately) — just saves the tag globally and appends an active pill so the
+  // enclosing save function picks it up via `.modal-tag-pill.active` at save time.
+  // Used by the New Item modal (defaults) and the Recurring modal's alternate sub-form
+  // (explicit ids, since that row's content is a jsonb snapshot, never a live item).
+  function _addNewTag(inputId, rowId) {
+    const input = document.getElementById(inputId || 'new-tag-input');
     const tag = input?.value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
     if (!tag) return;
     const allTags = _loadTags();
     if (!allTags.includes(tag)) { Data.upsertTag(tag, null); }
-    const row = document.getElementById('new-modal-tags-row');
+    const row = document.getElementById(rowId || 'new-modal-tags-row');
     if (row && !row.querySelector(`[data-tag="${tag}"]`)) {
       const freshTags = _loadTags();
       const btn = document.createElement('button');
+      btn.type = 'button';
       btn.className = `modal-tag-pill ${_tagClasses(tag, freshTags)} active`;
       btn.dataset.tag = tag;
       btn.onclick = function() { this.classList.toggle('active'); };
@@ -3457,6 +3507,19 @@ const App = (() => {
     const monthDay = item?.recurrenceMonthDay || '';
     const ruleType = days.length ? 'weekly' : monthDay ? 'monthly' : '';
 
+    // Alternating pair (rolling only) — the alternate side is always a jsonb snapshot,
+    // never a live task, so its tag pills always use the "new" toggle-in-place style
+    // (collected via `.active` at save time) regardless of whether the primary side
+    // is in create or edit mode.
+    const alt = item?.recurrenceAlternate || null;
+    const altEnabled = !!alt;
+    const altTags = alt?.tags || [];
+    const altTagPillsHtml = allTags.map(t =>
+      `<button type="button" class="modal-tag-pill ${_tagClasses(t, allTags)}${altTags.includes(t) ? ' active' : ''}" data-tag="${t}"
+        onclick="this.classList.toggle('active')"
+        oncontextmenu="event.preventDefault();App._showTagMenu('${t}',this)">${t.toUpperCase()}</button>`
+    ).join('');
+
     _showModal(`
       <div class="modal-title">${item ? 'Edit' : 'New'} Recurring Task</div>
       <div class="modal-section">
@@ -3486,6 +3549,24 @@ const App = (() => {
               <option value="months"${unit === 'months' ? ' selected' : ''}>months</option>
             </select>
             <span class="recur-inline-label">after completing</span>
+          </div>
+          <label class="rm-alt-toggle">
+            <input type="checkbox" id="rm-alt-enabled" ${altEnabled ? 'checked' : ''} onchange="App._recurModalToggleAlt(this)" />
+            Alternate with a second task
+          </label>
+          <div id="rm-alt-block" style="display:${altEnabled ? 'block' : 'none'}">
+            <div class="fg"><label class="modal-label">Alternate title</label>
+              <input type="text" class="modal-input" id="rm-alt-title" value="${esc(alt?.title || '')}" placeholder="Name..." /></div>
+            <div class="fg"><label class="modal-label">Alternate tags</label>
+              <div class="modal-tags-row" id="rm-alt-tags-row">${altTagPillsHtml}</div>
+              <div class="modal-tag-add" style="margin-top:7px">
+                <input type="text" id="rm-alt-tag-input" placeholder="New tag..."
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();App._addNewTag('rm-alt-tag-input','rm-alt-tags-row');}" />
+                <button onclick="App._addNewTag('rm-alt-tag-input','rm-alt-tags-row')">+ add</button>
+              </div>
+            </div>
+            <div class="fg"><label class="modal-label">Alternate notes</label>
+              <textarea class="modal-input" id="rm-alt-notes">${esc(alt?.notes || '')}</textarea></div>
           </div>
         </div>
         <div id="rm-anchored" style="display:${_recurModalType === 'anchored' ? 'block' : 'none'}">
@@ -3535,6 +3616,11 @@ const App = (() => {
     document.getElementById('rm-anchored').style.display = t === 'anchored' ? 'block' : 'none';
   }
 
+  function _recurModalToggleAlt(cb) {
+    const block = document.getElementById('rm-alt-block');
+    if (block) block.style.display = cb.checked ? 'block' : 'none';
+  }
+
   function _recurModalToggleRule() {
     const block = document.getElementById('rm-rule-block');
     const caret = document.getElementById('rm-rule-caret');
@@ -3572,14 +3658,31 @@ const App = (() => {
         recurrence: 'anchored', dueDate: due, scheduledDate: '', recurrenceLeadDays: lead,
         recurrenceWeekdays: ruleDays, recurrenceMonthDay: ruleMonthDay,
         recurrenceIntervalN: null, recurrenceIntervalUnit: null,
+        recurrenceAlternate: null, // alternating pairs are rolling-only
       };
     } else {
       const n = Math.max(1, +(document.getElementById('rm-n')?.value || 1));
       const unit = document.getElementById('rm-unit')?.value || 'days';
+      // Alternate side is a jsonb snapshot, not a live task — saving updates only this
+      // stored side; the primary title/tags/notes above are read and applied separately
+      // (as the live task's own fields), untouched by whatever's in the alternate form.
+      const altEnabled = document.getElementById('rm-alt-enabled')?.checked;
+      let recurrenceAlternate = null;
+      if (altEnabled) {
+        const altTitle = document.getElementById('rm-alt-title')?.value.trim();
+        if (altTitle) {
+          recurrenceAlternate = {
+            title: altTitle,
+            notes: document.getElementById('rm-alt-notes')?.value || '',
+            tags: [...document.querySelectorAll('#rm-alt-tags-row .modal-tag-pill.active')].map(b => b.dataset.tag).filter(Boolean),
+          };
+        }
+      }
       fields = {
         recurrence: 'rolling', dueDate: '', recurrenceLeadDays: null,
         recurrenceIntervalN: n, recurrenceIntervalUnit: unit,
         recurrenceWeekdays: null, recurrenceMonthDay: null,
+        recurrenceAlternate,
       };
     }
 
@@ -3968,7 +4071,7 @@ const App = (() => {
     set _initialized(v) { _initialized = v; },
     init, switchView, toggleArchive, onSearch,
     openDetail, openNewModal, toggleFilter, clearFilters,
-    openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange,
+    openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange, _recurModalToggleAlt,
     _closeRecurModal, _saveRecurModal, _recurConfirmSave, _recurConfirmDismiss,
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem, confirmClearArchive,

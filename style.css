@@ -1428,6 +1428,14 @@ select.modal-input { cursor: pointer; }
 }
 .rm-rule-toggle:hover { color: var(--ink); }
 
+/* Alternating-pair toggle (Recurring modal, Rolling only) */
+.rm-alt-toggle {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em;
+  color: var(--muted); user-select: none; cursor: pointer;
+  margin: 10px 0 8px; display: flex; align-items: center; gap: 6px;
+}
+.rm-alt-toggle input { cursor: pointer; }
+
 /* ════════════════════════════════════════
    RECURRING COLUMN
 ════════════════════════════════════════ */
@@ -1440,6 +1448,26 @@ select.modal-input { cursor: pointer; }
 .recur-card.recur-due-soon .task-orb { background: var(--amber); }
 .recur-card.recur-overdue .recur-schedule { color: var(--ir-coral, #C9556B); }
 .recur-card.recur-overdue .task-orb { background: var(--ir-coral, #C9556B); }
+
+/* Alternating pair — what's next in the rotation, secondary to .recur-schedule */
+.recur-alt-next {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  margin-top: 1px; letter-spacing: 0.02em; font-style: italic;
+}
+
+/* Rolling-only overdue-escalation badge — "+Nd" past the expected cadence since the
+   last completion. Mirrors the .blocked-badge pill + .age-counter.old escalation
+   convention: a lighter tier for 1–6 days over, a bolder/darker/larger tier for 7+. */
+.recur-overdue-badge {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+  letter-spacing: 0.2px;
+  background: var(--red-pale); color: var(--ir-coral);
+  padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+}
+.recur-overdue-badge.tier-high {
+  font-size: 11px; font-weight: 700;
+  background: var(--red-pale); color: var(--red);
+}
 
 /* Per-card start control — click starts this task directly; also a drag-swap
    drop target (dropping a dragged card here starts the dragged card instead),

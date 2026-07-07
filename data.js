@@ -99,6 +99,8 @@ const Data = (() => {
       recurrence_interval_n:   (t.recurrenceIntervalN ?? null),
       recurrence_interval_unit: t.recurrenceIntervalUnit || null,
       recurrence_lead_days:    (t.recurrenceLeadDays ?? null),
+      recurrence_last_completed_at: t.recurrenceLastCompletedAt || null,
+      recurrence_alternate:    t.recurrenceAlternate    || null,
     };
   }
 
@@ -129,6 +131,8 @@ const Data = (() => {
       recurrenceIntervalN:   (r.recurrence_interval_n ?? null),
       recurrenceIntervalUnit: r.recurrence_interval_unit || null,
       recurrenceLeadDays:    (r.recurrence_lead_days ?? null),
+      recurrenceLastCompletedAt: r.recurrence_last_completed_at || null,
+      recurrenceAlternate:   r.recurrence_alternate      || null,
     };
   }
 
