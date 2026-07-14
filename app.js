@@ -3302,11 +3302,27 @@ const App = (() => {
       <div class="ir-callout${groupIds ? ' ir-callout-group' : ''}" style="${calloutLeftCss};top:${calloutTopPct}%">
         ${calloutBodyHtml}
         ${upNextHtml}
+      </div>
+      <div class="ir-nav">
+        <button class="ir-nav-btn" title="Previous task" onclick="App._reviewScroll(-1)" ${_reviewSeq.indexOf(activeId) <= 0 ? 'disabled' : ''}>↑</button>
+        <button class="ir-nav-btn" title="Next task" onclick="App._reviewScroll(1)" ${_reviewSeq.indexOf(activeId) >= total - 1 ? 'disabled' : ''}>↓</button>
       </div>`;
 
     if (!el._wheelBound) {
       el._wheelBound = true;
-      el.addEventListener('wheel', e => { e.preventDefault(); _reviewScroll(e.deltaY); }, { passive: false });
+      // Wheeling over the callout scrolls its own (possibly long) content instead of
+      // navigating the constellation — only the canvas background drives task-to-task nav.
+      el.addEventListener('wheel', e => {
+        if (e.target.closest('.ir-callout')) return;
+        e.preventDefault();
+        _reviewScroll(e.deltaY);
+      }, { passive: false });
+      el.addEventListener('keydown', e => {
+        if (e.key === 'ArrowUp')   { e.preventDefault(); _reviewScroll(-1); }
+        if (e.key === 'ArrowDown') { e.preventDefault(); _reviewScroll(1); }
+      });
+      el.tabIndex = -1;
+      el.focus();
     }
   }
 

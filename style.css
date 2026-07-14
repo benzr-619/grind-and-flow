@@ -506,8 +506,25 @@ body.pip-orb .pip-controls .oc-btn:hover {
   position: absolute; z-index: 10; width: 340px;
   background: var(--paper); border: 1.4px solid var(--ink);
   padding: 18px 20px 16px;
+  max-height: calc(100vh - 180px); overflow-y: auto;
 }
 .ir-callout.ir-callout-group { width: 400px; }
+
+/* Constellation nav arrows — explicit up/down task navigation, distinct from
+   the callout's own internal scroll (see the Nav section of inbox-review.md) */
+.ir-nav {
+  position: absolute; right: 30px; bottom: 28px; z-index: 8;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ir-nav-btn {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  background: var(--paper); border: 1.4px solid var(--ink); color: var(--ink);
+  border-radius: var(--r-md); cursor: pointer; font-size: 14px; line-height: 1;
+  transition: background 0.13s, transform 80ms;
+}
+.ir-nav-btn:hover { background: var(--card-warm); }
+.ir-nav-btn:active { transform: scale(0.94); }
+.ir-nav-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
 
 /* Project-cluster review card */
 .ir-title-group { font-size: 18px; margin-bottom: 10px; }
