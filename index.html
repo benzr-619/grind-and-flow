@@ -62,25 +62,27 @@
     <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
   </div>
 
-  <!-- ── Mobile capture bar — sticky below topbar, hidden on desktop ── -->
-  <div class="mobile-capture-bar" id="mobile-capture-bar">
-    <form class="mobile-capture-form" onsubmit="App.addMobileCapture(event)">
-      <input type="text" id="mobile-capture-input" class="mobile-capture-input"
-             placeholder="Capture a task…" autocomplete="off" />
-      <button type="submit" class="mobile-capture-submit">Add</button>
-    </form>
+  <!-- ── Mobile app shell — separate render path from the desktop board, hidden on desktop ── -->
+  <div id="mobile-app" class="m-app">
+    <header class="m-header">
+      <div class="m-header-title" id="m-header-title">Now</div>
+      <button class="m-header-signout" onclick="Auth.handleLogout()" title="Sign out">⌄</button>
+    </header>
+    <div class="m-content" id="m-content"><!-- rendered by JS --></div>
+    <button class="m-fab" id="m-fab" onclick="App._mOpenCapture()" title="Capture">＋</button>
+    <nav class="m-tabbar">
+      <button class="m-tab active" id="m-tab-now" onclick="App._mSwitchTab('now')">
+        <span class="m-tab-icon">●</span><span class="m-tab-label">Now</span>
+      </button>
+      <button class="m-tab" id="m-tab-projects" onclick="App._mSwitchTab('projects')">
+        <span class="m-tab-icon">◇</span><span class="m-tab-label">Projects</span>
+      </button>
+      <button class="m-tab" id="m-tab-inbox" onclick="App._mSwitchTab('inbox')">
+        <span class="m-tab-icon">✉</span><span class="m-tab-label">Inbox</span>
+        <span class="m-tab-badge" id="m-inbox-badge" style="display:none"></span>
+      </button>
+    </nav>
   </div>
-
-  <!-- ── Mobile segmented toggle — hidden on desktop ── -->
-  <div class="mobile-seg-bar" id="mobile-seg-bar">
-    <div class="mobile-seg-ctrl">
-      <button class="mobile-seg-btn active" id="seg-inbox" onclick="App.switchMobileTab('inbox')">Inbox</button>
-      <button class="mobile-seg-btn"        id="seg-today" onclick="App.switchMobileTab('today')">Today</button>
-    </div>
-  </div>
-
-  <!-- ── Mobile list panel — rendered by JS, hidden on desktop ── -->
-  <div id="mobile-inbox" class="mobile-inbox"></div>
 
   <!-- ── Focus zone: full-screen breathing-orb overlay ── -->
   <div id="focus-zone" class="focus-zone">

@@ -76,8 +76,13 @@ const App = (() => {
   let dragId = null, dragEl = null, placeholder = null;
   let _pendingFade = false;
 
-  // Mobile tab state — 'inbox' or 'today'; not persisted
-  let mobileTab = 'inbox';
+  // Mobile app state — not persisted, defaults on every load
+  let _mTab = 'now';           // 'now' | 'projects' | 'inbox'
+  let _mProjOpen = null;       // project id when the project detail screen is pushed
+  let _mUndo = null;           // { toastEl, timer } — the currently-showing undo toast
+  let _mSwipeState = null;     // in-flight touch gesture on a .m-row
+  let _mDoneExpanded = false;  // Now tab "N done today" collapse state
+  let _mProjDoneExpanded = false; // project detail "Done" group collapse state
 
   // Week (Calendar) view — offset in weeks from the current Mon-start week
   let _weekOffset = 0;
@@ -286,6 +291,25 @@ const App = (() => {
   function _openRecurConfirm(baseNew, suggestedDate, suggestedLead) {
     _recurConfirmState = { baseNew, suggestedDate, suggestedLead: suggestedLead || 0 };
     const root = document.getElementById('modal-root');
+    if (_isMobile()) {
+      root.innerHTML = `
+        <div class="bs-overlay" onclick="App._recurConfirmDismiss()">
+          <div class="bottom-sheet m-detail-sheet" onclick="event.stopPropagation()">
+            <div class="bs-handle-row"><div class="bs-handle"></div></div>
+            <div class="bs-title">Next occurrence</div>
+            <div class="bs-section m-detail-recur-note">"${esc(baseNew.title)}" — pick the next due date, or keep the suggestion.</div>
+            <div class="bs-section"><label class="bs-label">Next due date</label>
+              <input type="date" class="bs-date-input" id="rc-date" value="${suggestedDate}" /></div>
+            <div class="bs-section"><label class="bs-label">Lead time (days)</label>
+              <input type="number" class="bs-date-input" id="rc-lead" min="0" value="${suggestedLead || 0}" /></div>
+            <div class="bs-footer m-sheet-quick">
+              <button class="m-sheet-qbtn" onclick="App._recurConfirmDismiss()">Use suggestion</button>
+              <button class="m-sheet-qbtn m-qa-complete" onclick="App._recurConfirmSave()">Confirm</button>
+            </div>
+          </div>
+        </div>`;
+      return;
+    }
     root.innerHTML = `
       <div class="rc-overlay" onclick="App._recurConfirmDismiss()">
         <div class="rc-modal" onclick="event.stopPropagation()">
@@ -361,6 +385,7 @@ const App = (() => {
     const hashId = location.hash.slice(1);
     if (hashId && Data.findItem(hashId)) openDetail(hashId);
 
+    window.addEventListener('resize', _mOnResize);
     window.addEventListener('beforeunload', () => Data.saveNow());
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -439,6 +464,7 @@ const App = (() => {
 
   // ── Render ──
   function renderBoard() {
+    if (_isMobile()) { _renderMobileApp(); return; }
     const board = document.getElementById('board');
     if (!board) return;
 
@@ -609,100 +635,593 @@ const App = (() => {
       void board.offsetWidth; // force reflow to restart animation
       board.classList.add('board-fade-in');
     }
-
-    _renderMobileInbox();
   }
 
-  // ── Mobile panel (Inbox / Today) ──
-  function _renderMobileInbox() {
-    const panel = document.getElementById('mobile-inbox');
-    if (!panel) return;
-    mobileTab === 'today' ? _renderMobileToday(panel) : _renderMobileInboxContent(panel);
+  // ═══════════════════════════════════════════════════════════════════
+  // ── Mobile app — separate render path (see MOBILE-BRIEF.md) ──
+  // A companion surface, not a shrunken desktop: bottom tab bar (Now /
+  // Projects / Inbox), swipe-to-act rows, a capture FAB. Renders into
+  // #mobile-app, entirely independent of the desktop #board markup.
+  // ═══════════════════════════════════════════════════════════════════
+  function _isMobile() {
+    return window.matchMedia('(max-width: 640px)').matches;
   }
 
-  function _renderMobileInboxContent(panel) {
-    const _allTags = _loadTags();
-    const backlogItems = (Data.get().tasks || [])
-      .filter(t => t.status === 'backlog')
-      .sort((a, b) => {
-        const ad = a.backlogEnteredAt || a.dateAdded || '';
-        const bd = b.backlogEnteredAt || b.dateAdded || '';
-        return ad < bd ? -1 : ad > bd ? 1 : 0;
-      });
+  function _mSwitchTab(tab) {
+    _mTab = tab;
+    _mProjOpen = null;
+    _renderMobileApp();
+  }
 
-    const rows = backlogItems.length === 0
-      ? '<div class="mobile-inbox-empty">Nothing in the inbox — capture something above.</div>'
-      : backlogItems.map(item => {
-          const tags = item.tags || [];
-          const firstTag = tags[0] || '';
-          const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
-          const tagPills = tags.map(t =>
-            `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
-          ).join('');
-          let ageHtml = '';
-          if (item.backlogEnteredAt) {
-            const days = _daysDiff(item.backlogEnteredAt);
-            const cls  = days >= 14 ? ' old' : days >= 7 ? ' stale' : '';
-            ageHtml = `<span class="age-counter${cls}">${_ageLabel(item.backlogEnteredAt)}</span>`;
-          }
-          return `<div class="mobile-inbox-row ${tagClass}" onclick="App._openInboxSheet('${item.id}')">
-            <div class="mobile-inbox-title">${esc(item.title)}</div>
-            <div class="mobile-inbox-meta">${tagPills}${ageHtml}</div>
-          </div>`;
-        }).join('');
+  function _mOpenProjectDetail(id) { _mProjOpen = id; _mProjDoneExpanded = false; _renderMobileApp(); }
+  function _mCloseProject() { _mProjOpen = null; _renderMobileApp(); }
 
-    panel.innerHTML = `
-      <div class="mobile-inbox-head">
-        Inbox <span class="mobile-inbox-count">${backlogItems.length}</span>
+  function _renderMobileApp() {
+    const content = document.getElementById('m-content');
+    if (!content) return;
+    document.querySelectorAll('.m-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('m-tab-' + _mTab)?.classList.add('active');
+    const badge = document.getElementById('m-inbox-badge');
+    if (badge) {
+      const n = (Data.get().tasks || []).filter(t => t.status === 'backlog').length;
+      badge.style.display = n ? 'inline-flex' : 'none';
+      badge.textContent = n;
+    }
+    const titleEl = document.getElementById('m-header-title');
+    if (_mProjOpen) {
+      const proj = Data.findProject(_mProjOpen);
+      if (!proj) { _mProjOpen = null; }
+      else {
+        if (titleEl) titleEl.textContent = proj.title;
+        content.innerHTML = _renderMobileProjectDetail(_mProjOpen);
+        return;
+      }
+    }
+    if (titleEl) titleEl.textContent = { now: 'Now', projects: 'Projects', inbox: 'Inbox' }[_mTab];
+    if (_mTab === 'projects') content.innerHTML = _renderMobileProjectsList();
+    else if (_mTab === 'inbox') content.innerHTML = _renderMobileInboxTab();
+    else content.innerHTML = _renderMobileNow();
+  }
+
+  function _mPrefersReducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  // ── Row component — shared by Now / Inbox / project-detail lists ──
+  function _mTagDotClass(item) {
+    const t = (item.tags || [])[0];
+    return t ? _tagClasses(t, _loadTags()) : '';
+  }
+
+  function _mRowMeta(item, context) {
+    const parts = [];
+    if (item.parentProject) parts.push(esc(Data.findProject(item.parentProject)?.title || ''));
+    if (context === 'due') {
+      const d = _recurDueState(item);
+      if (d.dateStr) parts.push(d.daysUntil < 0 ? `${-d.daysUntil}d overdue` : d.daysUntil === 0 ? 'due today' : `in ${d.daysUntil}d`);
+    } else if (context === 'inbox') {
+      parts.push(_ageLabel(item.backlogEnteredAt));
+      if (item.laterCount) parts.push(`bumped ${item.laterCount}×`);
+    } else {
+      if (item.scheduledDate) {
+        const d = new Date(item.scheduledDate + 'T00:00:00');
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const label = d.getTime() === today.getTime() ? 'today' : _fmtDate(item.scheduledDate);
+        parts.push(item.scheduledTime ? `${label} ${item.scheduledTime}` : label);
+      }
+      if (item.dueDate) parts.push(`due ${_fmtDate(item.dueDate)}`);
+    }
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  // context: 'now' | 'inbox' | 'proj' — governs swipe actions and meta line.
+  function _mRowHtml(item, context) {
+    const isRecur = item.status === 'recurring';
+    const metaCtx = (context === 'now' && isRecur) ? 'due' : context;
+    const meta = _mRowMeta(item, metaCtx);
+    const recurIcon = isRecur ? '<span class="m-recur-icon">⟳</span>' : '';
+    let dueClass = '';
+    if (isRecur) {
+      const d = _recurDueState(item);
+      dueClass = d.state === 'overdue' ? ' m-due-overdue' : d.state === 'due-soon' ? ' m-due-soon' : '';
+    }
+    // Due-section recurring cards are tap-only (checked off from the detail sheet or
+    // the card's own action, not a swipe) — everything else swipes.
+    const swipeable = !(isRecur && context === 'now');
+    const leftLabel = context === 'inbox' ? '→ Later' : 'Not today';
+    const bodyAttrs = swipeable
+      ? `ontouchstart="App._mSwipeStart(event,'${item.id}','${context}')" ontouchmove="App._mSwipeMove(event)" ontouchend="App._mSwipeEnd(event,'${item.id}','${context}')"`
+      : `onclick="App._mOpenDetail('${item.id}')"`;
+    return `<div class="m-row-wrap" data-id="${item.id}">
+      ${swipeable ? `<div class="m-row-action m-row-action-right">✓</div><div class="m-row-action m-row-action-left">${leftLabel}</div>` : ''}
+      <div class="m-row${dueClass}" ${bodyAttrs}>
+        <span class="m-orb-dot ${_mTagDotClass(item)}"></span>
+        <div class="m-row-body">
+          <div class="m-title">${recurIcon}${esc(item.title)}</div>
+          ${meta ? `<div class="m-meta">${meta}</div>` : ''}
+        </div>
       </div>
-      <div class="mobile-inbox-list">${rows}</div>`;
+    </div>`;
   }
 
-  function _renderMobileToday(panel) {
+  function _mSection(label, rowsHtml) {
+    return `<div class="m-section"><div class="m-section-head">${label}</div><div class="m-rows">${rowsHtml}</div></div>`;
+  }
+
+  // ── Swipe gesture (touch-only; shared by every swipeable row) ──
+  const _M_SWIPE_COMMIT = 0.35;   // fraction of row width to commit an action
+  const _M_LONGPRESS_MS = 550;    // Inbox-only: long-press → "Never" (delete)
+
+  function _mSwipeStart(e, id, context) {
+    const t = e.touches[0];
+    const wrap = e.currentTarget.closest('.m-row-wrap');
+    _mSwipeState = { id, context, startX: t.clientX, startY: t.clientY, dx: 0, wrap, longPressFired: false, longPressTimer: null };
+    if (context === 'inbox') {
+      _mSwipeState.longPressTimer = setTimeout(() => {
+        if (_mSwipeState && Math.abs(_mSwipeState.dx) < 8) {
+          _mSwipeState.longPressFired = true;
+          if (navigator.vibrate) navigator.vibrate(12);
+          _mConfirmNever(id);
+        }
+      }, _M_LONGPRESS_MS);
+    }
+  }
+
+  function _mSwipeMove(e) {
+    if (!_mSwipeState) return;
+    const t = e.touches[0];
+    const dx = t.clientX - _mSwipeState.startX;
+    const dy = t.clientY - _mSwipeState.startY;
+    if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    if (Math.abs(dy) > Math.abs(dx)) { _mSwipeCancel(); return; } // vertical → let the page scroll
+    clearTimeout(_mSwipeState.longPressTimer);
+    e.preventDefault();
+    _mSwipeState.dx = dx;
+    const row = _mSwipeState.wrap?.querySelector('.m-row');
+    if (row) row.style.transform = `translateX(${dx}px)`;
+    _mSwipeState.wrap?.classList.toggle('swipe-right-active', dx > 20);
+    _mSwipeState.wrap?.classList.toggle('swipe-left-active', dx < -20);
+  }
+
+  function _mSwipeCancel() {
+    if (!_mSwipeState) return;
+    clearTimeout(_mSwipeState.longPressTimer);
+    const row = _mSwipeState.wrap?.querySelector('.m-row');
+    if (row) row.style.transform = '';
+    _mSwipeState.wrap?.classList.remove('swipe-right-active', 'swipe-left-active');
+    _mSwipeState = null;
+  }
+
+  function _mSwipeEnd(e, id, context) {
+    if (!_mSwipeState) return;
+    e.preventDefault();
+    clearTimeout(_mSwipeState.longPressTimer);
+    const { dx, wrap, longPressFired } = _mSwipeState;
+    const row = wrap?.querySelector('.m-row');
+    const width = wrap?.offsetWidth || 300;
+    _mSwipeState = null;
+    if (longPressFired) return;
+    if (Math.abs(dx) < 8) { _mOpenDetail(id); return; } // negligible movement = tap
+    const committed = Math.abs(dx) > width * _M_SWIPE_COMMIT;
+    if (!committed) {
+      if (row) { row.style.transition = _mPrefersReducedMotion() ? 'none' : 'transform 140ms ease'; row.style.transform = ''; }
+      wrap?.classList.remove('swipe-right-active', 'swipe-left-active');
+      return;
+    }
+    if (row) {
+      row.style.transition = _mPrefersReducedMotion() ? 'none' : 'transform 160ms ease';
+      row.style.transform = `translateX(${dx > 0 ? width : -width}px)`;
+    }
+    setTimeout(() => _mCommitSwipe(id, context, dx > 0 ? 'right' : 'left'), _mPrefersReducedMotion() ? 0 : 140);
+  }
+
+  function _mCommitSwipe(id, context, dir) {
+    if (context === 'inbox') { dir === 'right' ? _mInboxThisWeek(id) : _mInboxLater(id); }
+    else { dir === 'right' ? _mNowComplete(id) : _mNowNotToday(id); } // 'now' and 'proj' share semantics
+  }
+
+  // ── Undo toast ──
+  function _mSnapshot(item, fields) {
+    const snap = {}; fields.forEach(f => snap[f] = item[f]); return snap;
+  }
+  function _mRestore(id, snap) {
+    const item = Data.findItem(id); if (!item) return;
+    Object.assign(item, snap);
+    Data.upsertTask(item);
+    _renderMobileApp();
+  }
+  function _mShowUndo(label, id, snap) {
+    if (_mUndo) { clearTimeout(_mUndo.timer); _mUndo.toastEl.remove(); _mUndo = null; }
+    const toast = document.createElement('div');
+    toast.className = 'm-toast';
+    toast.innerHTML = `<span>${esc(label)}</span><button class="m-toast-undo">Undo</button>`;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('show'));
+    const remove = () => {
+      toast.classList.remove('show');
+      setTimeout(() => toast.remove(), _mPrefersReducedMotion() ? 0 : 180);
+      if (_mUndo && _mUndo.toastEl === toast) _mUndo = null;
+    };
+    toast.querySelector('.m-toast-undo').onclick = () => { _mRestore(id, snap); remove(); };
+    _mUndo = { toastEl: toast, timer: setTimeout(remove, 4000) };
+  }
+
+  // ── Now-tab / project-detail actions ──
+  function _mNowComplete(id) {
+    const item = Data.findItem(id); if (!item) return;
+    if (item.status === 'recurring') { completeRecurringToday(id); return; } // archives immediately, not undoable here
+    const snap = _mSnapshot(item, ['status']);
+    const oldStatus = item.status;
+    item.status = 'done';
+    _saveCompletionDate(id);
+    Data.upsertTask(item);
+    if (oldStatus !== 'done') _maybeSpawnRecurrence(item, _today());
+    _renderMobileApp();
+    _mShowUndo('Completed', id, snap);
+  }
+  function _mNowNotToday(id) {
+    const item = Data.findItem(id); if (!item || item.status === 'recurring') return;
+    const snap = _mSnapshot(item, ['status', 'scheduledDate']);
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    item.status = 'this-week';
+    item.scheduledDate = _ymd(d);
+    Data.upsertTask(item);
+    _renderMobileApp();
+    _mShowUndo('Moved to tomorrow', id, snap);
+  }
+
+  // ── Inbox-tab actions ──
+  function _mInboxThisWeek(id) {
+    const item = Data.findItem(id); if (!item) return;
+    const snap = _mSnapshot(item, ['status']);
+    _moveItem(id, 'this-week');
+    _mShowUndo('Moved to This Week', id, snap);
+  }
+  function _mInboxLater(id) {
+    const item = Data.findItem(id); if (!item) return;
+    const snap = _mSnapshot(item, ['status', 'backlogEnteredAt', 'laterCount']);
+    _sendToLater(id);
+    _mShowUndo('Deferred', id, snap);
+  }
+  function _mConfirmNever(id) {
+    const item = Data.findItem(id); if (!item) return;
+    document.getElementById('modal-root').innerHTML = `
+      <div class="bs-overlay" onclick="App._mCloseSheet()">
+        <div class="bottom-sheet" onclick="event.stopPropagation()">
+          <div class="bs-handle-row"><div class="bs-handle"></div></div>
+          <div class="bs-title">Delete "${esc(item.title)}"?</div>
+          <div class="bs-footer">
+            <div class="bs-delete-confirm">
+              <span class="bs-delete-confirm-msg">This can't be undone.</span>
+              <button class="bs-confirm-no" onclick="App._mCloseSheet()">Cancel</button>
+              <button class="bs-confirm-yes" onclick="App._mDeleteConfirmed('${id}')">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function _mDeleteConfirmed(id) {
+    Data.deleteItem(id);
+    _mCloseSheet();
+    _renderMobileApp();
+  }
+  function _mCloseSheet() { document.getElementById('modal-root').innerHTML = ''; }
+
+  // ── Now tab ──
+  function _renderMobileNow() {
+    const state = Data.get();
     const today = _today();
-    const _allTags = _loadTags();
-    const todayItems = (Data.get().tasks || [])
-      .filter(t => t.scheduledDate === today && t.status !== 'done')
+    const due = _recurDueList();
+    const todayItems = state.tasks
+      .filter(t => t.status === 'next' || (t.status === 'this-week' && t.scheduledDate === today))
       .sort((a, b) => {
-        const at = a.scheduledTime || '99:99';
-        const bt = b.scheduledTime || '99:99';
-        return at < bt ? -1 : at > bt ? 1 : 0;
+        const ao = a.dayOrder ?? Infinity, bo = b.dayOrder ?? Infinity;
+        if (ao !== bo) return ao - bo;
+        const at = a.scheduledTime || '', bt = b.scheduledTime || '';
+        if (at !== bt) return at.localeCompare(bt);
+        return (a.dateAdded || '').localeCompare(b.dateAdded || '');
       });
+    const weekItems = state.tasks
+      .filter(t => t.status === 'this-week' && !_isFutureWeek(t.scheduledDate) && !todayItems.includes(t))
+      .sort((a, b) => {
+        const ao = a.boardOrder ?? Infinity, bo = b.boardOrder ?? Infinity;
+        if (ao !== bo) return ao - bo;
+        const ak = a.scheduledDate ? (a.scheduledDate + (a.scheduledTime || '')) : '9999';
+        const bk = b.scheduledDate ? (b.scheduledDate + (b.scheduledTime || '')) : '9999';
+        return ak.localeCompare(bk);
+      });
+    const dates = _loadCompletionDates();
+    const doneToday = state.tasks.filter(t => t.status === 'done' && dates[t.id] === today);
 
-    const rows = todayItems.length === 0
-      ? '<div class="mobile-inbox-empty">Nothing scheduled for today.</div>'
-      : todayItems.map(item => {
-          const tags = item.tags || [];
-          const firstTag = tags[0] || '';
-          const tagClass = firstTag ? _tagClasses(firstTag, _allTags) : '';
-          const tagPills = tags.map(t =>
-            `<span class="tag-pill ${_tagClasses(t, _allTags)}">${t.toUpperCase()}</span>`
-          ).join('');
-          const timeHtml = item.scheduledTime
-            ? `<span class="mobile-today-time">${esc(item.scheduledTime)}</span>`
-            : '';
-          const statusHtml = item.status !== 'backlog'
-            ? `<span class="mobile-today-status">${esc(item.status)}</span>`
-            : '';
-          return `<div class="mobile-inbox-row ${tagClass}" onclick="App._openInboxSheet('${item.id}')">
-            <div class="mobile-inbox-title">${esc(item.title)}</div>
-            <div class="mobile-inbox-meta">${tagPills}${timeHtml}${statusHtml}</div>
-          </div>`;
-        }).join('');
+    const sections = [];
+    if (due.length) sections.push(_mSection('Due', due.map(d => _mRowHtml(d.item, 'now')).join('')));
+    if (todayItems.length) sections.push(_mSection('Today', todayItems.map(i => _mRowHtml(i, 'now')).join('')));
+    if (weekItems.length) sections.push(_mSection('This week', weekItems.map(i => _mRowHtml(i, 'now')).join('')));
+    if (doneToday.length) sections.push(_mDoneTodaySection(doneToday));
+    if (!sections.length) return `<div class="m-empty">Nothing on your plate. Tap ＋ to capture something.</div>`;
+    return sections.join('');
+  }
 
-    panel.innerHTML = `
-      <div class="mobile-inbox-head">
-        Today <span class="mobile-inbox-count">${todayItems.length}</span>
+  function _mDoneTodaySection(items) {
+    const rows = items.map(i => `<div class="m-row-wrap"><div class="m-row m-row-done">
+      <span class="m-orb-dot done"></span><span class="m-title">${esc(i.title)}</span>
+    </div></div>`).join('');
+    return `<div class="m-section">
+      <button class="m-section-head m-collapse-toggle" onclick="App._mToggleDone()">${items.length} done today ${_mDoneExpanded ? '▾' : '▸'}</button>
+      <div class="m-rows" style="display:${_mDoneExpanded ? 'block' : 'none'}">${rows}</div>
+    </div>`;
+  }
+  function _mToggleDone() { _mDoneExpanded = !_mDoneExpanded; _renderMobileApp(); }
+
+  // ── Inbox tab ──
+  function _renderMobileInboxTab() {
+    const items = (Data.get().tasks || []).filter(t => t.status === 'backlog');
+    if (!items.length) return `<div class="m-empty">Inbox zero. Nothing waiting on you.</div>`;
+    return _mSection('Inbox', _reviewOrder(items).map(i => _mRowHtml(i, 'inbox')).join(''));
+  }
+
+  // ── Projects tab ──
+  function _renderMobileProjectsList() {
+    const projects = (Data.get().projects || []).filter(p => p.status !== 'done');
+    if (!projects.length) return `<div class="m-empty">No projects yet.</div>`;
+    const keys = _projSortedTagKeys(projects);
+    return keys.map(key => {
+      const group = projects
+        .filter(p => ((p.tags || [])[0] || '') === key)
+        .sort((a, b) => PROJ_STATUS_ORDER.indexOf(a.status) - PROJ_STATUS_ORDER.indexOf(b.status));
+      if (!group.length) return '';
+      const rows = group.map(p => {
+        const dim = (p.status === 'on-hold' || p.status === 'someday') ? ' m-proj-dim' : '';
+        return `<div class="m-proj-row${dim}" onclick="App._mOpenProjectDetail('${p.id}')">
+          <span class="m-proj-dot" style="background:${PROJ_STATUS_COLORS[p.status] || '#8A8378'}"></span>
+          <span class="m-proj-title">${esc(p.title)}</span>
+          <span class="m-proj-count">${_projectOpenCount(p.id)} open</span>
+        </div>`;
+      }).join('');
+      return `<div class="m-section"><div class="m-section-head">${key ? esc(key.toUpperCase()) : 'UNTAGGED'}</div><div class="m-rows">${rows}</div></div>`;
+    }).join('');
+  }
+
+  function _renderMobileProjectDetail(projId) {
+    const proj = Data.findProject(projId);
+    const tasks = _projectTasks(projId);
+    const groups = _PSPACE_GROUPS.map(g => {
+      const gt = tasks.filter(t => t.status === g.id);
+      if (!gt.length) return '';
+      if (g.id === 'done') {
+        return `<div class="m-section">
+          <button class="m-section-head m-collapse-toggle" onclick="App._mToggleProjDone()">${g.label} (${gt.length}) ${_mProjDoneExpanded ? '▾' : '▸'}</button>
+          <div class="m-rows" style="display:${_mProjDoneExpanded ? 'block' : 'none'}">${gt.map(t => _mRowHtml(t, 'proj')).join('')}</div>
+        </div>`;
+      }
+      return `<div class="m-section"><div class="m-section-head">${g.label}</div><div class="m-rows">${gt.map(t => _mRowHtml(t, 'proj')).join('')}</div></div>`;
+    }).join('');
+    const capHtml = proj.capacitiesUrl
+      ? `<div class="m-proj-cap-row" onclick="window.open('${esc(proj.capacitiesUrl)}')">Open in Capacities ↗</div>` : '';
+    return `
+      <div class="m-proj-detail">
+        <button class="m-proj-back" onclick="App._mCloseProject()">‹ Projects</button>
+        <div class="m-proj-detail-head">
+          <div class="m-proj-detail-title">${esc(proj.title)}</div>
+          <div class="m-proj-detail-meta">${PROJ_STATUS_LABELS[proj.status] || ''}${proj.dueDate ? ' · due ' + _fmtDate(proj.dueDate) : ''}</div>
+        </div>
+        ${proj.notes ? `<div class="m-proj-notes">${esc(proj.notes)}</div>` : ''}
+        ${groups || `<div class="m-empty">No tasks yet.</div>`}
+        ${capHtml}
       </div>
-      <div class="mobile-inbox-list">${rows}</div>`;
+      <div class="m-proj-quickadd">
+        <input type="text" id="m-proj-add-input" class="m-proj-add-input" placeholder="Add a task…"
+          onkeydown="if(event.key==='Enter')App._mAddProjectTask('${projId}')" />
+        <div class="m-proj-dest">
+          <button class="m-proj-dest-opt${_projAddDest === 'inbox' ? ' active' : ''}" data-d="inbox" onclick="App._mProjSetDest('inbox',this)">Inbox</button>
+          <button class="m-proj-dest-opt${_projAddDest === 'now' ? ' active' : ''}" data-d="now" onclick="App._mProjSetDest('now',this)">Today</button>
+        </div>
+      </div>`;
   }
 
-  function switchMobileTab(tab) {
-    mobileTab = tab;
-    document.getElementById('seg-inbox')?.classList.toggle('active', tab === 'inbox');
-    document.getElementById('seg-today')?.classList.toggle('active', tab === 'today');
-    _renderMobileInbox();
+  function _mToggleProjDone() { _mProjDoneExpanded = !_mProjDoneExpanded; _renderMobileApp(); }
+
+  function _mProjSetDest(dest, btn) {
+    _projAddDest = dest;
+    document.querySelectorAll('.m-proj-dest-opt').forEach(b => b.classList.toggle('active', b.dataset.d === dest));
   }
+
+  function _mAddProjectTask(projId) {
+    const input = document.getElementById('m-proj-add-input');
+    const title = input?.value.trim(); if (!title) return;
+    const proj = Data.findProject(projId); if (!proj) return;
+    const status = _projAddDest === 'now' ? 'this-week' : 'backlog';
+    Data.upsertTask({
+      id: 't' + Date.now(), type: 'task', title, status, parentProject: projId,
+      tags: [...(proj.tags || [])], dueDate: '', scheduledDate: '', scheduledTime: '',
+      notes: '', dateAdded: _today(), backlogEnteredAt: status === 'backlog' ? _today() : '', laterCount: 0, blocked: false,
+    });
+    input.value = '';
+    _renderMobileApp();
+  }
+
+  // ── Detail sheet — inline title edit, quick actions, schedule, tags, notes,
+  // parent-project link, delete. Recurring occurrences show cadence read-only
+  // (recurrence is configured on desktop only). ──
+  function _mOpenDetail(id) {
+    const item = Data.findItem(id); if (!item) return;
+    const allTags = _loadTags();
+    const itemTags = item.tags || [];
+    const isRecur = item.status === 'recurring';
+
+    const tagPillsHtml = allTags.map(t =>
+      `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
+        onclick="App._mToggleTag('${id}','${t}',this)">${t.toUpperCase()}</button>`
+    ).join('');
+
+    const projLine = item.parentProject
+      ? `<div class="m-detail-proj" onclick="App._mCloseSheet();App._mSwitchTab('projects');App._mOpenProjectDetail('${item.parentProject}')">${esc(Data.findProject(item.parentProject)?.title || '')} ›</div>`
+      : '';
+
+    const recurLine = isRecur
+      ? `<div class="m-detail-recur-note">${item.recurrence === 'rolling' ? `every ${item.recurrenceIntervalN || 1} ${item.recurrenceIntervalUnit || 'days'}` : `due ${item.dueDate ? _fmtDate(item.dueDate) : '—'}`} — editable on desktop</div>`
+      : '';
+
+    const quickActions = isRecur
+      ? `<div class="m-sheet-quick">
+          <button class="m-sheet-qbtn m-qa-complete" onclick="App._mSheetCompleteRecur('${id}')">✓ Complete</button>
+          <button class="m-sheet-qbtn" onclick="App._mCloseSheet();App.openRecurLogDate('${id}')">⋯ Log date</button>
+        </div>`
+      : `<div class="m-sheet-quick">
+          <button class="m-sheet-qbtn m-qa-complete" onclick="App._mSheetComplete('${id}')">✓ Complete</button>
+          <button class="m-sheet-qbtn" onclick="App._mSheetMoveToday('${id}')">Today</button>
+          <button class="m-sheet-qbtn" onclick="App._mSheetMove('${id}','this-week')">This Week</button>
+          <button class="m-sheet-qbtn" onclick="App._mSheetLater('${id}')">Later</button>
+        </div>`;
+
+    document.getElementById('modal-root').innerHTML = `
+      <div class="bs-overlay" onclick="App._mCloseSheet()">
+        <div class="bottom-sheet m-detail-sheet" onclick="event.stopPropagation()">
+          <div class="bs-handle-row"><div class="bs-handle"></div><button class="bs-close" onclick="App._mCloseSheet()">✕</button></div>
+          <input type="text" class="m-detail-title-input" id="m-d-title" value="${esc(item.title)}"
+            onchange="App._mSaveTitle('${id}',this.value)" />
+          ${projLine}${recurLine}
+          ${quickActions}
+          ${!isRecur ? `<div class="bs-section"><label class="bs-label">Schedule</label>
+            <input type="date" class="bs-date-input" id="m-d-sched" value="${esc(item.scheduledDate || '')}"
+              onchange="App._mSaveDate('${id}',this.value)" /></div>` : ''}
+          <div class="bs-section"><label class="bs-label">Tags</label><div class="bs-tags">${tagPillsHtml}</div></div>
+          <div class="bs-section"><label class="bs-label">Notes</label>
+            <textarea class="bs-textarea" id="m-d-notes" oninput="App._mSaveNotes('${id}',this.value)">${esc(item.notes || '')}</textarea></div>
+          <div class="bs-footer" id="m-d-footer">
+            <button class="bs-delete-btn" onclick="App._mConfirmDeleteInSheet('${id}')">Delete task</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function _mSaveTitle(id, title) {
+    const item = Data.findItem(id); if (!item || !title.trim()) return;
+    item.title = title.trim();
+    Data.upsertTask(item);
+  }
+  function _mSaveDate(id, date) {
+    const item = Data.findItem(id); if (!item) return;
+    item.scheduledDate = date || '';
+    if (date && item.status === 'backlog') item.status = 'this-week';
+    Data.upsertTask(item);
+  }
+  function _mSaveNotes(id, notes) {
+    const item = Data.findItem(id); if (!item) return;
+    item.notes = notes;
+    Data.upsertTask(item);
+  }
+  function _mToggleTag(id, tag, btn) {
+    const item = Data.findItem(id); if (!item) return;
+    item.tags = item.tags || [];
+    if (item.tags.includes(tag)) item.tags = item.tags.filter(t => t !== tag);
+    else item.tags.push(tag);
+    btn.classList.toggle('active');
+    Data.upsertTask(item);
+  }
+  function _mSheetComplete(id) {
+    const item = Data.findItem(id); if (!item) return;
+    const oldStatus = item.status;
+    item.status = 'done';
+    _saveCompletionDate(id);
+    Data.upsertTask(item);
+    if (oldStatus !== 'done') _maybeSpawnRecurrence(item, _today());
+    _mCloseSheet(); _renderMobileApp();
+  }
+  function _mSheetCompleteRecur(id) { _mCloseSheet(); completeRecurringToday(id); }
+  function _mSheetMoveToday(id) {
+    const item = Data.findItem(id); if (!item) return;
+    item.status = 'this-week'; item.scheduledDate = _today();
+    Data.upsertTask(item);
+    _mCloseSheet(); _renderMobileApp();
+  }
+  function _mSheetMove(id, status) {
+    const item = Data.findItem(id); if (!item) return;
+    item.status = status;
+    Data.upsertTask(item);
+    _mCloseSheet(); _renderMobileApp();
+  }
+  function _mSheetLater(id) { _sendToLater(id); _mCloseSheet(); }
+  function _mConfirmDeleteInSheet(id) {
+    const footer = document.getElementById('m-d-footer'); if (!footer) return;
+    footer.innerHTML = `<div class="bs-delete-confirm">
+      <span class="bs-delete-confirm-msg">Delete this task?</span>
+      <button class="bs-confirm-no" onclick="App._mResetDeleteInSheet('${id}')">Cancel</button>
+      <button class="bs-confirm-yes" onclick="App._mDeleteFromSheet('${id}')">Delete</button>
+    </div>`;
+  }
+  function _mResetDeleteInSheet(id) {
+    const footer = document.getElementById('m-d-footer'); if (!footer) return;
+    footer.innerHTML = `<button class="bs-delete-btn" onclick="App._mConfirmDeleteInSheet('${id}')">Delete task</button>`;
+  }
+  function _mDeleteFromSheet(id) {
+    Data.deleteItem(id);
+    _mCloseSheet(); _renderMobileApp();
+  }
+
+  // ── Capture FAB ──
+  function _mOpenCapture() {
+    const allTags = _loadTags();
+    const projects = (Data.get().projects || []).filter(p => p.status !== 'done');
+    document.getElementById('modal-root').innerHTML = `
+      <div class="bs-overlay" onclick="App._mCloseSheet()">
+        <div class="bottom-sheet m-capture-sheet" onclick="event.stopPropagation()">
+          <div class="bs-handle-row"><div class="bs-handle"></div><button class="bs-close" onclick="App._mCloseSheet()">✕</button></div>
+          <form onsubmit="App._mCaptureSubmit(event,'inbox')">
+            <input type="text" id="m-capture-input" class="m-capture-input" placeholder="Capture a task…" autocomplete="off" />
+            <div class="bs-section"><label class="bs-label">Tags</label>
+              <div class="bs-tags" id="m-capture-tags">
+                ${allTags.map(t => `<button type="button" class="modal-tag-pill ${_tagClasses(t, allTags)}" data-tag="${t}"
+                  onclick="this.classList.toggle('active')">${t.toUpperCase()}</button>`).join('')}
+              </div>
+            </div>
+            <div class="bs-section">
+              <button type="button" class="m-capture-proj-toggle" onclick="App._mCaptureToggleProj()">+ add to project</button>
+              <select class="bs-date-input" id="m-capture-proj" style="display:none;margin-top:8px">
+                <option value="">— none —</option>
+                ${projects.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="m-capture-flash" id="m-capture-flash" style="display:none">Added</div>
+            <div class="bs-footer m-sheet-quick">
+              <button type="button" class="m-sheet-qbtn" onclick="App._mCaptureSubmit(null,'now')">Today</button>
+              <button type="submit" class="m-sheet-qbtn m-qa-complete">Inbox</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    setTimeout(() => document.getElementById('m-capture-input')?.focus(), 50);
+  }
+  function _mCaptureToggleProj() {
+    const sel = document.getElementById('m-capture-proj');
+    if (sel) sel.style.display = sel.style.display === 'none' ? 'block' : 'none';
+  }
+  function _mCaptureSubmit(e, dest) {
+    if (e) e.preventDefault();
+    const input = document.getElementById('m-capture-input');
+    const title = input?.value.trim(); if (!title) return;
+    const tags = [...document.querySelectorAll('#m-capture-tags .modal-tag-pill.active')].map(b => b.dataset.tag);
+    const parentProject = document.getElementById('m-capture-proj')?.value || null;
+    const status = dest === 'now' ? 'this-week' : 'backlog';
+    Data.upsertTask({
+      id: 't' + Date.now(), type: parentProject ? 'task' : 'standalone', title, status,
+      parentProject, tags, dueDate: '', scheduledDate: dest === 'now' ? _today() : '', scheduledTime: '',
+      notes: '', dateAdded: _today(), backlogEnteredAt: status === 'backlog' ? _today() : '', laterCount: 0, blocked: false,
+    });
+    if (dest === 'now') { _mCloseSheet(); _renderMobileApp(); return; }
+    // Stays open with the field cleared so several thoughts can be dumped in a row.
+    input.value = '';
+    const flash = document.getElementById('m-capture-flash');
+    if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 900); }
+    input.focus();
+    _renderMobileApp(); // keep the inbox badge current behind the sheet
+  }
+
+  function _mOnResize() {
+    clearTimeout(_mResizeTimer);
+    _mResizeTimer = setTimeout(() => renderBoard(), 150);
+  }
+  let _mResizeTimer = null;
 
   // ── Task card ──
   function _renderTaskCard(item, colId, extra = {}) {
@@ -3944,154 +4463,6 @@ const App = (() => {
     }, 16);
   }
 
-  // ── Mobile capture ──
-  function addMobileCapture(e) {
-    e.preventDefault();
-    const input = document.getElementById('mobile-capture-input');
-    const title = input?.value.trim();
-    if (!title) return;
-    const id = 't' + Date.now();
-    Data.upsertTask({
-      id, type: 'standalone', title, status: 'backlog',
-      tags: [], parentProject: null, dueDate: '', scheduledDate: '',
-      scheduledTime: '', notes: '', dateAdded: _today(),
-      backlogEnteredAt: _today(), blocked: false,
-    });
-    if (input) input.value = '';
-    renderBoard();
-  }
-
-  // ── Mobile inbox bottom sheet ──
-  function _openInboxSheet(id) {
-    const item = Data.findItem(id); if (!item) return;
-    const allTags = _loadTags();
-    const itemTags = item.tags || [];
-
-    const tagPillsHtml = allTags.map(t =>
-      `<button class="modal-tag-pill ${_tagClasses(t, allTags)}${itemTags.includes(t) ? ' active' : ''}"
-        data-tag="${t}"
-        onclick="App._inboxToggleTag('${id}','${t}',this)">${t.toUpperCase()}</button>`
-    ).join('');
-
-    const root = document.getElementById('modal-root');
-    root.innerHTML = `
-      <div class="bs-overlay" onclick="App._closeInboxSheet()">
-        <div class="bottom-sheet" onclick="event.stopPropagation()">
-          <div class="bs-handle-row">
-            <div class="bs-handle"></div>
-            <button class="bs-close" onclick="App._closeInboxSheet()">✕</button>
-          </div>
-          <div class="bs-title">${esc(item.title)}</div>
-
-          <div class="bs-quick-actions">
-            <button class="bs-quick-btn bs-complete" onclick="App._inboxComplete('${id}')">
-              <span class="bs-quick-icon">✓</span>Complete
-            </button>
-            <button class="bs-quick-btn bs-this-week" onclick="App._inboxMove('${id}','this-week')">
-              <span class="bs-quick-icon">▸</span>This Week
-            </button>
-            <button class="bs-quick-btn bs-next-up" onclick="App._inboxMove('${id}','next')">
-              <span class="bs-quick-icon">▹</span>Next Up
-            </button>
-          </div>
-
-          <div class="bs-section">
-            <label class="bs-label">Schedule</label>
-            <input type="date" class="bs-date-input" id="bs-sched"
-              value="${esc(item.scheduledDate || '')}"
-              onchange="App._inboxSchedule('${id}',this.value)" />
-          </div>
-
-          <div class="bs-section">
-            <label class="bs-label">Tags</label>
-            <div class="bs-tags" id="bs-tags-row">${tagPillsHtml}</div>
-          </div>
-
-          <div class="bs-section">
-            <label class="bs-label">Notes</label>
-            <textarea class="bs-textarea" id="bs-notes"
-              oninput="App._inboxSaveNotes('${id}',this.value)">${esc(item.notes || '')}</textarea>
-          </div>
-
-          <div class="bs-footer" id="bs-footer">
-            <button class="bs-delete-btn" onclick="App._inboxConfirmDelete('${id}')">Delete task</button>
-          </div>
-        </div>
-      </div>`;
-  }
-
-  function _closeInboxSheet() {
-    document.getElementById('modal-root').innerHTML = '';
-  }
-
-  function _inboxComplete(id) {
-    const item = Data.findItem(id); if (!item) return;
-    item.status = 'done';
-    Data.upsertTask(item);
-    _saveCompletionDate(id);
-    _closeInboxSheet();
-    renderBoard();
-  }
-
-  function _inboxMove(id, status) {
-    const item = Data.findItem(id); if (!item) return;
-    item.status = status;
-    _clearCompletionDate(id);
-    Data.upsertTask(item);
-    _closeInboxSheet();
-    renderBoard();
-  }
-
-  function _inboxSchedule(id, date) {
-    const item = Data.findItem(id); if (!item) return;
-    item.scheduledDate = date || '';
-    Data.upsertTask(item);
-    renderBoard();
-  }
-
-  function _inboxToggleTag(id, tag, el) {
-    const item = Data.findItem(id); if (!item) return;
-    item.tags = item.tags || [];
-    if (item.tags.includes(tag)) {
-      item.tags = item.tags.filter(t => t !== tag);
-      el.classList.remove('active');
-    } else {
-      item.tags.push(tag);
-      el.classList.add('active');
-    }
-    Data.upsertTask(item);
-    renderBoard();
-  }
-
-  function _inboxSaveNotes(id, notes) {
-    const item = Data.findItem(id); if (!item) return;
-    item.notes = notes;
-    Data.upsertTask(item);
-  }
-
-  function _inboxConfirmDelete(id) {
-    const footer = document.getElementById('bs-footer');
-    if (!footer) return;
-    footer.innerHTML = `
-      <div class="bs-delete-confirm">
-        <span class="bs-delete-confirm-msg">Delete this task?</span>
-        <button class="bs-confirm-no" onclick="App._inboxResetDelete('${id}')">Cancel</button>
-        <button class="bs-confirm-yes" onclick="App._inboxDelete('${id}')">Delete</button>
-      </div>`;
-  }
-
-  function _inboxResetDelete(id) {
-    const footer = document.getElementById('bs-footer');
-    if (!footer) return;
-    footer.innerHTML = `<button class="bs-delete-btn" onclick="App._inboxConfirmDelete('${id}')">Delete task</button>`;
-  }
-
-  function _inboxDelete(id) {
-    Data.deleteItem(id);
-    _closeInboxSheet();
-    renderBoard();
-  }
-
   // ── Confirm modal ──
   function _showConfirm(title, msg, confirmLabel, onConfirm) {
     _showModal(`
@@ -4202,11 +4573,14 @@ const App = (() => {
     _showTagMenu, _confirmDeleteTag, _executeDeleteTag, _setTagColor, _dismissTagMenu,
     _filterToggleTag, _filterSetDate,
     _openCapacitiesCreate, _removeCapacitiesUrl,
-    addMobileCapture, switchMobileTab,
-    _openInboxSheet, _closeInboxSheet,
-    _inboxComplete, _inboxMove, _inboxSchedule,
-    _inboxToggleTag, _inboxSaveNotes,
-    _inboxConfirmDelete, _inboxResetDelete, _inboxDelete,
+    _mSwitchTab, _mOpenProjectDetail, _mCloseProject,
+    _mSwipeStart, _mSwipeMove, _mSwipeEnd,
+    _mToggleDone, _mToggleProjDone, _mProjSetDest, _mAddProjectTask,
+    _mConfirmNever, _mDeleteConfirmed, _mCloseSheet,
+    _mOpenDetail, _mSaveTitle, _mSaveDate, _mSaveNotes, _mToggleTag,
+    _mSheetComplete, _mSheetCompleteRecur, _mSheetMoveToday, _mSheetMove, _mSheetLater,
+    _mConfirmDeleteInSheet, _mResetDeleteInSheet, _mDeleteFromSheet,
+    _mOpenCapture, _mCaptureToggleProj, _mCaptureSubmit,
   };
 })();
 
