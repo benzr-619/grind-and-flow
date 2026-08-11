@@ -186,7 +186,62 @@ date per side.
 - Recurrence editing from the **Detail modal** and **New Item modal** (see above).
 - The three-way `weekly`/`monthly`/`interval` type — collapsed to `rolling`/`anchored`.
 
+## Direct check-off, no Focus, unified due-state, backdating (session 2026-08-11)
+User feedback: recurring tasks were only completable by starting them into Focus mode
+(the card's only interaction was `.recur-start-btn` → `startTask` → Focus → Done), which
+doesn't fit chores you just want to check off. Also, urgency only showed up as *overdue*
+— there was no "coming up soon" signal — and there was no way to log a completion for a
+day other than today (e.g. forgetting to log that you cleaned the stove two days ago).
+Three changes, all in `_renderRecurringCard` / the functions around it in `app.js`:
+
+- **`.recur-start-btn` (Focus start) removed entirely** — no drag-swap-start, no
+  `startTask` call from this card. Replaced with `.recur-card-actions` (a checkmark +
+  a small "⋯" log-date link), rendered inside `.card-top-right` under the overdue badge
+  (not an absolute overlay — the old absolute-positioned button visually collided with
+  the badge; stacking in the flex column avoids that for good).
+- **`_recurDueState(item)`** — the single source of truth for card styling *and* the
+  banner (see below). Unifies what used to be two divergent code paths: anchored used
+  `dueDate` + `recurrenceLeadDays` for due-soon/overdue; rolling only had a *separate*,
+  now-removed `_recurOverdueDays`/`_recurIntervalDays` pair computing overdue-only from
+  `recurrenceLastCompletedAt` + an approximate interval (weeks×7/months×30). Rolling now
+  reads its expected date straight from `scheduledDate` (the next-occurrence date already
+  computed at spawn time, calendar-accurate) — same due-soon/due-today/overdue states as
+  anchored, no separate approximation. `recurrenceLeadDays` (the due-soon window) is now
+  settable for **rolling too** (new `#rm-lead-rolling` field in the modal, default 1 day
+  when unset) — it was anchored-only before. A rolling task with no `scheduledDate` yet
+  (never completed once) reads as muted, never overdue — same "unknown, not today" rule
+  the old logic had for `recurrenceLastCompletedAt`. `recurrenceLastCompletedAt` is still
+  written on every rolling spawn but is no longer read for badge/state purposes — kept
+  as history (useful groundwork for the future learning layer below).
+- **`.recur-due-banner`** — a slim banner across the top of the **Tasks board only**
+  (rendered by `_renderRecurDueBanner()`, prepended to `board.innerHTML` in the non-
+  projects/non-calendar branch of `renderBoard()`) whenever any recurring task is
+  due-soon or overdue (`_recurDueList()` — reads `Data.get().tasks` directly, so it is
+  **not** affected by the board's active tag/search/date filters; a due reminder
+  shouldn't vanish because of an unrelated filter). Each entry has its own inline
+  checkmark (`completeRecurringToday`) and a clickable title (opens the Recurring modal).
+- **Backdated completion** — `_completeRecurring(id, dateStr)` is the one real completion
+  path now: spawns the next occurrence via the existing `_maybeSpawnRecurrence(item,
+  dateStr)` (already accepted a date param, previously always passed `_today()`), then
+  `Data.archiveItemWithDate(id, dateStr)` — archives immediately, never touches
+  `status:'done'` or the Done-column/midnight-sweep machinery, since a recurring card
+  never sits in a status column. `completeRecurringToday(id)` is the one-click "today"
+  path (card checkmark, banner checkmark). `openRecurLogDate(id)` is a small non-blocking
+  overlay (`.rc-overlay`/`.rc-modal`, same pattern as `_openRecurConfirm`) with a single
+  `<input type="date" max="today">` for backdating — reachable from the card's "⋯" link
+  and from a "Mark complete…" button in the Recurring modal's footer (edit mode only).
+
 ## Not built
+- **Learning/algorithmic interval suggestion** — deferred, explicitly scoped as a
+  follow-up. Idea: instead of a fixed user-set interval, learn the actual gap the user
+  tends to wait between completions of a given series (e.g. cleaning the stove) from
+  archive history (`recurrenceSeriesId`-matched rows, same data `_recurHistoryHtml`
+  already surfaces) and suggest surfacing the due-soon banner a day or two ahead of the
+  learned average instead of the fixed `recurrenceIntervalN`/`recurrenceLeadDays`. Not
+  started — would need its own schema (a learned/suggested-interval field distinct from
+  the user-set one) and UI (surfacing the suggestion, letting the user accept/ignore it).
+  `recurrenceLastCompletedAt` and the archive's per-occurrence `archivedAt` history are
+  the raw material this would train on.
 - Habits (daily recurrence) — explicitly separate, out of scope.
 - Editing/cancelling only *future* occurrences of an already-spawned series (turning
   recurrence off, or deleting, the live occurrence just stops that one task; archived rows

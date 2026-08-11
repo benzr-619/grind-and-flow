@@ -1486,18 +1486,63 @@ select.modal-input { cursor: pointer; }
   background: var(--red-pale); color: var(--red);
 }
 
-/* Per-card start control — click starts this task directly; also a drag-swap
-   drop target (dropping a dragged card here starts the dragged card instead),
-   mirroring the .next-start-orb convention on the Next column. */
-.recur-start-btn {
-  position: absolute; top: 6px; right: 6px;
+/* Per-card completion controls — a recurring task is checked off directly, never
+   started into Focus. Sits in the .card-top-right column (stacked under the overdue
+   badge, if present) rather than an absolute overlay, so it never collides with it.
+   The checkmark is always visible (it's the primary action for this column); the
+   "log a different date" link is hover-revealed, secondary. */
+.recur-card-actions {
+  display: flex; align-items: center; gap: 4px; margin-top: 2px;
+}
+.recur-done-btn {
   width: 22px; height: 22px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: transparent; color: var(--muted); border: 1px solid var(--line-md);
-  font-size: 9px; cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.12s, color 0.12s;
+  font-size: 11px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.recur-card:hover .recur-start-btn { opacity: 1; }
-.recur-start-btn:hover, .recur-start-btn.drag-over { background: var(--amber); color: var(--paper); border-color: var(--amber); }
+.recur-done-btn:hover { background: var(--sage); color: var(--paper); border-color: var(--sage); }
+.recur-log-link {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  font-size: 12px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.12s, color 0.12s;
+}
+.recur-card:hover .recur-log-link { opacity: 1; }
+.recur-log-link:hover { background: var(--line); color: var(--ink); }
+
+/* Due-soon / overdue banner across the top of the Tasks board */
+.recur-due-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; margin-bottom: 12px;
+  border: 1px solid var(--amber); border-radius: 6px;
+  background: var(--amber-pale, rgba(201,139,42,0.08));
+  flex-wrap: wrap;
+}
+.rdb-label {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber);
+  flex: none;
+}
+.rdb-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rdb-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 4px; border-radius: 14px;
+  background: var(--paper); border: 1px solid var(--line-md);
+}
+.rdb-item.rdb-overdue { border-color: var(--ir-coral, #C9556B); }
+.rdb-check {
+  width: 18px; height: 18px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--muted); border: 1px solid var(--line-md);
+  font-size: 9px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.rdb-check:hover { background: var(--sage); color: var(--paper); border-color: var(--sage); }
+.rdb-title { font-size: 12.5px; color: var(--ink); cursor: pointer; }
+.rdb-title:hover { text-decoration: underline; }
+.rdb-when {
+  font-family: var(--font-mono); font-size: 10px; color: var(--amber);
+}
+.rdb-item.rdb-overdue .rdb-when { color: var(--ir-coral, #C9556B); font-weight: 600; }
 
 /* Anchored-recurrence completion prompt — small non-blocking overlay */
 .rc-overlay {

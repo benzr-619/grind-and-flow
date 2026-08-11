@@ -269,7 +269,8 @@ const App = (() => {
         : { recurrenceAlternate: null };
       // recurrenceLastCompletedAt is "when this cadence last had any completion" —
       // set on every spawn regardless of whether the series uses an alternating pair,
-      // not a per-side field. Drives the overdue-escalation badge (see _recurOverdueDays).
+      // not a per-side field. Kept for history; due/overdue state is now driven by
+      // scheduledDate directly (see _recurDueState).
       Data.upsertTask({ ...baseNew, ...swapFields, dueDate: '', scheduledDate: nextDate, recurrenceLastCompletedAt: completionDateStr });
       return;
     }
@@ -506,7 +507,7 @@ const App = (() => {
       if (view === 'projects') {
         board.innerHTML = _renderProjCanvas(items);
       } else {
-      board.innerHTML = `<div class="columns" data-cols="${cols.length}">${cols.map(col => {
+      board.innerHTML = `${_renderRecurDueBanner()}<div class="columns" data-cols="${cols.length}">${cols.map(col => {
         let colItems = items.filter(i => i.status === col.id);
         // This Week tasks tentatively scheduled into a FUTURE week are parked on the
         // calendar and hidden from the live column until their week arrives.
@@ -795,33 +796,110 @@ const App = (() => {
     </div>`;
   }
 
-  // Days from a rolling task's recurrenceIntervalN/Unit, as a rough badge threshold
-  // (weeks ×7, months ×30 approximation) — NOT used for actual scheduling, which stays
-  // calendar-accurate via _nextRollingDate.
-  function _recurIntervalDays(item) {
-    const n = item.recurrenceIntervalN || 1;
-    const unit = item.recurrenceIntervalUnit || 'days';
-    if (unit === 'weeks') return n * 7;
-    if (unit === 'months') return n * 30;
-    return n;
+  // Unified "due" state for a recurring task — drives both card styling and the
+  // due-soon banner. anchored → dueDate; rolling → scheduledDate (the next-occurrence
+  // date computed at spawn time; null until the series has completed at least once,
+  // so a brand-new rolling task with no history reads as muted, not overdue).
+  // recurrenceLeadDays is the "start flagging as due-soon N days ahead" window —
+  // settable for both types now (was anchored-only); rolling defaults to 1 day
+  // when unset so "due soon" isn't invisible on tasks that never had it configured.
+  function _recurDueState(item) {
+    const dateStr = item.recurrence === 'anchored' ? item.dueDate : item.scheduledDate;
+    if (!dateStr) return { state: 'muted', daysUntil: null, dateStr: null };
+    const daysUntil = -_daysDiff(dateStr);
+    const lead = item.recurrenceLeadDays ?? (item.recurrence === 'rolling' ? 1 : 0);
+    let state = 'muted';
+    if (daysUntil < 0) state = 'overdue';
+    else if (daysUntil <= lead) state = 'due-soon';
+    return { state, daysUntil, dateStr };
   }
 
-  // Overdue-escalation badge, rolling tasks only: how many days past the expected
-  // cadence since the cadence's last completion. Returns null (no badge) when the
-  // task isn't rolling, hasn't completed a prior occurrence yet (recurrenceLastCompletedAt
-  // null — existing pre-migration tasks included; null means "unknown," not "today"),
-  // or is still on-pace.
-  function _recurOverdueDays(item) {
-    if (item.recurrence !== 'rolling' || !item.recurrenceLastCompletedAt) return null;
-    const overdue = _daysDiff(item.recurrenceLastCompletedAt) - _recurIntervalDays(item);
-    return overdue > 0 ? overdue : null;
+  // Every live recurring task currently due-soon or overdue, most urgent first —
+  // feeds the Tasks-board due banner (see _renderRecurDueBanner).
+  function _recurDueList() {
+    return Data.get().tasks
+      .filter(i => i.status === 'recurring')
+      .map(item => ({ item, ...(_recurDueState(item)) }))
+      .filter(d => d.state !== 'muted')
+      .sort((a, b) => a.daysUntil - b.daysUntil);
+  }
+
+  // Slim banner across the top of the Tasks board when any recurring task is
+  // due-soon or overdue — surfaced ahead of time, not just once it's overdue.
+  function _renderRecurDueBanner() {
+    const due = _recurDueList();
+    if (!due.length) return '';
+    return `<div class="recur-due-banner">
+      <span class="rdb-label">Due to complete</span>
+      <div class="rdb-list">
+        ${due.map(d => {
+          const when = d.daysUntil < 0 ? `${-d.daysUntil}d overdue` : d.daysUntil === 0 ? 'due today' : `in ${d.daysUntil}d`;
+          return `<span class="rdb-item ${d.state === 'overdue' ? 'rdb-overdue' : 'rdb-due-soon'}">
+            <button class="rdb-check" title="Complete today" onclick="App.completeRecurringToday('${d.item.id}')">✓</button>
+            <span class="rdb-title" onclick="App.openRecurringModal('${d.item.id}')">${esc(d.item.title)}</span>
+            <span class="rdb-when">${when}</span>
+          </span>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Completes a recurring task's current occurrence as of dateStr — archives it
+  // directly (never touches Focus/status:'done') and spawns the next occurrence
+  // from that same date, so backdating a forgotten completion also backdates the
+  // next-due math instead of computing it from today.
+  function _completeRecurring(id, dateStr) {
+    const item = Data.findItem(id);
+    if (!item || item.status !== 'recurring') return;
+    _maybeSpawnRecurrence(item, dateStr);
+    Data.archiveItemWithDate(id, dateStr);
+    renderBoard();
+  }
+
+  function completeRecurringToday(id) { _completeRecurring(id, _today()); }
+
+  // "Log a different date" — for when a completion was forgotten and needs
+  // backdating. Small non-blocking overlay, same pattern as _openRecurConfirm.
+  let _recurLogDateId = null;
+  function openRecurLogDate(id) {
+    const item = Data.findItem(id); if (!item) return;
+    _recurLogDateId = id;
+    document.getElementById('modal-root').innerHTML = `
+      <div class="rc-overlay" onclick="App._closeRecurLogDate()">
+        <div class="rc-modal" onclick="event.stopPropagation()">
+          <div class="rc-title">Log completion</div>
+          <div class="rc-sub">"${esc(item.title)}" — mark it done as of a specific date, for when you forgot to log it at the time.</div>
+          <div class="fg"><label class="modal-label">Completed on</label>
+            <input type="date" class="modal-input" id="rld-date" max="${_today()}" value="${_today()}" /></div>
+          <div class="modal-footer">
+            <div></div>
+            <div class="modal-footer-right">
+              <button class="btn-close" onclick="App._closeRecurLogDate()">Cancel</button>
+              <button class="btn-save" onclick="App._confirmRecurLogDate()">Complete</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+  function _closeRecurLogDate() {
+    _recurLogDateId = null;
+    document.getElementById('modal-root').innerHTML = '';
+  }
+  function _confirmRecurLogDate() {
+    if (!_recurLogDateId) return;
+    const dateVal = document.getElementById('rld-date')?.value || _today();
+    const id = _recurLogDateId;
+    _recurLogDateId = null;
+    document.getElementById('modal-root').innerHTML = '';
+    _completeRecurring(id, dateVal);
   }
 
   // ── Recurring card (Recurring column) ──
   // Never promoted by status — a recurring task lives here permanently between
   // occurrences. Styling (not status) reflects urgency: muted → due-soon (amber,
-  // within the lead window) → overdue (red). Clicking opens the dedicated recurring
-  // modal (see openRecurringModal), not the standard Detail modal.
+  // within the lead window) → overdue (red). Completing one is a direct check-off,
+  // never a trip through Focus mode — recurring chores aren't focus sessions.
+  // Clicking the card body opens the dedicated recurring modal (see openRecurringModal).
   function _renderRecurringCard(item) {
     const tags = item.tags || [];
     const allTags = _loadTags();
@@ -829,28 +907,26 @@ const App = (() => {
     const tagClass = firstTag ? _tagClasses(firstTag, allTags) : '';
     const tagPills = tags.map(t => `<span class="tag-pill ${_tagClasses(t, allTags)}">${t.toUpperCase()}</span>`).join('');
 
-    let scheduleHtml = '', stateClass = 'recur-muted';
+    const due = _recurDueState(item);
+    const stateClass = due.state === 'overdue' ? 'recur-overdue' : due.state === 'due-soon' ? 'recur-due-soon' : 'recur-muted';
+
+    let scheduleHtml;
     if (item.recurrence === 'rolling') {
       const n = item.recurrenceIntervalN || 1;
       const unit = item.recurrenceIntervalUnit || 'days';
-      const nextHtml = item.scheduledDate ? ` · next ${_fmtDate(item.scheduledDate)}` : '';
-      scheduleHtml = `<div class="recur-schedule">every ${n} ${unit}${nextHtml}</div>`;
-    } else if (item.recurrence === 'anchored') {
-      if (item.dueDate) {
-        const daysUntil = -_daysDiff(item.dueDate);
-        const lead = item.recurrenceLeadDays ?? 0;
-        if (daysUntil < 0) stateClass = 'recur-overdue';
-        else if (daysUntil <= lead) stateClass = 'recur-due-soon';
-        const countdown = daysUntil === 0 ? 'due today' : daysUntil > 0 ? `in ${daysUntil}d` : `${-daysUntil}d overdue`;
-        scheduleHtml = `<div class="recur-schedule">due ${_fmtDate(item.dueDate)} · ${countdown}</div>`;
-      } else {
-        scheduleHtml = `<div class="recur-schedule">no due date set</div>`;
-      }
+      const countdown = due.dateStr
+        ? ` · ${due.daysUntil === 0 ? 'due today' : due.daysUntil > 0 ? `in ${due.daysUntil}d` : `${-due.daysUntil}d overdue`}`
+        : '';
+      scheduleHtml = `<div class="recur-schedule">every ${n} ${unit}${countdown}</div>`;
+    } else if (due.dateStr) {
+      const countdown = due.daysUntil === 0 ? 'due today' : due.daysUntil > 0 ? `in ${due.daysUntil}d` : `${-due.daysUntil}d overdue`;
+      scheduleHtml = `<div class="recur-schedule">due ${_fmtDate(item.dueDate)} · ${countdown}</div>`;
+    } else {
+      scheduleHtml = `<div class="recur-schedule">no due date set</div>`;
     }
 
-    const overdueDays = _recurOverdueDays(item);
-    const overdueBadgeHtml = overdueDays != null
-      ? `<span class="recur-overdue-badge${overdueDays >= 7 ? ' tier-high' : ''}">+${overdueDays}d</span>` : '';
+    const overdueBadgeHtml = due.state === 'overdue'
+      ? `<span class="recur-overdue-badge${due.daysUntil <= -7 ? ' tier-high' : ''}">+${-due.daysUntil}d</span>` : '';
 
     // Alternating pair — surface what's next in the rotation before the current
     // occurrence is even completed.
@@ -868,14 +944,17 @@ const App = (() => {
             ${altHtml}
           </div>
         </div>
-        <div class="card-top-right">${overdueBadgeHtml}</div>
+        <div class="card-top-right">
+          ${overdueBadgeHtml}
+          <div class="recur-card-actions">
+            <button class="recur-log-link" title="Log a different completion date"
+              onclick="event.stopPropagation();App.openRecurLogDate('${item.id}')">⋯</button>
+            <button class="recur-done-btn" title="Complete today"
+              onclick="event.stopPropagation();App.completeRecurringToday('${item.id}')">✓</button>
+          </div>
+        </div>
       </div>
       <div class="card-meta">${tagPills}</div>
-      <button class="recur-start-btn" title="Start focus"
-        ondragover="App._onFocusDragOver(event)"
-        ondragleave="App._onFocusDragLeave(event)"
-        ondrop="App._onFocusDrop(event)"
-        onclick="event.stopPropagation();App.startTask('${item.id}')">▶</button>
     </div>`;
   }
 
@@ -3519,6 +3598,7 @@ const App = (() => {
     const unit = item?.recurrenceIntervalUnit || 'days';
     const due = item?.dueDate || '';
     const lead = item?.recurrenceLeadDays ?? 0;
+    const leadRolling = item?.recurrenceLeadDays ?? 1;
     const days = item?.recurrenceWeekdays || [];
     const monthDay = item?.recurrenceMonthDay || '';
     const ruleType = days.length ? 'weekly' : monthDay ? 'monthly' : '';
@@ -3565,6 +3645,10 @@ const App = (() => {
               <option value="months"${unit === 'months' ? ' selected' : ''}>months</option>
             </select>
             <span class="recur-inline-label">after completing</span>
+          </div>
+          <div class="fg"><label class="modal-label">Flag as due-soon</label>
+            <input type="number" class="modal-input recur-num" id="rm-lead-rolling" min="0" value="${leadRolling}" />
+            <span class="recur-inline-label">days before the expected date</span>
           </div>
           <label class="rm-alt-toggle">
             <input type="checkbox" id="rm-alt-enabled" ${altEnabled ? 'checked' : ''} onchange="App._recurModalToggleAlt(this)" />
@@ -3619,6 +3703,7 @@ const App = (() => {
         <div id="del-zone">${item ? `<button class="btn-danger" onclick="App._showDelConfirm('${id}')">Delete</button>` : ''}</div>
         <div class="modal-footer-right">
           <button class="btn-close" onclick="App._closeRecurModal()">Cancel</button>
+          ${item ? `<button class="btn-close" onclick="App.openRecurLogDate('${id}')">Mark complete…</button>` : ''}
           <button class="btn-save" onclick="App._saveRecurModal('${id || ''}')">${item ? 'Save' : 'Add'}</button>
         </div>
       </div>`, null);
@@ -3679,6 +3764,7 @@ const App = (() => {
     } else {
       const n = Math.max(1, +(document.getElementById('rm-n')?.value || 1));
       const unit = document.getElementById('rm-unit')?.value || 'days';
+      const leadRolling = Math.max(0, +(document.getElementById('rm-lead-rolling')?.value ?? 1) || 0);
       // Alternate side is a jsonb snapshot, not a live task — saving updates only this
       // stored side; the primary title/tags/notes above are read and applied separately
       // (as the live task's own fields), untouched by whatever's in the alternate form.
@@ -3695,7 +3781,7 @@ const App = (() => {
         }
       }
       fields = {
-        recurrence: 'rolling', dueDate: '', recurrenceLeadDays: null,
+        recurrence: 'rolling', dueDate: '', recurrenceLeadDays: leadRolling,
         recurrenceIntervalN: n, recurrenceIntervalUnit: unit,
         recurrenceWeekdays: null, recurrenceMonthDay: null,
         recurrenceAlternate,
@@ -4089,6 +4175,7 @@ const App = (() => {
     openDetail, openNewModal, toggleFilter, clearFilters,
     openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange, _recurModalToggleAlt,
     _closeRecurModal, _saveRecurModal, _recurConfirmSave, _recurConfirmDismiss,
+    completeRecurringToday, openRecurLogDate, _closeRecurLogDate, _confirmRecurLogDate,
     exportData, importData, onImportFile, dismissBanner,
     restoreItem, deleteArchiveItem, confirmClearArchive,
     startTask, activateTask, timerTogglePlay, _timerJump, startNextSegment, skipSegment,
