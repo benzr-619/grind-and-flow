@@ -1472,6 +1472,14 @@ select.modal-input { cursor: pointer; }
   margin-top: 1px; letter-spacing: 0.02em; font-style: italic;
 }
 
+/* Absolute last-completion date — own line, deliberately not merged into the
+   (relative/urgency-focused) overdue badge. Same muted treatment regardless of
+   due-state so it doesn't compete with .recur-schedule's escalation coloring. */
+.recur-last-done {
+  font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+  margin-top: 2px; letter-spacing: 0.02em;
+}
+
 /* Rolling-only overdue-escalation badge — "+Nd" past the expected cadence since the
    last completion. Mirrors the .blocked-badge pill + .age-counter.old escalation
    convention: a lighter tier for 1–6 days over, a bolder/darker/larger tier for 7+. */

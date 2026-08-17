@@ -274,22 +274,25 @@ const App = (() => {
         : { recurrenceAlternate: null };
       // recurrenceLastCompletedAt is "when this cadence last had any completion" —
       // set on every spawn regardless of whether the series uses an alternating pair,
-      // not a per-side field. Kept for history; due/overdue state is now driven by
-      // scheduledDate directly (see _recurDueState).
+      // not a per-side field. Kept for history and surfaced on the card (see
+      // _renderRecurringCard); due/overdue state is driven by scheduledDate directly
+      // (see _recurDueState). Anchored sets the same field via _recurConfirmSave/
+      // _recurConfirmDismiss below, off the completionDateStr threaded through
+      // _openRecurConfirm — both recurrence kinds populate it now.
       Data.upsertTask({ ...baseNew, ...swapFields, dueDate: '', scheduledDate: nextDate, recurrenceLastCompletedAt: completionDateStr });
       return;
     }
     if (item.recurrence === 'anchored') {
       const suggested = _nextAnchoredSuggestedDate(item, completionDateStr);
-      _openRecurConfirm(baseNew, suggested, item.recurrenceLeadDays ?? 0);
+      _openRecurConfirm(baseNew, suggested, item.recurrenceLeadDays ?? 0, completionDateStr);
     }
   }
 
   // ── Anchored-recurrence completion prompt ──
-  let _recurConfirmState = null; // { baseNew, suggestedDate, suggestedLead }
+  let _recurConfirmState = null; // { baseNew, suggestedDate, suggestedLead, completionDateStr }
 
-  function _openRecurConfirm(baseNew, suggestedDate, suggestedLead) {
-    _recurConfirmState = { baseNew, suggestedDate, suggestedLead: suggestedLead || 0 };
+  function _openRecurConfirm(baseNew, suggestedDate, suggestedLead, completionDateStr) {
+    _recurConfirmState = { baseNew, suggestedDate, suggestedLead: suggestedLead || 0, completionDateStr };
     const root = document.getElementById('modal-root');
     if (_isMobile()) {
       root.innerHTML = `
@@ -332,10 +335,10 @@ const App = (() => {
 
   function _recurConfirmSave() {
     if (!_recurConfirmState) return;
-    const { baseNew, suggestedDate, suggestedLead } = _recurConfirmState;
+    const { baseNew, suggestedDate, suggestedLead, completionDateStr } = _recurConfirmState;
     const dateVal = document.getElementById('rc-date')?.value || suggestedDate;
     const leadVal = Math.max(0, +(document.getElementById('rc-lead')?.value ?? suggestedLead) || 0);
-    Data.upsertTask({ ...baseNew, dueDate: dateVal, scheduledDate: '', recurrenceLeadDays: leadVal });
+    Data.upsertTask({ ...baseNew, dueDate: dateVal, scheduledDate: '', recurrenceLeadDays: leadVal, recurrenceLastCompletedAt: completionDateStr });
     _recurConfirmState = null;
     document.getElementById('modal-root').innerHTML = '';
     renderBoard();
@@ -345,8 +348,8 @@ const App = (() => {
   // the pre-filled defaults — a recurring series should never be silently dropped.
   function _recurConfirmDismiss() {
     if (!_recurConfirmState) return;
-    const { baseNew, suggestedDate, suggestedLead } = _recurConfirmState;
-    Data.upsertTask({ ...baseNew, dueDate: suggestedDate, scheduledDate: '', recurrenceLeadDays: suggestedLead });
+    const { baseNew, suggestedDate, suggestedLead, completionDateStr } = _recurConfirmState;
+    Data.upsertTask({ ...baseNew, dueDate: suggestedDate, scheduledDate: '', recurrenceLeadDays: suggestedLead, recurrenceLastCompletedAt: completionDateStr });
     _recurConfirmState = null;
     document.getElementById('modal-root').innerHTML = '';
     renderBoard();
@@ -1452,6 +1455,11 @@ const App = (() => {
     const altHtml = item.recurrence === 'rolling' && item.recurrenceAlternate
       ? `<div class="recur-alt-next">next: ${esc(item.recurrenceAlternate.title)}</div>` : '';
 
+    // Last-done — absolute date, own line (kept separate from the overdue badge,
+    // which is relative/urgency-focused). Populated for both rolling and anchored
+    // (see _maybeSpawnRecurrence); null until the series has completed once.
+    const lastDoneHtml = `<div class="recur-last-done">Last done: ${item.recurrenceLastCompletedAt ? _fmtDate(item.recurrenceLastCompletedAt) : '—'}</div>`;
+
     return `<div class="card recur-card ${tagClass} ${stateClass}" data-id="${item.id}"
       onclick="App.openRecurringModal('${item.id}')">
       <div class="card-top">
@@ -1461,6 +1469,7 @@ const App = (() => {
             <div class="card-title">${esc(item.title)}</div>
             ${scheduleHtml}
             ${altHtml}
+            ${lastDoneHtml}
           </div>
         </div>
         <div class="card-top-right">

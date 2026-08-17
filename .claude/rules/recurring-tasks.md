@@ -33,7 +33,7 @@ migration added one new column.
 | recurrenceIntervalN | recurrence_interval_n | int — rolling-only |
 | recurrenceIntervalUnit | recurrence_interval_unit | `'days'` \| `'weeks'` \| `'months'` — rolling-only |
 | recurrenceLeadDays | recurrence_lead_days | int, nullable — **new**, anchored-only. "Start showing as due-soon N days before due_date." |
-| recurrenceLastCompletedAt | recurrence_last_completed_at | date, nullable — rolling-only; date the cadence last had any completion, drives the "+Nd overdue" badge (see below) |
+| recurrenceLastCompletedAt | recurrence_last_completed_at | date, nullable — populated for **both** rolling and anchored (see below); date the cadence last had any completion |
 | recurrenceAlternate | recurrence_alternate | jsonb `{title, notes, tags}`, nullable — rolling-only; the "other side" of an alternating pair (see below) |
 
 `archive`'s lean subset is unchanged (`recurrence` + `recurrence_series_id` only — no
@@ -212,7 +212,9 @@ Three changes, all in `_renderRecurringCard` / the functions around it in `app.j
   (never completed once) reads as muted, never overdue — same "unknown, not today" rule
   the old logic had for `recurrenceLastCompletedAt`. `recurrenceLastCompletedAt` is still
   written on every rolling spawn but is no longer read for badge/state purposes — kept
-  as history (useful groundwork for the future learning layer below).
+  as history (useful groundwork for the future learning layer below). **As of the
+  Last-done display (session 2026-08-17, see below), anchored spawns write it too** —
+  it's no longer rolling-only.
 - **`.recur-due-banner`** — a slim banner across the top of the **Tasks board only**
   (rendered by `_renderRecurDueBanner()`, prepended to `board.innerHTML` in the non-
   projects/non-calendar branch of `renderBoard()`) whenever any recurring task is
@@ -230,6 +232,31 @@ Three changes, all in `_renderRecurringCard` / the functions around it in `app.j
   overlay (`.rc-overlay`/`.rc-modal`, same pattern as `_openRecurConfirm`) with a single
   `<input type="date" max="today">` for backdating — reachable from the card's "⋯" link
   and from a "Mark complete…" button in the Recurring modal's footer (edit mode only).
+
+## Last-done display, both kinds now write recurrenceLastCompletedAt (session 2026-08-17)
+The Recurring card only showed *relative* urgency (due-soon/overdue countdown) — no way
+to see the actual last-completion date at a glance. Two changes:
+
+- **Anchored now writes `recurrenceLastCompletedAt` too.** Previously only the rolling
+  branch of `_maybeSpawnRecurrence` set it; the anchored branch spawned the next
+  occurrence via `_openRecurConfirm` → `_recurConfirmSave`/`_recurConfirmDismiss` without
+  ever touching the field. `_maybeSpawnRecurrence`'s `completionDateStr` is now threaded
+  through as a 4th arg to `_openRecurConfirm` (stored on `_recurConfirmState`), and both
+  `_recurConfirmSave` and `_recurConfirmDismiss` include
+  `recurrenceLastCompletedAt: completionDateStr` in their `Data.upsertTask` call — same
+  value rolling has always written (the *completion* date, not the newly-chosen next-due
+  date). Rolling behavior is unchanged.
+- **`_renderRecurringCard`** gets a new `.recur-last-done` line ("Last done: Aug 12", via
+  `_fmtDate`; "Last done: —" when `recurrenceLastCompletedAt` is null, i.e. never
+  completed) under `.recur-schedule`/`.recur-alt-next`. Deliberately its **own line**,
+  not folded into `.recur-overdue-badge` — the badge is relative/urgency-styled
+  (escalating color), this is a flat absolute-date fact, same muted styling regardless
+  of due state.
+
+This does *not* change `_recurDueState`/the overdue badge/the due banner — those still
+read `dueDate`/`scheduledDate` exactly as before (see the 2026-08-11 section above).
+`recurrenceLastCompletedAt` was already "kept as history, useful groundwork for the
+future learning layer" for rolling; it's now that plus a visible field for anchored too.
 
 ## Not built
 - **Learning/algorithmic interval suggestion** — deferred, explicitly scoped as a
