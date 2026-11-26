@@ -51,3 +51,13 @@ the touched views and the run fails on any console error / page error. Run it yo
   - `_dailyRollover` no longer called (init + midnight); function deleted in Prompt 9.
   - Zoom out / log go to placeholder views until Prompts 5/6.
 - Check: `dev/scenarios/p3-today.cjs` — ranking order, carry-over reason, Tab flow, Shift+Enter, inline shortcuts, `every 2w`, Backspace/Esc, pull, drag-reorder, not-today, done→archive, recurring check-off respawn, I'm set, nav. No console errors.
+
+## Prompt 4 — Focus hookup ✅
+- Focus no longer uses the `doing` status or the Next column: in-memory `_focusId` + `_focusStartEventId`. Overlay visuals unchanged.
+- `started` logged on start; `done` logged with the session's work minutes; `time_spent` still accrues.
+- On Done the overlay stays open with a "Up next on Today" card (next Today item + **Start ›**) or "Today's list is clear", plus **Back to Today**. "Return to Next" renamed "Back to Today".
+- Decisions:
+  - A reload ends a Focus session (it used to resume because `doing` was persisted). Simpler and avoids a stale `doing` row; minutes up to the last Back/Done are kept. If you want resume-after-reload later, store `_focusId` in `tasks.meta`.
+  - Back-to-Today minutes are written onto that session's `started` event (new `Data.setEventMinutes`) so the Log can attribute minutes to days without double counting.
+  - Starting a different task while one is in Focus ends the first as Back to Today.
+- Check: `dev/scenarios/p4-focus.cjs` (start → back → start → done → up-next → start → done → clear → back; event sequence + archive). Today scenario still passes. No console errors.

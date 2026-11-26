@@ -101,3 +101,13 @@ Return · Pause/Resume (+ Skip) / boundary Start · Done. **No `.primary` emphas
 - **Chromium only** — Safari/Firefox lack Document PiP; Float button is feature-gated.
 - **`requestWindow()` requires a user gesture** — so the float is manual (button), never auto-on-blur. Also means it can't be driven in automated preview.
 - The OS window has an **unavoidable native title bar** — can't be recoloured, forced to light, or removed (confirmed: no CSS/`color-scheme`/`theme-color` lever works). Its black is `#18191b`; we match the window background to it for a seamless surface rather than fighting it.
+
+---
+
+## One List hookup (Prompt 4, 2026-11-25)
+- **No `doing` status any more.** Which task is in Focus is the in-memory `_focusId` (app.js); `_renderFocusRow()` reads `Data.findItem(_focusId)`. The task stays on Today the whole time. A page reload ends the session (minutes already written are kept) — the old persisted-`doing` resume is gone.
+- Entry: Today item 1's **start** (`olStart` → `startTask(id)`) or the up-next card. `startTask` ends any other in-flight session first (as Back to Today) and logs a `started` task_event (id kept in `_focusStartEventId`).
+- **Back to Today** (`removeFromDoing`, label changed from "Return to Next"): `_endFocusSession(item)` stops the timer and accrues work minutes onto `timeSpent`; the minutes are also written onto the session's `started` event (`Data.setEventMinutes`) so the Log can count them by day.
+- **Done** (`markDoingDone`): accrues `timeSpent`, then `Data.completeTask(id, {minutes})` (archive + `done` event with this session's minutes); recurring tasks spawn their next occurrence and archive instead. Then `_focusHandoff = {doneTitle, minutes}` and the overlay stays open in a `.handoff` state: orb settles (paused), meta shows "✓ <title> · Nm focused", and a `.focus-upnext` card offers the next Today item (`Data.todayList()[0]`) with **Start ›**, or "Today's list is clear". **Back to Today** (`focusBackToToday`) exits. PiP is docked when the handoff shows.
+- Minutes never double-count: a session's minutes are on exactly one event — its `started` row (if it ended with Back to Today) or the `done` row (if it ended with Done).
+- Visual language of the overlay is unchanged (legacy paper/serif/mono tokens are allowed here and only here).

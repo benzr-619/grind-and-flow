@@ -115,6 +115,15 @@ const App = (() => {
   // Clock
   let clockInterval = null;
 
+  // ── Focus (One List) — which task is in Focus is in-memory, not a status. ──
+  // The old persisted `doing` status / Next column are gone: Focus is opened from Today
+  // item 1 ("start"), the task stays on Today the whole time, and a reload simply ends
+  // the session (minutes already logged are kept). _focusHandoff = the post-Done
+  // "up next on Today" card state.
+  let _focusId = null;
+  let _focusStartEventId = null;
+  let _focusHandoff = null; // { doneTitle, minutes } while the up-next card shows
+
   // ── Data migration (handle old status values) ──
   function _migrateData() {
     const state = Data.get();
@@ -2403,8 +2412,10 @@ const App = (() => {
     const glowEl = fdoc.getElementById('focus-orb-glow');
     if (!fz || !meta || !controls) return;
 
-    const state = Data.get();
-    const task = state.tasks.filter(t => t.status === 'doing')[0] || null;
+    const task = _focusId ? Data.findItem(_focusId) || null : null;
+
+    if (!task && _focusHandoff) { _renderFocusHandoff(fz, meta, controls, orbEl, glowEl); return; }
+    fz.classList.remove('handoff');
 
     if (!task) {
       if (_pipWin) closeFocusPip();
@@ -2459,8 +2470,8 @@ const App = (() => {
       <p class="fmeta-sub">${subHtml}</p>`;
 
     // Bottom controls — minimal, low contrast.
-    // Layout reads spatially: Return to Next (backward) left · main action middle · Done (forward) right.
-    const backBtn = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return to Next</button>`;
+    // Layout reads spatially: Back to Today (backward) left · main action middle · Done (forward) right.
+    const backBtn = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Back to Today</button>`;
     const doneBtn = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
     // Float/Dock — only when Document PiP is available (Chromium). Pops the orb into
     // an always-on-top window that follows the user across apps.
@@ -2575,52 +2586,94 @@ const App = (() => {
     row?.classList.remove('doing-drag-over');
     placeholder?.remove(); placeholder = null;
     if (!dragId) return;
-    const state = Data.get();
-    const item = Data.findItem(dragId);
-    if (!item || item.type === 'project' || item.status === 'doing') return;
-    // Bump any existing doing task back to next
-    state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; Data.upsertTask(t); });
-    item.status = 'doing';
-    Data.upsertTask(item);
-    activateTask(item.id);
+    if (dragId !== _focusId) startTask(dragId);
   }
 
-  function removeFromDoing(id) {
-    const item = Data.findItem(id);
-    if (!item) return;
-    if (timerTask && timerTask.id === id) {
-      item.timeSpent = (item.timeSpent || 0) + (timerTask._workElapsed || 0);
+  // Ends the timer for `id` and returns this session's work minutes (also accrued
+  // onto item.timeSpent, which carries into the archive).
+  function _endFocusSession(item) {
+    let mins = 0;
+    if (timerTask && timerTask.id === item.id) {
+      mins = timerTask._workElapsed || 0;
+      item.timeSpent = (item.timeSpent || 0) + mins;
       clearInterval(timerInterval);
       clearInterval(timerElapsedInterval);
       _stopBoundaryFlash();
       timerTask = null;
       timerRunning = false;
+      timerAtBoundary = false;
       timerSecsRemaining = 0;
-      _renderTimerTrack();
     }
-    item.status = 'next';
-    Data.upsertTask(item);
+    return mins;
+  }
+
+  // "Back to Today" — leave Focus; the task stays on Today. Work minutes go onto the
+  // session's `started` event (so the Log can count them per day) and timeSpent.
+  function removeFromDoing(id) {
+    const item = Data.findItem(id);
+    _focusHandoff = null;
+    if (item) {
+      const mins = _endFocusSession(item);
+      Data.upsertTask(item);
+      if (mins && _focusStartEventId) Data.setEventMinutes(_focusStartEventId, mins);
+    }
+    _focusId = null; _focusStartEventId = null;
     _renderFocusRow();
     renderBoard();
   }
 
+  // Done in Focus — complete (archive; recurring spawns its next occurrence), log `done`
+  // with this session's work minutes, then show the "up next on Today" card.
   function markDoingDone(id) {
     const item = Data.findItem(id);
     if (!item) return;
-    if (timerTask && timerTask.id === id) {
-      item.timeSpent = (item.timeSpent || 0) + (timerTask._workElapsed || 0);
-      clearInterval(timerInterval);
-      clearInterval(timerElapsedInterval);
-      _stopBoundaryFlash();
-      timerTask = null;
-      timerRunning = false;
-      timerSecsRemaining = 0;
-      _renderTimerTrack();
-    }
-    item.status = 'done';
-    _saveCompletionDate(item.id);
+    const mins = _endFocusSession(item);
     Data.upsertTask(item);
-    _maybeSpawnRecurrence(item, _today());
+    if (item.status === 'recurring') {
+      _maybeSpawnRecurrence(item, Data.localToday());
+      Data.logEvent(id, 'done', mins || null);
+      Data.archiveItemWithDate(id, Data.localToday());
+    } else {
+      Data.completeTask(id, { minutes: mins });
+    }
+    _focusId = null; _focusStartEventId = null;
+    _focusHandoff = { doneTitle: item.title, minutes: mins };
+    _renderFocusRow();
+    renderBoard();
+  }
+
+  // Post-Done card: the next Today item with a one-tap start, or "back to Today".
+  function _renderFocusHandoff(fz, meta, controls, orbEl, glowEl) {
+    if (_pipWin) closeFocusPip();
+    fz.style.display = 'flex';
+    requestAnimationFrame(() => fz.classList.add('active'));
+    fz.classList.remove('break');
+    fz.classList.add('handoff');
+    if (orbEl)  orbEl.className  = 'orb work paused';
+    if (glowEl) glowEl.className = 'orb-glow work paused';
+    const next = Data.todayList()[0] || null;
+    const h = _focusHandoff;
+    meta.innerHTML = `
+      <p class="fmeta-label">Done</p>
+      <p class="fmeta-title">✓ ${esc(h.doneTitle)}</p>
+      <p class="fmeta-sub">${h.minutes ? `${h.minutes}m focused` : 'nice.'}</p>`;
+    const why = next ? _olMeta(next) : '';
+    controls.innerHTML = `
+      <div class="focus-upnext">
+        ${next ? `<span class="fu-label">Up next on Today</span>
+          <span class="fu-title">${esc(next.title)}</span>
+          ${why ? `<span class="fu-why">${esc(why)}</span>` : ''}
+          <button class="oc-btn primary" onclick="App.startTask('${next.id}')">Start ›</button>`
+        : `<span class="fu-label">Today's list is clear</span>`}
+      </div>
+      <div class="orb-controls">
+        <button class="oc-btn" onclick="App.focusBackToToday()">Back to Today</button>
+      </div>`;
+    const clock = document.getElementById('focus-clock-time'); if (clock) clock.remove();
+  }
+
+  function focusBackToToday() {
+    _focusHandoff = null;
     _renderFocusRow();
     renderBoard();
   }
@@ -2658,15 +2711,23 @@ const App = (() => {
     if (pipEl) pipEl.innerHTML = html;
   }
 
+  // Open Focus on a task (Today item 1's "start", or the up-next card). Any task
+  // already in Focus is ended as "Back to Today" first, keeping its minutes.
   function startTask(id) {
     const item = Data.findItem(id);
     if (!item || item.type === 'project') return;
-    const state = Data.get();
-    if (item.status !== 'doing') {
-      // Bump any existing doing task back to next
-      state.tasks.filter(t => t.status === 'doing').forEach(t => { t.status = 'next'; Data.upsertTask(t); });
-      item.status = 'doing';
-      Data.upsertTask(item);
+    _focusHandoff = null;
+    if (_focusId && _focusId !== id) {
+      const prev = Data.findItem(_focusId);
+      if (prev) {
+        const mins = _endFocusSession(prev);
+        Data.upsertTask(prev);
+        if (mins && _focusStartEventId) Data.setEventMinutes(_focusStartEventId, mins);
+      }
+    }
+    if (_focusId !== id) {
+      _focusId = id;
+      _focusStartEventId = Data.logEvent(id, 'started').id;
     }
     activateTask(id);
   }
@@ -5033,7 +5094,7 @@ const App = (() => {
     _onDragStart, _onDragEnd, _onDragOver, _onDragLeave, _onDrop,
     _onFocusDragOver, _onFocusDragLeave, _onFocusDrop,
     _onDoingDragOver, _onDoingDragLeave, _onDoingDrop,
-    removeFromDoing, markDoingDone,
+    removeFromDoing, markDoingDone, focusBackToToday,
     _closeDetail, _saveDetail, _setBlocked, _setProjState, _onProjStatusChange, _markProjectDone, _moveItem,
     _showDelConfirm, _resetDelZone, _deleteItem,
     _toggleArchiveProject, _restoreDoneProject, _deleteDoneProject,

@@ -660,6 +660,14 @@ const Data = (() => {
     return e;
   }
 
+  // Set minutes on an existing event (Focus "Back to Today" writes the session's work
+  // minutes onto its `started` row).
+  function setEventMinutes(eventId, minutes) {
+    const e = (_state.events || []).find(x => x.id === eventId); if (!e) return;
+    e.minutes = minutes;
+    _syncEvent(e);
+  }
+
   async function _syncEvent(e) {
     if (!_client) return;
     const { error } = await _client.from('task_events').upsert(_eventToDb(e, await _uid()));
@@ -811,7 +819,7 @@ const Data = (() => {
     upsertTag, deleteTag,
     upsertCommitment, deleteCommitment,
     // One List
-    AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent,
+    AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent, setEventMinutes,
     todayList, openTasks, recurringTasks, ideas, events,
     syncAll, replaceAll,
     save, saveNow, isDirty,

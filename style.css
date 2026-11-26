@@ -394,6 +394,18 @@ input, textarea, select { font: inherit; color: inherit; }
 .oc-btn:active { transform: scale(0.97); }
 .oc-btn.primary { border-color: var(--muted); color: var(--ink); }
 
+/* ── Post-Done handoff: "up next on Today" card (One List, Prompt 4) ── */
+.focus-zone.handoff #focus-orb-controls { flex-direction: column; align-items: center; gap: 14px; }
+.focus-upnext {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;
+  padding: 12px 18px; max-width: min(92vw, 760px);
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--r-xs);
+  box-shadow: var(--shadow-card);
+}
+.fu-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--steel-soft); }
+.fu-title { font-family: var(--font-body); font-size: 15px; color: var(--ink); }
+.fu-why   { font-family: var(--font-mono); font-size: 11px; color: var(--steel-soft); }
+
 @media (prefers-reduced-motion: reduce) {
   .orb-wrap, .orb, .orb-glow { animation: none; }
   .focus-zone { transition: opacity 200ms ease, background 200ms ease; }
