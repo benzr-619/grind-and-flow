@@ -41,6 +41,9 @@ All four app tables exist in the `public` schema with RLS enabled:
 ## Ranking telemetry migration (2026-11-26)
 - Migration `task_events_meta`: `task_events.meta` jsonb nullable; check constraint `task_events_event_check` dropped and re-added with `reordered` and `day_snapshot` added to the event list. Meta shapes: [one-list rule § Ranking telemetry](./one-list.md#ranking-telemetry-2026-11-26).
 
+## nth-weekday recurrence migration (2026-11-26)
+- Migration `add_recurrence_nth_to_tasks`: `tasks.recurrence_nth` jsonb nullable (int[] of 1–5 / -1 = last). `archive` unchanged.
+
 ## Gotchas
 
 - `archive.blocked`, `archive.tags`, and `archive.subtasks` are stored as `text` (not `boolean`/`jsonb`) — inconsistent with the `projects` and `tasks` tables. Keep this in mind if querying or inserting archive rows directly.

@@ -93,6 +93,46 @@ eq(P.parseTitle('#1 priority thing', T).title, '#1 priority thing', 'non-area # 
 eq(P.parseTitle('Write by the lake', T).title, 'Write by the lake', '"by" without a date kept');
 eq(P.parseTitle('asap', T).title, 'asap', 'never strip to empty');
 
+// ── nth-weekday recurrence: "every 2nd and 4th mon" (2026-11-26) ──
+// Nov 2026 has 5 Mondays (2 9 16 23 30); Dec 2026 Mondays 7 14 21 28; Jan 2027 4 11 18 25.
+const nth = q => P.parseWhen(q, T).recur;
+eq(nth('every 2nd and 4th mon'), { recurrence: 'anchored', recurrenceWeekdays: [0], recurrenceNth: [2, 4], recurrenceMonthDay: null, recurrenceLeadDays: 1, dueDate: '2026-12-14' }, '2nd and 4th mon → Dec 14');
+eq(P.parseWhen('every 2nd and 4th mon', T).label, '↻ 2nd & 4th Mon', 'nth label');
+eq(nth('every 2st and 4rd monday').recurrenceNth, [2, 4], 'typo suffixes 2st / 4rd');
+eq(nth('every 2th & 4nd mon').recurrenceNth, [2, 4], 'any suffix');
+eq(nth('every 2 4 mon').recurrenceNth, [2, 4], 'bare digits');
+eq(nth('every 4th and 2nd mon').recurrenceNth, [2, 4], 'ordinals sorted');
+eq(nth('every 2nd & 4th monday').dueDate, '2026-12-14', '& + full weekday name');
+eq(nth('every 1st, 3rd tue'), { recurrence: 'anchored', recurrenceWeekdays: [1], recurrenceNth: [1, 3], recurrenceMonthDay: null, recurrenceLeadDays: 1, dueDate: '2026-12-01' }, '1st, 3rd tue → Dec 1');
+eq(P.parseWhen('every 1st, 3rd & last tue', T).label, '↻ 1st, 3rd & last Tue', 'three-ordinal label');
+eq(nth('every last fri').recurrenceNth, [-1], 'last → -1');
+eq(nth('every last fri').dueDate, '2026-11-27', 'last fri of Nov 2026 = Nov 27');
+eq(P.parseWhen('every last fri', T).label, '↻ last Fri', 'last label');
+eq(nth('every last mon').dueDate, '2026-11-30', 'last mon in a 5-Monday month = the 5th');
+eq(nth('every 4th mon').dueDate, '2026-12-28', '4th mon of Nov (23) already past → Dec 28');
+eq(P.parseWhen('every 2nd mon', '2026-12-14').recur.dueDate, '2026-12-14', 'due date is on-or-after today');
+eq(nth('every 2w').recurrence, 'rolling', 'every 2w still rolling');
+eq(nth('every 15th').recurrenceMonthDay, 15, 'every 15th still a month day');
+eq(nth('every mon thu').recurrenceNth, undefined, 'plain weekdays: no nth');
+eq(P.parseWhen('every 2nd 4th', T).invalid, true, 'ordinals without a weekday → invalid');
+eq(P.parseWhen('every mon 2nd', T).invalid, true, 'weekday before ordinal → invalid');
+// next date after a completion
+const NX = P.nextNthWeekday;
+eq(NX('2026-12-28', [0], [2, 4], false), '2027-01-11', 'rollover: 4th Mon Dec → 2nd Mon Jan');
+eq(NX('2026-12-14', [0], [2, 4], false), '2026-12-28', '2nd → 4th Mon same month');
+eq(NX('2026-11-23', [0], [-1], false), '2026-11-30', '5-Monday month: last = Nov 30');
+eq(NX('2026-11-23', [0], [4], false), '2026-12-28', '5-Monday month: 4th is Nov 23, not 30');
+eq(NX('2026-12-01', [0], [5], false), '2027-03-29', '5th Mon skips months without one');
+eq(NX('2026-11-30', [0], [-1], false), '2026-12-28', 'last Mon → next month last Mon');
+eq(NX('2026-11-25', [0, 3], null, false), '2026-11-26', 'no nth = every week');
+eq(NX('2026-11-25', [0, 3], [1], true), '2026-12-03', 'two weekdays, 1st only → Thu Dec 3');
+eq(P.nthLabel([0, 3], [2, 4]), '2nd & 4th Mon/Thu', 'multi-weekday label');
+// inline (title step) + the phone path
+const nt = P.parseTitle('Neuro consult data every 2st and 4rd monday', T);
+eq(nt.title, 'Neuro consult data', 'inline nth stripped from title');
+eq([nt.when.recur.recurrenceNth, nt.when.recur.dueDate], [[2, 4], '2026-12-14'], 'inline nth parsed');
+eq(P.parseTitle('call x every 1st, 3rd tue #amd', T).when.recur.recurrenceNth, [1, 3], 'inline with commas + area');
+
 // ── normalizeCase (capture-time capitalization) ──
 const C = P.normalizeCase;
 eq(C('reply to cardiology'), 'Reply to cardiology', 'lowercase → sentence case');

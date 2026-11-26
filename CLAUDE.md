@@ -12,6 +12,7 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 - [Phone stopgap](./.claude/rules/mobile.md) — bare ≤640px surface (`_renderPhone`): numbered Today (tap/swipe to complete + undo), due recurring, capture with tap chips. Fuller phone design is future work.
 - [Focus Mode orb](./.claude/rules/focus-mode.md) — full-screen `#focus-zone` overlay (visual language unchanged), PiP float; One List hookup: in-memory `_focusId`, `started`/`done` events with minutes, post-Done "up next on Today" card.
 - [Recurring tasks](./.claude/rules/recurring-tasks.md) — rolling/anchored data + spawn/due logic (kept); created via `every …` in the entry bar, pinned in Offered when due, edited in `openRecurringModal`. Top of the file says what changed for One List.
+- [nth-weekday recurrence](./.claude/rules/recurring-tasks.md#nth-weekday-recurrence--every-2nd-and-4th-monday-2026-11-26) — `every 2nd and 4th mon` / `every last fri` → `recurrenceNth`; anchored next date starts after the later of completion and due date.
 - [Supabase MCP](./.claude/rules/supabase-mcp.md) — project id, migrations (incl. `one_list_model`), gotchas.
 - `.claude/rules/_retired/` — Tasks board, Projects canvas, Week view, Inbox Review (deleted 2026-11-25; history only).
 
@@ -67,7 +68,7 @@ All Supabase reads/writes. Optimistic: every mutation updates in-memory `_state`
 **Must not:** render UI, touch the DOM, or know about auth beyond the injected client.
 
 ### `parse.js` — Entry-bar parser (pure)
-`GFParse.parseWhen` / `parseArea` / `parseTitle` / `parseDate` / `parseEvery` / `closeMatch`. No DOM, no Data. UMD-style: global in the browser, `require()`-able in node. Tests: `node dev/parse.test.js`.
+`GFParse.parseWhen` / `parseArea` / `parseTitle` / `parseDate` / `parseEvery` / `nextNthWeekday` / `nthLabel` / `normalizeCase` / `closeMatch`. No DOM, no Data. UMD-style: global in the browser, `require()`-able in node. Tests: `node dev/parse.test.js`.
 
 ### `app.js` — UI layer
 All rendering and events, in the `App` IIFE: recurring logic + modal, Focus overlay + timer + PiP, the One List desktop views (Today / Offered / entry bar / Everything / detail popover / Log), the phone stopgap. `App.init()` is called only by `auth.js`; `_initialized` guards double-init. `renderBoard()` → `_renderPhone()` at ≤640px, else `_renderOL()`.
@@ -111,7 +112,7 @@ Tables in use: `tasks`, `archive`, `task_events` — all scoped by `user_id`, RL
 | dateAdded | date_added | drives "added N days ago" + age points |
 | timeSpent | time_spent | int, Focus work-minutes accrued |
 | purpose / effort / source / meta | purpose / effort / source / meta | future-proofing; `source` = `app`/`phone`/`claude`; `effort` S/M/L; `meta` jsonb |
-| recurrence, recurrenceSeriesId, recurrenceWeekdays, recurrenceMonthDay, recurrenceIntervalN, recurrenceIntervalUnit, recurrenceLeadDays, recurrenceLastCompletedAt, recurrenceAlternate | recurrence_* | see [recurring-tasks rule](./.claude/rules/recurring-tasks.md) |
+| recurrence, recurrenceSeriesId, recurrenceWeekdays, recurrenceNth, recurrenceMonthDay, recurrenceIntervalN, recurrenceIntervalUnit, recurrenceLeadDays, recurrenceLastCompletedAt, recurrenceAlternate | recurrence_* | see [recurring-tasks rule](./.claude/rules/recurring-tasks.md) |
 | parentProject, scheduledTime, blocked, blockedReason, tags, backlogEnteredAt, laterCount, dayOrder, boardOrder | … | legacy columns, no longer read or written by the UI |
 | — | user_id | injected by `_taskToDb()` |
 
@@ -160,7 +161,7 @@ None. (The old `gf-completion-dates` key is no longer used.) All user state live
 ### Complete and working (2026-11-25, One List)
 - **Today** — date header with *zoom out* / *log* / sign-out; entry bar; numbered drag-reorder list; hover *not today →* + done circle; *start* on item 1; quiet divider after item 10.
 - **Offered** — due/overdue recurring pinned (✓ to check off, + to pull); points ranking (`RANK_WEIGHTS`: asap +50; by-date overdue +60 / ≤2d +40 / ≤7d +25 / later +10; on Today in last 3 days +30; added in last 3 days +15; age +1/week max +10; no rush −40); ~12 shown with "+ n more"; one reason per row; *I'm set ✓* hides it for the day.
-- **Entry bar** — Tab flow, Enter → Offered/Everything, Shift+Enter → Today, Backspace steps back, Esc clears; step 2 takes asap / no rush / idea (`i`) / a date — idea wins and goes to Everything (also on Shift+Enter); inline shortcuts (`#amd asap`, `by fri`, `idea:`); `every 5d|2w|month` (rolling) / `every mon|15th` (anchored); duplicate hint (keep both / open existing).
+- **Entry bar** — Tab flow, Enter → Offered/Everything, Shift+Enter → Today, Backspace steps back, Esc clears; step 2 takes asap / no rush / idea (`i`) / a date — idea wins and goes to Everything (also on Shift+Enter); inline shortcuts (`#amd asap`, `by fri`, `idea:`); `every 5d|2w|month` (rolling) / `every mon|15th|2nd and 4th mon|last fri` (anchored); duplicate hint (keep both / open existing).
 - **Everything** — zoom-out transition; clusters by area / urgency / date entered with glide; drift; solid dot = on Today, hollow = idea; legible at ~60 items (row/sub-column layout search); inline detail popover (title, priority, due, area, notes, add to / take off Today, make a task, delete; recurring → ↻ cadence + edit recurrence).
 - **Focus** — orb overlay + timer + PiP unchanged; in-memory focus task; Back to Today / Done; "up next on Today" handoff card; `started`/`done` events with minutes.
 - **Recurring** — rolling + anchored, spawn on completion (anchored confirm prompt), backdated completion, alternating pairs; edited via the recurring modal.

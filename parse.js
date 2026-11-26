@@ -6,6 +6,7 @@
 //   parseWhen('i' | 'idea')  → { idea:true, label:'idea' }
 //   parseWhen('dec 4', today)→ { dueDate:'2026-12-04', label:'by Dec 4' }
 //   parseWhen('every 2w')    → { recur:{ recurrence:'rolling', … }, label:'↻ every 2 weeks' }
+//   parseWhen('every 2nd & 4th mon') → { recur:{ recurrence:'anchored', recurrenceWeekdays:[0], recurrenceNth:[2,4], … }, label:'↻ 2nd & 4th Mon' }
 //   parseArea('r')           → 'Research'
 //   parseTitle('#amd fix x asap') → { title:'fix x', area:'AMD', when:{…} }
 
@@ -135,6 +136,16 @@
       const unitLabel = n === 1 ? unit.replace(/s$/, '') : unit;
       return { recur: rec, label: `↻ every ${n === 1 ? '' : n + ' '}${unitLabel}` };
     }
+      // anchored nth weekday: "2nd and 4th mon", "2st & 4rd monday", "1st, 3rd tue",
+    // "last fri", "2 4 mon". Any ordinal suffix (or none) is ignored — only the digit counts.
+    const nthDays = parseNthWeekdays(rest);
+    if (nthDays) {
+      const due = nextNthWeekday(today, nthDays.weekdays, nthDays.nth, true);
+      return {
+        recur: { recurrence: 'anchored', recurrenceWeekdays: nthDays.weekdays, recurrenceNth: nthDays.nth, recurrenceMonthDay: null, recurrenceLeadDays: 1, dueDate: due },
+        label: '↻ ' + nthLabel(nthDays.weekdays, nthDays.nth),
+      };
+    }
     // anchored weekdays: "mon", "mon thu", "mon/thu", "mon and thu", "monday"
     const words = rest.split(/[\s/&+]+|and/).filter(Boolean);
     const dows = words.map(dowIndex);
@@ -157,6 +168,50 @@
     }
     return null;
   }
+  // "2nd and 4th mon" → { nth:[2,4], weekdays:[0] }, else null. Ordinals first (1–5 with
+  // any 0–2 letter suffix, or "last" → -1), then one or more weekdays.
+  function parseNthWeekdays(rest) {
+    const toks = rest.split(/[\s/&+,]+/).filter(w => w && w !== 'and' && w !== 'the');
+    const nth = [], days = [];
+    for (const w of toks) {
+      const d = dowIndex(w);
+      if (d >= 0) { days.push(d); continue; }
+      if (days.length) return null; // ordinals must come before the weekdays
+      const m = w.match(/^([1-5])[a-z]{0,2}$/);
+      if (m) nth.push(+m[1]);
+      else if (w === 'last' || w === 'lst') nth.push(-1);
+      else return null;
+    }
+    if (!nth.length || !days.length) return null;
+    return { nth: [...new Set(nth)].sort(nthSort), weekdays: [...new Set(days)].sort((a, b) => a - b) };
+  }
+  function nthSort(a, b) { return (a < 0 ? 9 : a) - (b < 0 ? 9 : b); } // "last" sorts after 5th
+
+  // Is date `s` the nth (1–5) of its weekday in its month, or the last one (-1)?
+  function isNthOfMonth(s, nth) {
+    const d = toDate(s), day = d.getDate();
+    const monthLen = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return nth.includes(Math.ceil(day / 7)) || (nth.includes(-1) && day + 7 > monthLen);
+  }
+  // First date on one of `weekdays` (0=Mon…6=Sun) that also matches `nth` (null/[] = any
+  // week), starting at `from` (inclusive) or the day after it. Scans ~13 months, since a
+  // 5th weekday only exists in some months.
+  function nextNthWeekday(from, weekdays, nth, inclusive) {
+    if (!weekdays || !weekdays.length) return null;
+    let s = inclusive ? from : addDays(from, 1);
+    for (let i = 0; i < 400; i++, s = addDays(s, 1)) {
+      if (weekdays.includes(dowOf(s)) && (!nth || !nth.length || isNthOfMonth(s, nth))) return s;
+    }
+    return null;
+  }
+  // [0], [2,4] → "2nd & 4th Mon"; [1], [1,3,-1] → "1st, 3rd & last Tue"; [4], [-1] → "last Fri".
+  function nthLabel(weekdays, nth) {
+    const ords = [...nth].sort(nthSort).map(n => n < 0 ? 'last' : n + ordinal(n));
+    const ordTxt = ords.length > 1 ? ords.slice(0, -1).join(', ') + ' & ' + ords[ords.length - 1] : ords[0];
+    const dayTxt = [...weekdays].sort((a, b) => a - b).map(d => DOWS[d][0].toUpperCase() + DOWS[d].slice(1)).join('/');
+    return `${ordTxt} ${dayTxt}`;
+  }
+
   function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 
   // The priority/date step: asap · no rush · idea · a date (or every …).
@@ -202,7 +257,7 @@
       return all;
     }).replace(/\s+/g, ' ').trim();
     // trailing "every …"
-    let m = s.match(/\s+(every\s+[\w\s/&+]+)$/i);
+    let m = s.match(/\s+(every\s+[\w\s/&+,]+)$/i);
     if (m) { const ev = parseEvery(m[1], today); if (ev) { when = ev; s = s.slice(0, m.index).trim(); } }
     // trailing "by …" / "due …"
     if (!when) {
@@ -262,7 +317,7 @@
     return bestScore >= 0.6 ? best : null;
   }
 
-  const api = { AREAS, CASE_WORDS, normalizeCase, parseWhen, parseArea, parseTitle, parseDate, parseEvery, closeMatch, ymd, addDays, fmt };
+  const api = { AREAS, CASE_WORDS, normalizeCase, parseWhen, parseArea, parseTitle, parseDate, parseEvery, nextNthWeekday, nthLabel, closeMatch, ymd, addDays, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GFParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

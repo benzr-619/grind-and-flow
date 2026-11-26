@@ -71,22 +71,25 @@ const App = (() => {
   }
 
   // Suggests the next due date for an anchored task, used to pre-fill the completion
-  // confirm prompt. Prefers the optional weekday/month-day default rule; falls back to
-  // the just-completed task's own due date as a starting nudge (never a hard rule).
+  // confirm prompt. Prefers the optional default rule (weekdays, optionally only the
+  // nth weeks of the month via recurrenceNth; or a month day); falls back to the
+  // just-completed task's own due date as a starting nudge (never a hard rule).
+  // The rule's search starts after the LATER of the completion date and the current
+  // due date (2026-11-26): finishing a date-anchored task early never re-suggests the
+  // same occurrence. (Rolling tasks count from the completion date — _nextRollingDate.)
   function _nextAnchoredSuggestedDate(item, fromDateStr) {
-    const from = new Date(fromDateStr + 'T00:00:00');
+    const start = item.dueDate && item.dueDate > fromDateStr ? item.dueDate : fromDateStr;
     if (item.recurrenceWeekdays && item.recurrenceWeekdays.length) {
-      for (let i = 1; i <= 14; i++) {
-        const d = new Date(from); d.setDate(d.getDate() + i);
-        const dow = (d.getDay() + 6) % 7; // JS: 0=Sun…6=Sat → 0=Mon…6=Sun
-        if (item.recurrenceWeekdays.includes(dow)) return _ymd(d);
-      }
+      const d = GFParse.nextNthWeekday(start, item.recurrenceWeekdays, item.recurrenceNth, false);
+      if (d) return d;
     }
     if (item.recurrenceMonthDay) {
-      const d = new Date(from.getFullYear(), from.getMonth() + 1, 1);
-      const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-      d.setDate(Math.min(item.recurrenceMonthDay, lastDay));
-      return _ymd(d);
+      const s = new Date(start + 'T00:00:00');
+      for (let k = 0; k < 3; k++) {
+        const lastDay = new Date(s.getFullYear(), s.getMonth() + k + 1, 0).getDate();
+        const d = _ymd(new Date(s.getFullYear(), s.getMonth() + k, Math.min(item.recurrenceMonthDay, lastDay)));
+        if (d > start) return d;
+      }
     }
     return item.dueDate || fromDateStr;
   }
@@ -109,6 +112,7 @@ const App = (() => {
       recurrenceSeriesId: seriesId,
       recurrenceWeekdays: item.recurrenceWeekdays || null,
       recurrenceMonthDay: item.recurrenceMonthDay || null,
+      recurrenceNth: item.recurrenceNth?.length ? [...item.recurrenceNth] : null,
       recurrenceIntervalN: item.recurrenceIntervalN || null,
       recurrenceIntervalUnit: item.recurrenceIntervalUnit || null,
       recurrenceLeadDays: item.recurrenceLeadDays ?? null,
@@ -908,6 +912,10 @@ const App = (() => {
     const leadRolling = item?.recurrenceLeadDays ?? 1;
     const days = item?.recurrenceWeekdays || [];
     const monthDay = item?.recurrenceMonthDay || '';
+    const nth = item?.recurrenceNth || [];
+    // Which weeks of the month (only with weekdays). A 5th can come in from the entry
+    // bar ("every 5th mon"); it gets a chip only when set, so saving keeps it.
+    const nthOpts = [1, 2, 3, 4, ...(nth.includes(5) ? [5] : []), -1];
     const ruleType = days.length ? 'weekly' : monthDay ? 'monthly' : '';
 
     // Alternating pair (rolling only) — the alternate side is a jsonb snapshot.
@@ -968,7 +976,11 @@ const App = (() => {
               <option value="monthly"${ruleType === 'monthly' ? ' selected' : ''}>Monthly</option>
             </select>
             <div id="rm-rule-weekly" class="recur-sub" style="display:${ruleType === 'weekly' ? 'flex' : 'none'}">
-              ${_RECUR_DOW.map((d, i) => `<button type="button" class="recur-day-btn${days.includes(i) ? ' active' : ''}" data-d="${i}" onclick="this.classList.toggle('active')">${d[0]}</button>`).join('')}
+              ${_RECUR_DOW.map((d, i) => `<button type="button" class="recur-day-btn${days.includes(i) ? ' active' : ''}" data-d="${i}" onclick="this.classList.toggle('active');App._recurModalDaysChanged()">${d[0]}</button>`).join('')}
+            </div>
+            <div id="rm-rule-nth" class="recur-sub rm-nth" style="display:${ruleType === 'weekly' && days.length ? 'flex' : 'none'}">
+              ${nthOpts.map(k => `<button type="button" class="recur-day-btn rm-nth-btn${nth.includes(k) ? ' active' : ''}" data-n="${k}" onclick="this.classList.toggle('active')">${k < 0 ? 'last' : k + ['th','st','nd','rd','th','th'][k]}</button>`).join('')}
+              <span class="recur-inline-label">none = every week</span>
             </div>
             <div id="rm-rule-monthly" class="recur-sub" style="display:${ruleType === 'monthly' ? 'flex' : 'none'}">
               <span class="recur-inline-label">on day</span>
@@ -1016,6 +1028,15 @@ const App = (() => {
     const type = sel.value;
     document.getElementById('rm-rule-weekly').style.display = type === 'weekly' ? 'flex' : 'none';
     document.getElementById('rm-rule-monthly').style.display = type === 'monthly' ? 'flex' : 'none';
+    _recurModalDaysChanged();
+  }
+
+  // The 1st/2nd/3rd/4th/last chip row only shows once a weekday is picked.
+  function _recurModalDaysChanged() {
+    const row = document.getElementById('rm-rule-nth'); if (!row) return;
+    const weekly = document.getElementById('rm-rule-type')?.value === 'weekly';
+    const anyDay = !!document.querySelector('#rm-rule-weekly .recur-day-btn.active');
+    row.style.display = weekly && anyDay ? 'flex' : 'none';
   }
 
   function _closeRecurModal() {
@@ -1035,11 +1056,14 @@ const App = (() => {
       const ruleType = document.getElementById('rm-rule-type')?.value || '';
       const ruleDays = ruleType === 'weekly'
         ? [...document.querySelectorAll('#rm-rule-weekly .recur-day-btn.active')].map(b => +b.dataset.d) : null;
+      const ruleNth = ruleDays && ruleDays.length
+        ? [...document.querySelectorAll('#rm-rule-nth .rm-nth-btn.active')].map(b => +b.dataset.n) : [];
       const ruleMonthDay = ruleType === 'monthly'
         ? Math.min(31, Math.max(1, +(document.getElementById('rm-rule-monthday')?.value || 1))) : null;
       fields = {
         recurrence: 'anchored', dueDate: due, scheduledDate: '', recurrenceLeadDays: lead,
         recurrenceWeekdays: ruleDays, recurrenceMonthDay: ruleMonthDay,
+        recurrenceNth: ruleNth.length ? ruleNth.sort((a, b) => (a < 0 ? 9 : a) - (b < 0 ? 9 : b)) : null,
         recurrenceIntervalN: null, recurrenceIntervalUnit: null,
         recurrenceAlternate: null, // alternating pairs are rolling-only
       };
@@ -1065,7 +1089,7 @@ const App = (() => {
       fields = {
         recurrence: 'rolling', dueDate: '', recurrenceLeadDays: leadRolling,
         recurrenceIntervalN: n, recurrenceIntervalUnit: unit,
-        recurrenceWeekdays: null, recurrenceMonthDay: null,
+        recurrenceWeekdays: null, recurrenceMonthDay: null, recurrenceNth: null,
         recurrenceAlternate,
       };
     }
@@ -1286,6 +1310,7 @@ const App = (() => {
       return `every ${n === 1 ? '' : n + ' '}${n === 1 ? u.replace(/s$/, '') : u}`;
     }
     if (item.recurrence === 'anchored') {
+      if (item.recurrenceWeekdays?.length && item.recurrenceNth?.length) return GFParse.nthLabel(item.recurrenceWeekdays, item.recurrenceNth);
       if (item.recurrenceWeekdays?.length) return 'every ' + item.recurrenceWeekdays.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(' ');
       if (item.recurrenceMonthDay) return `every ${item.recurrenceMonthDay} of the month`;
       return 'date-anchored';
@@ -1853,7 +1878,7 @@ const App = (() => {
     const t = Data.findItem(id);
     if (t) {
       // Archive rows keep no live scheduling state — a restored task comes back as a plain open task.
-      Object.assign(t, { status: 'open', recurrence: null, recurrenceSeriesId: null, todayDate: '', todayOrder: null });
+      Object.assign(t, { status: 'open', recurrence: null, recurrenceSeriesId: null, recurrenceNth: null, todayDate: '', todayOrder: null });
       Data.upsertTask(t);
     }
     renderBoard();
@@ -2403,7 +2428,7 @@ const App = (() => {
     set _initialized(v) { _initialized = v; },
     init,
     // Recurring
-    openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange, _recurModalToggleAlt,
+    openRecurringModal, _recurModalSetType, _recurModalToggleRule, _recurModalRuleTypeChange, _recurModalDaysChanged, _recurModalToggleAlt,
     _closeRecurModal, _saveRecurModal, _recurConfirmSave, _recurConfirmDismiss,
     completeRecurringToday, openRecurLogDate, _closeRecurLogDate, _confirmRecurLogDate,
     _showDelConfirm, _resetDelZone, _deleteItem,

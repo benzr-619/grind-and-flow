@@ -1,6 +1,7 @@
 > **One List (2026-11-25) — what changed; the rest of this file is history.**
 > - There is no Recurring column or due banner any more. Recurring tasks are **created from the entry bar** (`every 5d` / `every 2w` / `every month` → rolling; `every mon [thu]` / `every 15th` → anchored with the default rule; parsed by `parse.js`), **pinned at the top of Offered** when due-soon/overdue (✓ checks off via `completeRecurringToday`; `+` pulls onto Today like any task), shown in Everything with ↻ + cadence, and **edited** via `openRecurringModal` from the detail popover ("edit recurrence…"). The phone lists due ones too.
 > - Kept unchanged: `_maybeSpawnRecurrence` (now also copies `area`/`source` to the next occurrence), `_nextRollingDate`, `_nextAnchoredSuggestedDate`, the anchored confirm (`_openRecurConfirm`, desktop overlay + phone sheet), `_recurDueState`, `_recurDueList`, `_completeRecurring` (now also logs a `done` task_event), `openRecurLogDate` backdating, alternating pairs, `recurrenceLastCompletedAt`.
+> - **nth-weekday recurrence (2026-11-26)** — `every 2nd and 4th mon` / `every last fri`; `tasks.recurrence_nth`. Anchored next-date now starts after the later of completion and due date. See the section at the end.
 > - Tags are retired: the modal no longer has tag fields (alternate snapshot `tags` is always `[]`). Area is edited in the detail popover.
 > - Removed: `_renderRecurringCard`, `_renderRecurDueBanner`, the "+ new recurring" column button, `openDetail`'s redirect.
 
@@ -286,3 +287,15 @@ future learning layer" for rolling; it's now that plus a visible field for ancho
 - Project-link field on the dedicated Recurring modal (a recurring task's `parentProject`
   can only be set on data carried over from a pre-existing linked task, not from the
   create form).
+
+## nth-weekday recurrence — "every 2nd and 4th Monday" (2026-11-26)
+Date-anchored tasks can repeat on certain weeks of the month.
+
+- **Schema**: `tasks.recurrence_nth` jsonb int[] nullable (migration `add_recurrence_nth_to_tasks`), mapped `recurrenceNth`. Values 1–5, or -1 = last. Only meaningful with `recurrence = 'anchored'` and `recurrenceWeekdays` set; `null` / `[]` = every week (the old behavior). Applies to every listed weekday (`[0,3]` + `[2]` = 2nd Mon and 2nd Thu). `archive` unchanged.
+- **Parser** (`parse.js`): `parseEvery` tries `parseNthWeekdays` before the plain weekday branch: ordinal tokens first (a digit 1–5 with any 0–2 letter suffix, so `2st`/`4rd`/`2`/`2nd` all parse; `last`/`lst` → -1), separators `and` `&` `,` space `/`, then one or more weekdays. Ordinals after a weekday, or with no weekday, don't parse (→ invalid in step 2). First `dueDate` = first matching day **on or after** today. Label `↻ 2nd & 4th Mon` / `↻ 1st, 3rd & last Tue` / `↻ last Fri` (multi-weekday `Mon/Thu`). `parseTitle`'s trailing-`every` regex now allows commas, so inline + phone capture work. `every 2 weeks` / `every 15th` / `every 2 m` are caught by the earlier branches; `mon` is not a month unit, so `every 2 mon` = 2nd Monday.
+- **Pure helpers** exported on `GFParse`: `nextNthWeekday(from, weekdays, nth, inclusive)` (day-by-day scan, ~13 months, so a 5th weekday skips months without one; "last" = `day + 7 > monthLength`) and `nthLabel(weekdays, nth)`.
+- **Next date** (`_nextAnchoredSuggestedDate`): weekday rule → `GFParse.nextNthWeekday(start, weekdays, nth, false)`. **`start` = the later of the completion date and the current `dueDate`** (changed for all anchored rules — weekday, nth and month-day — with the user's OK): completing a date-anchored task early never re-suggests the same occurrence; late completions still land on the next one after today. Month-day now = first matching day strictly after `start` (previously "next calendar month from completion", which skipped a month on late completions). Rolling is unchanged — it counts from the completion date (`_nextRollingDate`). The confirm prompt is unchanged; only its pre-fill.
+- `_maybeSpawnRecurrence` copies `recurrenceNth`. Rolling saves and Log restore null it.
+- **Edit window**: under "Default repeat rule" → Weekly, a `#rm-rule-nth` chip row (`.rm-nth-btn`: 1st 2nd 3rd 4th last, plus 5th only when already set) shows once a weekday chip is active (`_recurModalDaysChanged`). No chips = every week.
+- **Display**: `_olCadence` → `GFParse.nthLabel` (detail popover `↻ 2nd & 4th Mon · in 3d`); entry-bar preview chip uses the parse label. Everything items deliberately don't show cadence (user's call).
+- Checks: `dev/parse.test.js` (nth block), `dev/scenarios/nth-recur.cjs` (entry bar → detail → edit chips → early check-off → confirm pre-fill → chips off).
