@@ -56,6 +56,8 @@ All Supabase reads and writes go through this module. Uses optimistic updates: e
 
 **Must not:** render any UI, reference DOM elements, or know anything about auth beyond accepting the injected client.
 
+**One List API (2026-11-25):** `Data.addTask({title, urgency, dueDate, area, toToday, isIdea, source, notes, recur})` (the single creation path; `recur` = recurrence fields → status `recurring`), `pullToToday(id)`, `sendBack(id)`, `reorderToday(ids)`, `completeTask(id, {minutes, dateStr})` (archives immediately via `archiveItemWithDate`; recurrence spawning stays in app.js and must run first), `logEvent(taskId, event, minutes?)`. `addTask`/`pullToToday`/`sendBack`/`completeTask` log their `task_events` row. Selectors: `todayList()` (todayDate === local today, not done/idea, by `todayOrder`), `openTasks()`, `recurringTasks()`, `ideas()`, `events()`. `Data.localToday()` is the local-date helper (never `toISOString`). `Data.AREAS` = the four areas. `_state.events` holds loaded `task_events`.
+
 ### `app.js` — UI layer
 All rendering and event handling lives here. Calls `Data.*` functions for all state mutations. `App.init()` is called by `auth.js` — there is deliberately no `DOMContentLoaded` auto-init in this file. The `_initialized` flag on the `App` object prevents double-init on token refresh.
 

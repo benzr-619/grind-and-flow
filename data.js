@@ -101,6 +101,15 @@ const Data = (() => {
       recurrence_lead_days:    (t.recurrenceLeadDays ?? null),
       recurrence_last_completed_at: t.recurrenceLastCompletedAt || null,
       recurrence_alternate:    t.recurrenceAlternate    || null,
+      // One List (2026-11-25)
+      today_date:  t.todayDate  || null,
+      today_order: (t.todayOrder ?? null),
+      area:        t.area       || null,
+      urgency:     t.urgency    || null,
+      purpose:     t.purpose    || null,
+      effort:      t.effort     || null,
+      source:      t.source     || null,
+      meta:        t.meta       || null,
     };
   }
 
@@ -133,6 +142,15 @@ const Data = (() => {
       recurrenceLeadDays:    (r.recurrence_lead_days ?? null),
       recurrenceLastCompletedAt: r.recurrence_last_completed_at || null,
       recurrenceAlternate:   r.recurrence_alternate      || null,
+      // One List (2026-11-25)
+      todayDate:  r.today_date  || '',
+      todayOrder: (r.today_order ?? null),
+      area:       r.area        || null,
+      urgency:    r.urgency     || null,
+      purpose:    r.purpose     || null,
+      effort:     r.effort      || null,
+      source:     r.source      || null,
+      meta:       r.meta        || null,
     };
   }
 
@@ -157,6 +175,7 @@ const Data = (() => {
       time_spent:      a.timeSpent             || 0,
       recurrence:            a.recurrence            || null,
       recurrence_series_id:  a.recurrenceSeriesId    || null,
+      area:                  a.area                  || null,
     };
   }
 
@@ -208,6 +227,14 @@ const Data = (() => {
     };
   }
 
+  // ── task_events (One List) ──
+  function _eventFromDb(r) {
+    return { id: r.id, taskId: r.task_id, event: r.event, at: r.at, minutes: r.minutes ?? null };
+  }
+  function _eventToDb(e, uid) {
+    return { id: e.id, user_id: uid, task_id: e.taskId, event: e.event, at: e.at, minutes: e.minutes ?? null };
+  }
+
   function _archFromDb(r) {
     // archive.tags, archive.blocked, and archive.subtasks are stored as `text`
     // (not jsonb/boolean) — parse them defensively.
@@ -238,6 +265,7 @@ const Data = (() => {
       timeSpent:      r.time_spent             || 0,
       recurrence:         r.recurrence              || null,
       recurrenceSeriesId: r.recurrence_series_id     || null,
+      area:               r.area                     || null,
     };
   }
 
@@ -341,35 +369,38 @@ const Data = (() => {
   async function load() {
     if (!_client) {
       console.error('[Data] load called before setClient()');
-      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [], events: [] };
       return _state;
     }
     await _migrateFromLocalStorage();
     try {
       const uid = await _uid();
       await _migrateTagsFromLocalStorage(uid);
-      const [pr, tr, ar, tg, cm] = await Promise.all([
+      const [pr, tr, ar, tg, cm, ev] = await Promise.all([
         _client.from('projects').select('*').eq('user_id', uid),
         _client.from('tasks').select('*').eq('user_id', uid),
         _client.from('archive').select('*').eq('user_id', uid),
         _client.from('tags').select('*').eq('user_id', uid),
         _client.from('commitments').select('*').eq('user_id', uid),
+        _client.from('task_events').select('*').eq('user_id', uid),
       ]);
       if (pr.error) throw pr.error;
       if (tr.error) throw tr.error;
       if (ar.error) console.warn('[Data] archive load error:', ar.error.message);
       if (tg.error) console.warn('[Data] tags load error:', tg.error.message);
       if (cm.error) console.warn('[Data] commitments load error:', cm.error.message);
+      if (ev.error) console.warn('[Data] task_events load error:', ev.error.message);
       _state = {
         projects:    (pr.data || []).map(_projFromDb),
         tasks:       (tr.data || []).map(_taskFromDb),
         archive:     (ar.data || []).map(_archFromDb),
         tags:        (tg.data || []).map(_tagFromDb),
         commitments: (cm.data || []).map(_commitFromDb),
+        events:      (ev.data || []).map(_eventFromDb),
       };
     } catch (e) {
       console.error('[Data] load failed:', e.message);
-      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [] };
+      _state = { projects: [], tasks: [], archive: [], tags: [], commitments: [], events: [] };
     }
     return _state;
   }
@@ -598,6 +629,119 @@ const Data = (() => {
   }
 
   // ─────────────────────────────────────────────
+  // One List (2026-11-25) — statuses: open / done / recurring / idea.
+  // A task is "on Today" when todayDate === today (local). No rollover job:
+  // yesterday's items simply stop matching todayList().
+  // ─────────────────────────────────────────────
+
+  const AREAS = ['Research', 'AMD', 'EDBA', 'Home'];
+
+  // Local-time YYYY-MM-DD (toISOString would give the UTC date — wrong in the evening).
+  function localToday(d) {
+    d = d || new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function _nextTodayOrder() {
+    const t = localToday();
+    const orders = _state.tasks.filter(x => x.todayDate === t && x.todayOrder != null).map(x => +x.todayOrder);
+    return orders.length ? Math.max(...orders) + 1 : 1;
+  }
+
+  // Append-only event log. Optimistic like everything else.
+  function logEvent(taskId, event, minutes) {
+    if (!_state.events) _state.events = [];
+    const e = {
+      id: 'e' + Date.now() + Math.random().toString(36).slice(2, 7),
+      taskId, event, at: new Date().toISOString(), minutes: minutes ?? null,
+    };
+    _state.events.push(e);
+    _syncEvent(e);
+    return e;
+  }
+
+  async function _syncEvent(e) {
+    if (!_client) return;
+    const { error } = await _client.from('task_events').upsert(_eventToDb(e, await _uid()));
+    if (error) console.error('[Data] sync event:', error.message);
+  }
+
+  // addTask — the one creation path for the entry bar (Today, Everything, phone).
+  // `recur` (optional) carries recurrence fields ({recurrence, recurrenceIntervalN, …});
+  // when present the task is created with status 'recurring'.
+  function addTask({ title, urgency, dueDate, area, toToday, isIdea, source, notes, recur } = {}) {
+    title = (title || '').trim();
+    if (!title) return null;
+    const id = 't' + Date.now() + Math.floor(Math.random() * 1000);
+    const today = localToday();
+    const status = recur ? 'recurring' : isIdea ? 'idea' : 'open';
+    const task = {
+      id, type: 'standalone', title, status,
+      parentProject: null, dueDate: dueDate || '', scheduledDate: '', scheduledTime: '',
+      notes: notes || '', dateAdded: today, blocked: false, blockedReason: '', tags: [],
+      backlogEnteredAt: '', laterCount: 0, dayOrder: null, timeSpent: 0, boardOrder: null,
+      recurrence: null, recurrenceSeriesId: null, recurrenceWeekdays: null, recurrenceMonthDay: null,
+      recurrenceIntervalN: null, recurrenceIntervalUnit: null, recurrenceLeadDays: null,
+      recurrenceLastCompletedAt: null, recurrenceAlternate: null,
+      todayDate: '', todayOrder: null,
+      area: AREAS.includes(area) ? area : null,
+      urgency: urgency === 'asap' || urgency === 'norush' ? urgency : null,
+      purpose: null, effort: null, source: source || 'app', meta: null,
+    };
+    if (recur) Object.assign(task, recur, { recurrenceSeriesId: id });
+    if (toToday && !isIdea) { task.todayDate = today; task.todayOrder = _nextTodayOrder(); }
+    upsertTask(task);
+    logEvent(id, 'added');
+    if (task.todayDate) logEvent(id, 'pulled');
+    return task;
+  }
+
+  function pullToToday(id) {
+    const t = _state.tasks.find(x => x.id === id); if (!t) return;
+    if (t.status === 'idea') t.status = 'open';
+    t.todayDate = localToday();
+    t.todayOrder = _nextTodayOrder();
+    upsertTask(t);
+    logEvent(id, 'pulled');
+  }
+
+  function sendBack(id) {
+    const t = _state.tasks.find(x => x.id === id); if (!t) return;
+    t.todayDate = ''; t.todayOrder = null;
+    upsertTask(t);
+    logEvent(id, 'sent_back');
+  }
+
+  // ids = the full Today order, top first.
+  function reorderToday(ids) {
+    ids.forEach((id, i) => {
+      const t = _state.tasks.find(x => x.id === id);
+      if (t && t.todayOrder !== i + 1) { t.todayOrder = i + 1; upsertTask(t); }
+    });
+  }
+
+  // completeTask — archives immediately (same path as the midnight auto-archive), stamped
+  // with dateStr (default today), and logs `done` with any focus minutes from this session.
+  // Recurrence spawning is UI-side (app.js _maybeSpawnRecurrence) and must run before this.
+  function completeTask(id, { minutes, dateStr } = {}) {
+    const t = _state.tasks.find(x => x.id === id); if (!t) return;
+    logEvent(id, 'done', minutes || null);
+    archiveItemWithDate(id, dateStr || localToday());
+  }
+
+  // ── Selectors ──
+  function todayList() {
+    const t = localToday();
+    return _state.tasks
+      .filter(x => x.todayDate === t && x.status !== 'done' && x.status !== 'idea')
+      .sort((a, b) => (a.todayOrder ?? Infinity) - (b.todayOrder ?? Infinity));
+  }
+  function openTasks()      { return _state.tasks.filter(x => x.status === 'open'); }
+  function recurringTasks() { return _state.tasks.filter(x => x.status === 'recurring'); }
+  function ideas()          { return _state.tasks.filter(x => x.status === 'idea'); }
+  function events()         { return _state.events || []; }
+
+  // ─────────────────────────────────────────────
   // syncAll — pushes entire in-memory state to Supabase.
   // Called by _migrateData() in app.js after fixing legacy status values.
   // ─────────────────────────────────────────────
@@ -666,6 +810,9 @@ const Data = (() => {
     archiveItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive, clearArchive,
     upsertTag, deleteTag,
     upsertCommitment, deleteCommitment,
+    // One List
+    AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent,
+    todayList, openTasks, recurringTasks, ideas, events,
     syncAll, replaceAll,
     save, saveNow, isDirty,
     showSaveBanner, hideSaveBanner,
