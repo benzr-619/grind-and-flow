@@ -973,3 +973,17 @@ body { background: var(--ol-bg); color: var(--ol-ink); }
 }
 .modal-overlay .modal-label, .rc-overlay .modal-label, .modal-overlay .oc-btn { letter-spacing: 0.02em; text-transform: none; }
 .modal-overlay .btn-save, .rc-overlay .btn-save, .modal-overlay .btn-close, .rc-overlay .btn-close, .modal-overlay .btn-danger { border-radius: 18px; text-transform: none; letter-spacing: 0; }
+
+/* Keyboard shortcuts — header hint + cheat-sheet overlay (desktop) */
+.ol-kbd-hint { color: var(--ol-faint); font-size: 12px; }
+.ks-overlay { position: fixed; inset: 0; z-index: 400; display: flex; align-items: center; justify-content: center; background: rgba(252,252,250,.72); font-family: var(--font-ol); color: var(--ol-ink); }
+.ks-card { width: 420px; max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); overflow: auto; box-sizing: border-box; padding: 22px 24px 18px; background: var(--ol-surface); border: 1px solid var(--ol-line); border-radius: 10px; box-shadow: 0 10px 30px rgba(23,23,23,.10), 0 1px 3px rgba(23,23,23,.06); font-size: 13px; }
+.ks-head { margin: 0 0 12px; font-size: 15px; font-weight: 500; }
+.ks-sub { margin: 16px 0 6px; font-size: 12px; color: var(--ol-grey); }
+.ks-row { display: flex; gap: 16px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--ol-line); }
+.ks-keys { flex: 0 0 120px; color: var(--ol-grey); }
+.ks-or { font-size: 11px; color: var(--ol-faint); }
+.ks-label { flex: 1; color: var(--ol-ink-2); }
+.ks-card kbd { display: inline-block; min-width: 18px; padding: 1px 6px; text-align: center; font-family: var(--font-ol); font-size: 12px; color: var(--ol-ink); background: var(--ol-chip); border: 1px solid var(--ol-line-2); border-radius: 4px; }
+.ks-foot { margin: 14px 0 0; font-size: 12px; color: var(--ol-grey-2); }
+@media (max-width: 640px) { .ks-overlay { display: none !important; } }

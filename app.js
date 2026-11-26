@@ -225,6 +225,7 @@ const App = (() => {
     _scheduleMidnight();
     renderBoard();
     window.addEventListener('resize', _onResize);
+    document.addEventListener('keydown', _onShortcutKey);
     document.addEventListener('visibilitychange', () => {
       // Tab came back into view — re-sync the timer from the wall clock so time that
       // passed while the browser throttled setInterval is applied at once.
@@ -339,6 +340,7 @@ const App = (() => {
 
     const task = _focusId ? Data.findItem(_focusId) || null : null;
 
+    if ((task || _focusHandoff) && document.activeElement?.closest?.('#ol-view')) document.activeElement.blur();
     if (!task && _focusHandoff) { _renderFocusHandoff(fz, meta, controls, orbEl, glowEl); return; }
     fz.classList.remove('handoff');
 
@@ -452,6 +454,7 @@ const App = (() => {
     stage.appendChild(hover);
     pip.document.body.appendChild(stage);
     pip.addEventListener('pagehide', closeFocusPip);
+    pip.document.addEventListener('keydown', _onShortcutKey); // shortcuts work while the float has focus
     _renderFocusRow();
   }
 
@@ -1351,7 +1354,7 @@ const App = (() => {
     _renderOffered();
     _entrySync('today');
     const inp = document.getElementById('ol-input-today');
-    if (inp && !document.getElementById('modal-root').innerHTML && document.activeElement?.tagName !== 'INPUT') inp.focus({ preventScroll: true });
+    if (inp && !_focusOpen() && !document.getElementById('modal-root').innerHTML && document.activeElement?.tagName !== 'INPUT') inp.focus({ preventScroll: true });
   }
 
   function olGo(v) {
@@ -1377,6 +1380,7 @@ const App = (() => {
         <nav class="ol-nav" aria-label="Views">
           <button class="ol-navbtn" onclick="App.olGo('everything')">${_OL_ZOOM_ICON}zoom out</button>
           <button class="ol-navbtn" onclick="App.olGo('log')">log</button>
+          <button class="ol-navbtn ol-kbd-hint" onclick="App.toggleShortcuts()" title="Keyboard shortcuts">${_comboText(_HELP_KEY)} shortcuts</button>
           <button class="ol-navbtn ol-signout" onclick="Auth.handleLogout()" title="Sign out" aria-label="Sign out">${_OL_SIGNOUT_ICON}</button>
         </nav>
       </header>
@@ -2122,6 +2126,128 @@ const App = (() => {
     _olRefreshLists();
   }
 
+  // ── Keyboard shortcuts (desktop only) ──
+  // The one key map. A combo is the physical key's `e.code` (KeyT, Slash, Enter, Space,
+  // Escape…), prefixed with the held modifiers in a fixed order: 'mod+' (⌘/Ctrl),
+  // 'alt+' (⌥/Alt), 'shift+' — see _keyCombo. Matching on e.code, not e.key, because on
+  // a Mac ⌥+letter types a special character and ⌥E/⌥N/⌥U/⌥I are dead keys.
+  // ⌥ combos also fire while the entry bar has focus (it autofocuses on Today and
+  // Everything); plain keys (Space/Esc) only when nothing editable has focus.
+  // Scopes: 'global' (Focus closed), 'focus' (overlay open, incl. the post-Done handoff),
+  // 'handoff' (handoff card only — checked before 'focus'). The cheat sheet renders from this list.
+  const SHORTCUTS = [
+    { scope: 'global',  keys: ['alt+KeyT'],  action: 'today',      label: 'Today' },
+    { scope: 'global',  keys: ['alt+KeyE'],  action: 'everything', label: 'Everything (zoom out)' },
+    { scope: 'global',  keys: ['alt+KeyL'],  action: 'log',        label: 'Log' },
+    { scope: 'global',  keys: ['alt+KeyS'],  action: 'start',      label: 'Start Today item 1' },
+    { scope: 'global',  keys: ['alt+Slash'], action: 'help',       label: 'Show / hide this list' },
+    { scope: 'handoff', keys: ['alt+Enter'], action: 'startNext',  label: 'After Done: start the up-next item' },
+    { scope: 'focus',   keys: ['Space'],     action: 'playPause',  label: 'Pause / resume (start the next segment at a boundary)' },
+    { scope: 'focus',   keys: ['Escape'],    action: 'back',       label: 'Back to Today' },
+    { scope: 'focus',   keys: ['alt+Enter'], action: 'done',       label: 'Done' },
+    { scope: 'focus',   keys: ['alt+KeyF'],  action: 'float',      label: 'Float / dock the orb', pip: true },
+  ];
+  const _HELP_KEY = SHORTCUTS.find(s => s.action === 'help').keys[0];
+  const _IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  let _shortcutsOpen = false;
+  let _shortcutsReturnFocus = null; // the element to give focus back to when the sheet closes
+
+  function _keyCombo(e) {
+    return ((e.metaKey || e.ctrlKey) ? 'mod+' : '') + (e.altKey ? 'alt+' : '') + (e.shiftKey ? 'shift+' : '') + (e.code || '');
+  }
+  function _focusOpen() { return !!(_focusId || _focusHandoff); }
+  function _isTypingTarget(el) {
+    if (!el || !el.tagName) return false;
+    return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
+  }
+  // Something else owns the keyboard: recurring modal / confirm overlays (#modal-root),
+  // or the inline detail popover.
+  function _overlayOpen() {
+    return !!(document.getElementById('modal-root')?.innerHTML.trim() || document.getElementById('ol-detail'));
+  }
+
+  function _onShortcutKey(e) {
+    if (e.defaultPrevented || e.isComposing || _isMobile() || _overlayOpen()) return;
+    const combo = _keyCombo(e);
+    // Plain keys never fire from an editable field; ⌥ combos do (the entry bar autofocuses).
+    if (_isTypingTarget(e.target) && !combo.startsWith('alt+')) return;
+    if (_shortcutsOpen) {
+      if (combo === 'Escape' || combo === _HELP_KEY) { e.preventDefault(); toggleShortcuts(false); }
+      return;
+    }
+    const handoff = _focusHandoff && !_focusId;
+    const scopes = !_focusOpen() ? ['global'] : handoff ? ['handoff', 'focus'] : ['focus'];
+    let sc = null;
+    for (const scope of scopes) { sc = SHORTCUTS.find(s => s.scope === scope && s.keys.includes(combo)); if (sc) break; }
+    if (!sc || (sc.pip && !_pipSupported)) return;
+    e.preventDefault(); // also on repeats, so a held ⌥T never types into the entry bar
+    if (e.repeat) return;
+    _runShortcut(sc.action);
+  }
+
+  function _runShortcut(action) {
+    const handoff = _focusHandoff && !_focusId;
+    switch (action) {
+      case 'today': case 'everything': case 'log': olGo(action); break;
+      case 'start': { const first = Data.todayList()[0]; if (first) olStart(first.id); break; }
+      case 'help': toggleShortcuts(); break;
+      case 'playPause': {
+        if (handoff || !_focusId) break;
+        if (!timerTask || timerTask.id !== _focusId) activateTask(_focusId);
+        else if (timerAtBoundary) startNextSegment();
+        else timerTogglePlay();
+        break;
+      }
+      case 'back': handoff ? focusBackToToday() : removeFromDoing(_focusId); break;
+      case 'done': if (!handoff && _focusId) markDoingDone(_focusId); break;
+      case 'float': if (!handoff) (_pipWin ? closeFocusPip() : openFocusPip()); break;
+      case 'startNext': { const next = Data.todayList()[0]; if (next) startTask(next.id); break; }
+    }
+  }
+
+  function _codeLabel(code) {
+    if (code.startsWith('Key') || code.startsWith('Digit')) return code.replace(/^(Key|Digit)/, '');
+    return { Slash: '/', Escape: 'Esc', Space: 'Space', Enter: 'Enter' }[code] || code;
+  }
+  function _comboParts(c) {
+    return c.split('+').map(p => p === 'mod' ? (_IS_MAC ? '⌘' : 'Ctrl') : p === 'alt' ? (_IS_MAC ? '⌥' : 'Alt')
+      : p === 'shift' ? (_IS_MAC ? '⇧' : 'Shift') : _codeLabel(p));
+  }
+  function _comboLabel(c) { return _comboParts(c).map(k => `<kbd>${esc(k)}</kbd>`).join(' '); }
+  // Plain-text form for the header hint, e.g. "⌥/" on a Mac, "Alt+/" elsewhere.
+  function _comboText(c) { return _comboParts(c).join(_IS_MAC ? '' : '+'); }
+
+  function toggleShortcuts(force) {
+    const open = force === undefined ? !_shortcutsOpen : !!force;
+    _shortcutsOpen = open;
+    document.getElementById('ol-shortcuts')?.remove();
+    if (!open) {
+      // Give the entry bar its focus back (if it had it), so typing just continues.
+      const back = _shortcutsReturnFocus; _shortcutsReturnFocus = null;
+      if (back && back.isConnected && !_focusOpen()) back.focus({ preventScroll: true });
+      return;
+    }
+    // Take focus out of the entry bar while the sheet is up, so a plain Esc closes the
+    // sheet instead of clearing what's typed.
+    const a = document.activeElement;
+    _shortcutsReturnFocus = a && _isTypingTarget(a) ? a : null;
+    if (_shortcutsReturnFocus) a.blur();
+    const rows = scope => SHORTCUTS.filter(s => scope.includes(s.scope) && (!s.pip || _pipSupported))
+      .map(s => `<div class="ks-row"><span class="ks-keys">${s.keys.map(_comboLabel).join(' <span class="ks-or">or</span> ')}</span><span class="ks-label">${esc(s.label)}</span></div>`).join('');
+    const el = document.createElement('div');
+    el.id = 'ol-shortcuts'; el.className = 'ks-overlay';
+    el.innerHTML = `
+      <div class="ks-card" role="dialog" aria-label="Keyboard shortcuts">
+        <p class="ks-head">Keyboard shortcuts</p>
+        ${rows(['global'])}
+        <p class="ks-sub">In Focus</p>
+        ${rows(['focus'])}${rows(['handoff'])}
+        <p class="ks-foot">${_IS_MAC ? '⌥' : 'Alt'} shortcuts work while you're typing. In the entry bar: Tab steps · Enter saves · Shift+Enter → Today · Esc clears.</p>
+      </div>`;
+    el.addEventListener('mousedown', ev => { if (ev.target === el) toggleShortcuts(false); });
+    document.body.appendChild(el);
+  }
+
   // ── Modal shell (used by the recurring modal) ──
   function _showModal(content, itemId) {
     openItemId = itemId || null;
@@ -2154,6 +2280,7 @@ const App = (() => {
     completeRecurringToday, openRecurLogDate, _closeRecurLogDate, _confirmRecurLogDate,
     _showDelConfirm, _resetDelZone, _deleteItem,
     // Focus
+    toggleShortcuts,
     startTask, activateTask, timerTogglePlay, startNextSegment, skipSegment,
     openFocusPip, closeFocusPip, removeFromDoing, markDoingDone, focusBackToToday,
     // One List (desktop)
