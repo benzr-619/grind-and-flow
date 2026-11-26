@@ -4999,7 +4999,100 @@ const App = (() => {
       <span>${right || ''}</span>
     </header>`;
   }
-  function _renderLog() { return _olBackHeader() + `<p class="ol-empty ol-pad">Log — coming next.</p>`; }
+  // ── Log (Prompt 6) — simple on purpose; expect a redesign once it's in use. ──
+  // Week (Mon-start) → total focus, totals by area, then days → finished tasks → minutes.
+  // Minutes per finished task = sum of its task_events minutes (started/done), falling
+  // back to archive.time_spent for history from before task_events existed.
+  let _logWeek = 0;
+  function _logFmtMin(m) {
+    if (!m) return '—';
+    const h = Math.floor(m / 60), r = m % 60;
+    return h ? `${h}h ${String(r).padStart(2, '0')}m` : `${r}m`;
+  }
+  function _logMonday(offset) {
+    const d = new Date(Data.localToday() + 'T00:00:00');
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + offset * 7);
+    return d;
+  }
+  function _logData(offset) {
+    const mon = _logMonday(offset);
+    const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return Data.localToday(d); });
+    const inWeek = new Set(days);
+    const evMin = {};
+    Data.events().forEach(e => { if (e.minutes) evMin[e.taskId] = (evMin[e.taskId] || 0) + e.minutes; });
+    const byDay = {}; days.forEach(d => { byDay[d] = []; });
+    (Data.get().archive || []).forEach(a => {
+      if (a.type === 'project' || !inWeek.has(a.archivedAt)) return;
+      const m = evMin[a.id] != null ? evMin[a.id] : (a.timeSpent || 0);
+      byDay[a.archivedAt].push({ id: a.id, title: a.title, area: a.area || '', m });
+    });
+    // Focus minutes on tasks that are still open, by the day they were logged
+    Data.events().forEach(e => {
+      if (!e.minutes || !Data.findItem(e.taskId)) return;
+      const d = Data.localToday(new Date(e.at));
+      if (!inWeek.has(d)) return;
+      const t = Data.findItem(e.taskId);
+      const row = byDay[d].find(r => r.id === t.id && r.open);
+      if (row) row.m += e.minutes; else byDay[d].push({ id: t.id, title: t.title, area: t.area || '', m: e.minutes, open: true });
+    });
+    let total = 0; const areas = {};
+    days.forEach(d => byDay[d].forEach(r => { total += r.m; const k = r.area || 'No area'; areas[k] = (areas[k] || 0) + r.m; }));
+    return { mon, days, byDay, total, areas };
+  }
+  function _renderLog() {
+    const L = _logData(_logWeek);
+    const weekLbl = L.mon.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const order = [...Data.AREAS, 'No area'].filter(a => L.areas[a] != null);
+    const dayHtml = [...L.days].reverse().filter(d => L.byDay[d].length).map(d => {
+      const rows = L.byDay[d].sort((a, b) => b.m - a.m);
+      const tot = rows.reduce((s, r) => s + r.m, 0);
+      const name = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+      return `<section class="lg-day">
+        <div class="lg-day-head"><span>${name}</span><span>${_logFmtMin(tot)}</span></div>
+        ${rows.map(r => `<div class="lg-row" data-id="${r.id}">
+          <span class="lg-t">${esc(r.title)}${r.open ? ' <span class="lg-open">· still open</span>' : ''}</span>
+          <span class="lg-a">${esc(r.area)}</span>
+          <span class="lg-m">${_logFmtMin(r.m)}</span>
+          ${r.open ? '<span class="lg-acts"></span>' : `<span class="lg-acts" id="lg-acts-${r.id}">
+            <button class="od-link" onclick="App.logRestore('${r.id}')">restore</button>
+            <button class="od-link danger" onclick="App.logDelAsk('${r.id}')">delete</button></span>`}
+        </div>`).join('')}
+      </section>`;
+    }).join('');
+    return `
+      <header class="ol-header">
+        <button class="ol-navbtn" onclick="App.olGo('today')">← today</button>
+        <span class="lg-week">
+          <button class="ol-navbtn" onclick="App.logWeek(-1)" aria-label="Previous week">‹</button>
+          <span>week of ${weekLbl}</span>
+          <button class="ol-navbtn" onclick="App.logWeek(1)" aria-label="Next week" ${_logWeek >= 0 ? 'disabled' : ''}>›</button>
+        </span>
+      </header>
+      <main class="lg-main">
+        <div class="lg-total"><span class="lg-big">${L.total ? _logFmtMin(L.total) : '0m'}</span><span class="lg-sub">focused ${_logWeek === 0 ? 'this week' : 'that week'}</span></div>
+        <div class="lg-areas">${order.map(a => `<span>${esc(a)} ${_logFmtMin(L.areas[a])}</span>`).join('') || '<span class="lg-none">nothing finished yet</span>'}</div>
+        ${dayHtml || '<p class="ol-empty">No finished tasks this week.</p>'}
+      </main>`;
+  }
+  function logWeek(d) { _logWeek = Math.min(0, _logWeek + d); renderBoard(); }
+  function logRestore(id) {
+    Data.restoreFromArchive(id);
+    const t = Data.findItem(id);
+    if (t) {
+      // Archive rows keep no live scheduling state — a restored task comes back as a plain open task.
+      Object.assign(t, { status: 'open', recurrence: null, recurrenceSeriesId: null, todayDate: '', todayOrder: null });
+      Data.upsertTask(t);
+    }
+    renderBoard();
+  }
+  function logDelAsk(id) {
+    const z = document.getElementById('lg-acts-' + id); if (!z) return;
+    z.classList.add('asking');
+    z.innerHTML = `<span class="od-confirm">delete for good?</span>
+      <button class="od-link danger" onclick="App.logDel('${id}')">yes</button>
+      <button class="od-link" onclick="App.olGo('log')">no</button>`;
+  }
+  function logDel(id) { Data.deleteFromArchive(id); renderBoard(); }
   // ── Everything (zoom out) — Prompt 5 ──
   // Every open task, recurring task and idea floats in labeled clusters. Regroup by
   // area / urgency / date entered; items keep stable DOM nodes keyed by id so a regroup
@@ -5445,6 +5538,7 @@ const App = (() => {
     // One List
     olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olHideOffer, olShowOffer, olOfferAll,
     _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip,
+    logWeek, logRestore, logDelAsk, logDel,
     evMode, _evCanvasClick, olCloseDetail, _odSet, _odToday, _odMakeTask, _odDelAsk, _odDel,
   };
 })();

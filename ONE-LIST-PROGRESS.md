@@ -71,3 +71,12 @@ the touched views and the run fails on any console error / page error. Run it yo
 ## ⛔ Stopped here — usage limit reached (not a failure)
 - **Not done:** Prompt 6 (Log — the "log" button shows a placeholder; old Archive view is unreachable but `archive` data is intact), Prompt 7 (duplicate hint + `dev/parse.test.js`; the parser itself and inline shortcuts already work), Prompt 8 (phone stopgap — **the old mobile companion is still live and does not understand the new `open` status**, so on a phone new tasks won't show and phone captures go to the retired `backlog` status), Prompt 9 (cleanup).
 - **Not merged to main / not pushed**, because of the phone issue above: deploying now would give you a desktop One List but a phone surface that hides your tasks. Everything is committed on `one-list`.
+
+---
+*(Resumed after the usage-limit stop.)*
+
+## Prompt 6 — Log ✅
+- Log replaces Archive: "← today", week picker (‹ week of Nov 23 ›, no future weeks), big week total, totals by area, then days (newest first) → finished tasks → minutes.
+- Minutes = sum of the task's `task_events` minutes, else `archive.time_spent` (so your 154 historical rows still show their focus time).
+- Decisions: focus minutes on still-open tasks are shown on the day they were logged, marked "· still open", and count toward the week total. Restore brings a row back as a plain open task (archive rows don't keep recurrence/Today state). Delete uses an inline "delete for good? yes / no".
+- Check: `dev/scenarios/p6-log.cjs` (totals, fallback, area totals, week nav, restore, delete). No console errors.
