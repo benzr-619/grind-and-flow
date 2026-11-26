@@ -61,3 +61,13 @@ the touched views and the run fails on any console error / page error. Run it yo
   - Back-to-Today minutes are written onto that session's `started` event (new `Data.setEventMinutes`) so the Log can attribute minutes to days without double counting.
   - Starting a different task while one is in Focus ends the first as Back to Today.
 - Check: `dev/scenarios/p4-focus.cjs` (start → back → start → done → up-next → start → done → clear → back; event sequence + archive). Today scenario still passes. No console errors.
+
+## Prompt 5 — Everything (zoom out) ✅
+- Zoom-out view with labeled clusters by area (incl. "No area" + "Ideas") / urgency (Now/Soon/Whenever/No rush/Ideas, from the Offered scoring) / date entered; items glide between groupings and drift gently; reduced-motion respected.
+- Same entry bar; new items highlight briefly. Inline detail popover (also opens from Today/Offered titles).
+- Legibility at ~60 items (decision instead of "propose"): layout search over 1–3 cluster rows and two line heights, sub-columns for big clusters, columns ≥200px or the canvas grows and scrolls. Verified no overlapping items with 57 seeded tasks.
+- Check: `dev/scenarios/p5-everything.cjs`. No console errors.
+
+## ⛔ Stopped here — usage limit reached (not a failure)
+- **Not done:** Prompt 6 (Log — the "log" button shows a placeholder; old Archive view is unreachable but `archive` data is intact), Prompt 7 (duplicate hint + `dev/parse.test.js`; the parser itself and inline shortcuts already work), Prompt 8 (phone stopgap — **the old mobile companion is still live and does not understand the new `open` status**, so on a phone new tasks won't show and phone captures go to the retired `backlog` status), Prompt 9 (cleanup).
+- **Not merged to main / not pushed**, because of the phone issue above: deploying now would give you a desktop One List but a phone surface that hides your tasks. Everything is committed on `one-list`.

@@ -4676,8 +4676,16 @@ const App = (() => {
   }
 
   function olGo(v) {
+    const from = olView;
+    olCloseDetail();
+    if (v === 'everything' && from !== 'everything') _evZoomed = false; // zoom out on entry
     olView = v;
     renderBoard();
+    window.scrollTo(0, 0);
+    if (v === 'today' && from === 'everything') {
+      const w = document.querySelector('.ol-today-wrap');
+      if (w) { w.classList.add('ol-zoom-in'); setTimeout(() => w.classList.remove('ol-zoom-in'), 700); }
+    }
   }
 
   const _OL_ZOOM_ICON = `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M21 21l-5-5"></path></svg>`;
@@ -4983,7 +4991,6 @@ const App = (() => {
 
   // Duplicate hint — filled in Prompt 7.
   function _olDupHint(ctx) {}
-  function _olHighlight(id) {}
 
   // ── Stubs filled by later prompts (Everything = P5, Log = P6, detail = P5) ──
   function _olBackHeader(right) {
@@ -4992,13 +4999,329 @@ const App = (() => {
       <span>${right || ''}</span>
     </header>`;
   }
-  function _renderEverything() { return _olBackHeader() + `<p class="ol-empty ol-pad">Everything — coming next.</p>`; }
-  function _afterEverythingRender() {}
-  function _refreshEverything() {}
   function _renderLog() { return _olBackHeader() + `<p class="ol-empty ol-pad">Log — coming next.</p>`; }
-  function olOpenDetail(id) {
+  // ── Everything (zoom out) — Prompt 5 ──
+  // Every open task, recurring task and idea floats in labeled clusters. Regroup by
+  // area / urgency / date entered; items keep stable DOM nodes keyed by id so a regroup
+  // just changes left/top and CSS transitions glide them to their new cluster.
+  let _evMode = 'area';           // 'area' | 'urgency' | 'entered'
+  let _evZoomed = false;          // false → first paint scaled up, then zooms out
+  let _evHighlightId = null;
+
+  function _evItems() {
+    return Data.get().tasks.filter(t => t.status === 'open' || t.status === 'idea' || t.status === 'recurring');
+  }
+
+  // Urgency bucket — the same signals as the Offered ranking.
+  function _evUrgency(t, today) {
+    if (t.status === 'idea') return 'Ideas';
+    if (t.status === 'recurring') {
+      const d = _recurDueState(t);
+      return d.state === 'overdue' || (d.daysUntil != null && d.daysUntil <= 0) ? 'Now' : d.state === 'due-soon' ? 'Soon' : 'Whenever';
+    }
+    if (t.urgency === 'norush') return 'No rush';
+    const sc = _olScore(t, today).score;
+    if (t.urgency === 'asap' || sc >= 40) return 'Now';
+    if (sc >= 15) return 'Soon';
+    return 'Whenever';
+  }
+
+  const _EV_GROUPS = {
+    area:    ['Research', 'AMD', 'EDBA', 'Home', 'No area', 'Ideas'],
+    urgency: ['Now', 'Soon', 'Whenever', 'No rush', 'Ideas'],
+    entered: ['This week', 'This month', 'Last 3 months', 'Older', 'Ideas'],
+  };
+  function _evGroupOf(t, today) {
+    if (_evMode === 'area') return t.status === 'idea' ? 'Ideas' : (t.area || 'No area');
+    if (_evMode === 'urgency') return _evUrgency(t, today);
+    if (t.status === 'idea') return 'Ideas';
+    const age = t.dateAdded ? _olDaysBetween(t.dateAdded, today) : 999;
+    return age <= 7 ? 'This week' : age <= 30 ? 'This month' : age <= 90 ? 'Last 3 months' : 'Older';
+  }
+  const _AREA_VAR = { Research: '--area-research', AMD: '--area-amd', EDBA: '--area-edba', Home: '--area-home' };
+
+  function _renderEverything() {
+    const modes = [['area', 'area'], ['urgency', 'urgency'], ['entered', 'date entered']];
+    return `
+      <header class="ol-header ev-header">
+        <button class="ol-navbtn" onclick="App.olGo('today')"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M21 21l-5-5"></path></svg>back to today</button>
+        <div class="ev-modes" role="group" aria-label="Group by">
+          ${modes.map(([id, label]) => `<button class="ev-mode${_evMode === id ? ' on' : ''}" aria-pressed="${_evMode === id}" onclick="App.evMode('${id}')">${label}</button>`).join('')}
+        </div>
+        <span class="ev-count" id="ev-count"></span>
+      </header>
+      <div class="ev-entry-wrap">${_entryBarHtml('everything')}</div>
+      <div class="ev-canvas${_evZoomed ? ' zoomed' : ''}" id="ev-canvas" onclick="App._evCanvasClick(event)"></div>`;
+  }
+
+  function _afterEverythingRender() {
+    _entrySync('everything');
+    _refreshEverything();
+    if (!_evZoomed) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.getElementById('ev-canvas')?.classList.add('zoomed');
+        _evZoomed = true;
+      }));
+    }
+    document.getElementById('ol-input-everything')?.focus({ preventScroll: true });
+  }
+
+  function evMode(m) {
+    _evMode = m;
+    document.querySelectorAll('.ev-mode').forEach(b => {
+      const on = b.getAttribute('onclick').includes(`'${m}'`);
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+    });
+    _refreshEverything();
+  }
+
+  // Lays out clusters as columns across the canvas. A crowded cluster splits into
+  // sub-columns; when the whole set can't fit, rows get denser (smaller line height +
+  // type), and as a last resort the canvas grows taller and the page scrolls.
+  function _refreshEverything() {
+    const canvas = document.getElementById('ev-canvas');
+    if (!canvas) return;
+    const today = Data.localToday();
+    const onToday = new Set(Data.todayList().map(t => t.id));
+    const items = _evItems();
+    const countEl = document.getElementById('ev-count');
+    if (countEl) countEl.textContent = `${items.length} open`;
+
+    const groups = {};
+    _EV_GROUPS[_evMode].forEach(g => { groups[g] = []; });
+    items.forEach(t => { const g = _evGroupOf(t, today); (groups[g] || (groups[g] = [])).push(t); });
+    const rank = t => (onToday.has(t.id) ? 1000 : 0) + (t.status === 'recurring' ? 0 : _olScore(t, today).score);
+    Object.keys(groups).forEach(g => {
+      if (_evMode === 'entered') groups[g].sort((a, b) => (b.dateAdded || '').localeCompare(a.dateAdded || '') || a.id.localeCompare(b.id));
+      else groups[g].sort((a, b) => rank(b) - rank(a) || a.id.localeCompare(b.id));
+    });
+    const keys = Object.keys(groups).filter(g => groups[g].length);
+
+    const W = canvas.clientWidth || 1200;
+    // offsetTop, not getBoundingClientRect — the canvas is scaled during the zoom-out.
+    const viewH = Math.max(380, window.innerHeight - canvas.offsetTop - 24);
+    const LABEL_H = 40, ROW_GAP = 36, MIN_SUB_W = 200, MAX_SUB_W = 300, GAP_F = 0.3;
+    // Try 1–3 rows of clusters × normal/dense line heights; keep the layout whose
+    // narrowest column is widest (titles stay readable). If nothing reaches MIN_SUB_W,
+    // the canvas grows taller and the page scrolls.
+    const layoutFor = (rows, lineH, H) => {
+      const per = Math.ceil(keys.length / rows);
+      const rowKeys = Array.from({ length: rows }, (_, r) => keys.slice(r * per, r * per + per)).filter(r => r.length);
+      const rowH = (H - rowKeys.length * LABEL_H - (rowKeys.length - 1) * ROW_GAP) / rowKeys.length;
+      const perCol = Math.max(3, Math.floor(rowH / lineH));
+      let minSub = Infinity;
+      const rowsPlan = rowKeys.map(rk => {
+        const plan = rk.map(k => ({ key: k, n: groups[k].length, per: perCol, cols: Math.max(1, Math.ceil(groups[k].length / perCol)) }));
+        const units = plan.reduce((s, p) => s + p.cols, 0) + Math.max(0, rk.length - 1) * GAP_F;
+        const subW = Math.min(MAX_SUB_W, W / Math.max(1, units));
+        minSub = Math.min(minSub, subW);
+        return { plan, subW, rowH };
+      });
+      return { rowsPlan, minSub, lineH, H };
+    };
+    let best = null;
+    for (let H = viewH; !best || best.minSub < MIN_SUB_W; H = Math.round(H * 1.25)) {
+      for (const lineH of [34, 27]) for (const rows of [1, 2, 3]) {
+        if (rows > keys.length) continue;
+        const L = layoutFor(rows, lineH, H);
+        const better = !best || L.minSub > best.minSub + 4 || (Math.abs(L.minSub - best.minSub) <= 4 && (L.lineH > best.lineH || (L.lineH === best.lineH && L.rowsPlan.length < best.rowsPlan.length)));
+        if (better) best = L;
+      }
+      if (H > viewH * 6 || !keys.length) break;
+    }
+    const canvasH = best ? best.H : viewH;
+    canvas.style.height = canvasH + 'px';
+    canvas.classList.toggle('dense', !!best && best.lineH < 34);
+
+    const pos = {}; const labels = [];
+    let rowTop = 0;
+    (best ? best.rowsPlan : []).forEach(R => {
+      const lineH = best.lineH, subW = R.subW, gapW = subW * GAP_F;
+      const usedW = R.plan.reduce((s, p) => s + p.cols * subW, 0) + Math.max(0, R.plan.length - 1) * gapW;
+      let x = Math.max(0, (W - usedW) / 2);
+      R.plan.forEach(p => {
+        const g = groups[p.key];
+        const stackH = Math.min(p.n, p.per) * lineH;
+        const slack = R.rowH - stackH;
+        // Each cluster floats at a slightly different height — loose, not a grid.
+        const jy = slack > 0 ? ((_hashStr(p.key) % 100) / 100 - 0.5) * Math.min(slack, 80) : 0;
+        const top = rowTop + LABEL_H + Math.max(0, slack / 2 + jy);
+        labels.push({ key: p.key, n: p.n, x: x + 6, y: top - LABEL_H + 8 });
+        g.forEach((t, i) => {
+          const col = Math.floor(i / p.per), row = i % p.per;
+          const h = _hashStr(t.id);
+          pos[t.id] = { x: x + col * subW + (h % 14) - 2, y: top + row * lineH, w: subW - 24 };
+        });
+        x += p.cols * subW + gapW;
+      });
+      rowTop += LABEL_H + R.rowH + ROW_GAP;
+    });
+
+    // Labels (rebuilt — they fade in)
+    let lblLayer = canvas.querySelector('.ev-labels');
+    if (!lblLayer) { lblLayer = document.createElement('div'); lblLayer.className = 'ev-labels'; canvas.appendChild(lblLayer); }
+    lblLayer.innerHTML = labels.map(l => {
+      const v = _evMode === 'area' && _AREA_VAR[l.key] ? `color:var(${_AREA_VAR[l.key]})` : '';
+      return `<div class="ev-label" style="left:${l.x}px;top:${l.y}px;${v}">${esc(l.key)} <span>${l.n}</span></div>`;
+    }).join('');
+
+    // Items — stable nodes keyed by id
+    let itLayer = canvas.querySelector('.ev-items');
+    if (!itLayer) { itLayer = document.createElement('div'); itLayer.className = 'ev-items'; canvas.appendChild(itLayer); }
+    const existing = new Map([...itLayer.children].map(el => [el.dataset.id, el]));
+    items.forEach(t => {
+      const p = pos[t.id]; if (!p) return;
+      let el = existing.get(t.id);
+      const fresh = !el;
+      if (fresh) {
+        el = document.createElement('div');
+        el.className = 'ev-it';
+        el.dataset.id = t.id;
+        // first appearance: start at the cluster position (no glide from 0,0)
+        el.style.transition = 'none';
+      }
+      const isToday = onToday.has(t.id), isIdea = t.status === 'idea';
+      const areaVar = t.area && _AREA_VAR[t.area] ? `var(${_AREA_VAR[t.area]})` : 'var(--ol-faint)';
+      const dot = isToday ? 'ev-dot today' : isIdea ? 'ev-dot idea' : 'ev-dot';
+      const h = _hashStr(t.id);
+      el.className = `ev-it${isToday ? ' on-today' : ''}${isIdea ? ' is-idea' : ''}${t.urgency === 'norush' ? ' is-norush' : ''}${t.id === _evHighlightId ? ' hilite' : ''}`;
+      el.innerHTML = `<button class="ev-drift" style="animation-delay:-${h % 9}s;max-width:${Math.round(p.w)}px" onclick="event.stopPropagation();App.olOpenDetail('${t.id}', this)" title="${esc(t.title)}">
+          <span class="${dot}" style="${isToday || isIdea ? '' : `background:${areaVar}`}" aria-hidden="true"></span>
+          <span class="ev-title">${t.status === 'recurring' ? '↻ ' : ''}${esc(t.title)}</span>
+        </button>`;
+      el.style.left = p.x + 'px';
+      el.style.top = p.y + 'px';
+      if (fresh) { itLayer.appendChild(el); el.offsetHeight; el.style.transition = ''; }
+      existing.delete(t.id);
+    });
+    existing.forEach(el => el.remove());
+    if (!items.length) lblLayer.innerHTML = `<p class="ol-empty ev-empty">Nothing here yet — type above to add.</p>`;
+  }
+
+  function _olHighlight(id) {
+    _evHighlightId = id;
+    _refreshEverything();
+    setTimeout(() => {
+      if (_evHighlightId !== id) return;
+      _evHighlightId = null;
+      document.querySelector(`.ev-it[data-id="${id}"]`)?.classList.remove('hilite');
+    }, 1800);
+  }
+
+  function _evCanvasClick(e) { if (e.target.id === 'ev-canvas') olCloseDetail(); }
+
+  // ── Inline detail popover (Everything + Today/Offered titles) ──
+  let _detailId = null;
+  function olOpenDetail(id, anchorEl) {
     const t = Data.findItem(id); if (!t) return;
-    if (t.status === 'recurring') openRecurringModal(id);
+    _detailId = id;
+    let pop = document.getElementById('ol-detail');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.id = 'ol-detail'; pop.className = 'ol-detail'; pop.setAttribute('role', 'dialog');
+      pop.setAttribute('aria-label', 'Task detail');
+      pop.addEventListener('keydown', e => { if (e.key === 'Escape') olCloseDetail(); });
+      document.body.appendChild(pop);
+      setTimeout(() => document.addEventListener('mousedown', _olDetailOutside), 0);
+    }
+    pop.innerHTML = _olDetailHtml(t);
+    const a = anchorEl || document.querySelector(`[data-id="${id}"] .ol-row-title, [data-id="${id}"] .ol-off-title, .ev-it[data-id="${id}"] .ev-drift`);
+    const r = a ? a.getBoundingClientRect() : { left: window.innerWidth / 2 - 170, bottom: 120, top: 120 };
+    const pw = 340, ph = pop.offsetHeight || 380;
+    let left = Math.min(window.innerWidth - pw - 16, Math.max(16, r.left));
+    let top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 16) top = Math.max(16, r.top - ph - 8);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+    pop.querySelector('.od-title')?.focus();
+  }
+  function _olDetailOutside(e) {
+    const pop = document.getElementById('ol-detail');
+    if (pop && !pop.contains(e.target) && !e.target.closest('.ev-drift, .ol-row-title, .ol-off-title')) olCloseDetail();
+  }
+  function olCloseDetail() {
+    const pop = document.getElementById('ol-detail');
+    if (pop) {
+      const ti = pop.querySelector('.od-title');
+      if (ti && _detailId) _odSet(_detailId, 'title', ti.value, true);
+      pop.remove();
+    }
+    document.removeEventListener('mousedown', _olDetailOutside);
+    _detailId = null;
+  }
+
+  function _olDetailHtml(t) {
+    const today = Data.localToday();
+    const onToday = t.todayDate === today;
+    const isIdea = t.status === 'idea', isRec = t.status === 'recurring';
+    const chip = (label, on, call) => `<button type="button" class="ol-chip${on ? ' on' : ''}" onclick="${call}">${label}</button>`;
+    const urg = isRec ? '' : `<div class="od-row"><span class="od-lab">priority</span><div class="od-chips">
+        ${chip('asap', t.urgency === 'asap', `App._odSet('${t.id}','urgency','asap')`)}
+        ${chip('normal', !t.urgency, `App._odSet('${t.id}','urgency','')`)}
+        ${chip('no rush', t.urgency === 'norush', `App._odSet('${t.id}','urgency','norush')`)}
+      </div></div>
+      <div class="od-row"><label class="od-lab" for="od-due">due</label>
+        <input id="od-due" type="date" class="od-date" value="${t.dueDate || ''}" onchange="App._odSet('${t.id}','dueDate',this.value)" />
+        ${t.dueDate ? `<button type="button" class="od-link" onclick="App._odSet('${t.id}','dueDate','')">clear</button>` : ''}</div>`;
+    const rec = isRec ? `<div class="od-row od-rec"><span>↻ ${esc(_olCadence(t))} · ${esc(_olRecurWhen(t).replace(/^↻ /, ''))}</span>
+        <button type="button" class="od-link" onclick="App.olCloseDetail();App.openRecurringModal('${t.id}')">edit recurrence…</button></div>` : '';
+    return `
+      <input class="od-title" value="${esc(t.title)}" aria-label="Title" onkeydown="if(event.key==='Enter')this.blur()" onchange="App._odSet('${t.id}','title',this.value)" />
+      ${isIdea ? '<div class="od-kind">idea</div>' : ''}
+      ${rec}${urg}
+      <div class="od-row"><span class="od-lab">area</span><div class="od-chips">
+        ${Data.AREAS.map(a => chip(a, t.area === a, `App._odSet('${t.id}','area','${a}')`)).join('')}
+        ${chip('none', !t.area, `App._odSet('${t.id}','area','')`)}
+      </div></div>
+      <textarea class="od-notes" placeholder="notes" aria-label="Notes" onchange="App._odSet('${t.id}','notes',this.value)">${esc(t.notes || '')}</textarea>
+      <div class="od-actions">
+        ${isIdea ? `<button type="button" class="od-btn" onclick="App._odMakeTask('${t.id}')">make a task</button>`
+          : onToday ? `<button type="button" class="od-btn" onclick="App._odToday('${t.id}',false)">on Today · take off</button>`
+          : `<button type="button" class="od-btn primary" onclick="App._odToday('${t.id}',true)">add to Today</button>`}
+        <span class="od-del" id="od-del"><button type="button" class="od-link danger" onclick="App._odDelAsk('${t.id}')">delete</button></span>
+      </div>`;
+  }
+
+  function _odSet(id, field, val, silent) {
+    const t = Data.findItem(id); if (!t) return;
+    if (field === 'title') { val = (val || '').trim(); if (!val || val === t.title) return; }
+    if (field === 'urgency') val = val || null;
+    if (field === 'area') val = val || null;
+    if ((t[field] ?? '') === (val ?? '')) return;
+    t[field] = val;
+    Data.upsertTask(t);
+    if (silent) { _olRefreshLists(); return; }
+    if (field !== 'notes' && field !== 'title') {
+      const pop = document.getElementById('ol-detail');
+      if (pop) { const notes = pop.querySelector('.od-notes')?.value; pop.innerHTML = _olDetailHtml(t); if (notes != null) pop.querySelector('.od-notes').value = notes; }
+    }
+    _olRefreshLists();
+  }
+  function _odToday(id, on) {
+    if (on) Data.pullToToday(id); else Data.sendBack(id);
+    const t = Data.findItem(id);
+    const pop = document.getElementById('ol-detail');
+    if (pop && t) pop.innerHTML = _olDetailHtml(t);
+    _olRefreshLists();
+  }
+  function _odMakeTask(id) {
+    const t = Data.findItem(id); if (!t) return;
+    t.status = 'open'; Data.upsertTask(t);
+    const pop = document.getElementById('ol-detail');
+    if (pop) pop.innerHTML = _olDetailHtml(t);
+    _olRefreshLists();
+  }
+  function _odDelAsk(id) {
+    const z = document.getElementById('od-del'); if (!z) return;
+    z.innerHTML = `<span class="od-confirm">delete for good?</span>
+      <button type="button" class="od-link danger" onclick="App._odDel('${id}')">yes</button>
+      <button type="button" class="od-link" onclick="App.olOpenDetail('${id}')">no</button>`;
+  }
+  function _odDel(id) {
+    _detailId = null;
+    document.getElementById('ol-detail')?.remove();
+    document.removeEventListener('mousedown', _olDetailOutside);
+    Data.deleteItem(id);
+    _olRefreshLists();
   }
 
   // ── Confirm modal ──
@@ -5122,6 +5445,7 @@ const App = (() => {
     // One List
     olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olHideOffer, olShowOffer, olOfferAll,
     _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip,
+    evMode, _evCanvasClick, olCloseDetail, _odSet, _odToday, _odMakeTask, _odDelAsk, _odDel,
   };
 })();
 
