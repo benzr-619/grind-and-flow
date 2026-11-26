@@ -1323,17 +1323,38 @@ const App = (() => {
     return { score, why, hot: best ? best[2] : false, parts };
   }
 
+  // Carry-over tiebreak: taskId → Today slot from its most recent `day_snapshot` whose
+  // date is within the last 3 days (the recentToday window). A `sent_back` logged after
+  // that snapshot cancels it — sending back is a deliberate demotion. sent_back's own
+  // position is never used. Tiebreak only: scores and `why` don't change.
+  function _olCarryPositions(today) {
+    const snap = new Map(), back = new Map();
+    Data.events().forEach(e => {
+      if (e.event === 'sent_back') { if (!back.has(e.taskId) || e.at > back.get(e.taskId)) back.set(e.taskId, e.at); return; }
+      if (e.event !== 'day_snapshot' || !e.meta?.date || e.meta.position == null) return;
+      const d = e.meta.date;
+      if (d >= today || _olDaysBetween(d, today) > 3) return;
+      const cur = snap.get(e.taskId);
+      if (!cur || d > cur.date || (d === cur.date && e.at > cur.at)) snap.set(e.taskId, { date: d, at: e.at, position: e.meta.position });
+    });
+    const out = new Map();
+    snap.forEach((v, id) => { if (!(back.get(id) > v.at)) out.set(id, v.position); });
+    return out;
+  }
+
   // Offered = due/overdue recurring (pinned) + ranked open tasks not already on Today.
+  // Order: score desc → last carry-over position asc (none = last) → older first → id.
   function _olOffered() {
     const today = Data.localToday();
     const onToday = new Set(Data.todayList().map(t => t.id));
     const pinned = _recurDueList()
       .filter(d => !onToday.has(d.item.id))
       .map(d => ({ item: d.item, pinned: true, why: _olRecurWhen(d.item), hot: d.daysUntil <= 0 }));
+    const carry = _olCarryPositions(today);
     const ranked = Data.openTasks()
       .filter(t => !onToday.has(t.id))
-      .map(t => ({ item: t, ..._olScore(t, today) }))
-      .sort((a, b) => b.score - a.score || (a.item.dateAdded || '').localeCompare(b.item.dateAdded || '') || a.item.id.localeCompare(b.item.id));
+      .map(t => ({ item: t, ..._olScore(t, today), carry: carry.get(t.id) ?? Infinity }))
+      .sort((a, b) => b.score - a.score || (a.carry === b.carry ? 0 : a.carry - b.carry) || (a.item.dateAdded || '').localeCompare(b.item.dateAdded || '') || a.item.id.localeCompare(b.item.id));
     return { pinned, ranked };
   }
 
