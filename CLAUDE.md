@@ -77,7 +77,7 @@ App name, icons, theme color (`#ece2cd`), display mode. No logic.
 
 ## Data Model
 
-Four Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
+Supabase tables, all scoped by `user_id` (uuid from Supabase Auth).
 
 ### `projects` table
 
@@ -134,7 +134,32 @@ Subtask object shape (**deprecated — phase 3**): `{ id, title, done, promoted,
 | recurrenceLeadDays | recurrence_lead_days | int, nullable — anchored-only; days before `dueDate` the Recurring-column card starts styling as due-soon |
 | recurrenceLastCompletedAt | recurrence_last_completed_at | date, nullable — populated for **both** rolling and anchored; date the cadence last had any completion, surfaced as the "Last done" line on the Recurring card (null = unknown/never, shown as "—") — see [recurring-tasks rule](./claude/rules/recurring-tasks.md) |
 | recurrenceAlternate | recurrence_alternate | jsonb `{title, notes, tags}`, nullable — rolling-only; the "other side" of an alternating pair, swapped in as the spawned occurrence's content on each completion — see [recurring-tasks rule](./claude/rules/recurring-tasks.md) |
+| todayDate | today_date | date, nullable — **One List**: a task is on Today when `today_date = today`. No rollover — yesterday's items simply stop matching |
+| todayOrder | today_order | numeric, nullable — position within Today (fractional, drag-reorder) |
+| area | area | text, nullable, check `Research`/`AMD`/`EDBA`/`Home` — the one optional area per task (replaces tags) |
+| urgency | urgency | text, nullable, check `asap`/`norush` — `due_date` is reused as the soft by-date |
+| purpose | purpose | text, nullable — future-proofing, written by Claude, never asked in the app |
+| effort | effort | text, nullable, check `S`/`M`/`L` — future-proofing |
+| source | source | text, nullable, check `app`/`phone`/`claude` |
+| meta | meta | jsonb, nullable — catch-all |
 | — | user_id | injected by `_taskToDb()` |
+
+**One List statuses (2026-11-25):** going forward `status` is `open` / `done` / `recurring` / `idea`. The old `backlog`/`this-week`/`next`/`doing` values are retired (the table was emptied in the fresh start — see below).
+
+### `task_events` table (One List, 2026-11-25)
+
+Append-only activity log — raw material for the Log and future ranking tuning. RLS `auth.uid() = user_id`, index `(user_id, at)`.
+
+| JS camelCase | DB snake_case | Notes |
+|---|---|---|
+| id | id | text PK, `'e' + Date.now() + rand` |
+| — | user_id | uuid, default `auth.uid()` |
+| taskId | task_id | text — task id (no FK; tasks get archived/deleted) |
+| event | event | check `added`/`offered`/`pulled`/`sent_back`/`started`/`done` |
+| at | at | timestamptz default now() |
+| minutes | minutes | int, nullable — focus work minutes (on `done`/`started` sessions) |
+
+**Fresh start (migration `one_list_model`, 2026-11-25):** the 1 `done` task was moved into `archive` (archived_at = its scheduled date), then all 15 remaining `tasks` rows (open + recurring) were deleted — no backup (snapshot is `Grind-and-Flow-snapshot-2026-11-25.docx`). `projects`, `tags`, `commitments` are left in place, unused.
 
 ### `archive` table
 
@@ -146,6 +171,7 @@ Same shape as `tasks`, plus two additional fields:
 | originalStatus | original_status | status before archiving |
 | timeSpent | time_spent | integer, default 0 — carried over from the task's logged Focus minutes |
 | recurrence | recurrence | `null` \| `'rolling'` \| `'anchored'` — carried over for history; not re-read to spawn anything (that only happens off the live occurrence in `tasks`) |
+| area | area | text, nullable — One List area carried over from the task (added 2026-11-25) |
 | recurrenceSeriesId | recurrence_series_id | lets the Detail modal's "Past occurrences" list find every archived occurrence of a recurring series — see [recurring-tasks rule](./claude/rules/recurring-tasks.md) |
 
 Archived projects also carry a `subtasks` jsonb array (same as the projects table). Note `laterCount`/`dayOrder`/`boardOrder` are **not** carried into archive — "same shape as tasks" is approximate, not literal.
