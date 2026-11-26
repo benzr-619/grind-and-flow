@@ -228,7 +228,7 @@
   //   3. uppercase the first letter — unless the first word already has a capital inside
   //      it (iPhone, eGFR), which is the user's own casing
   //   Everything else is left exactly as typed.
-  const CASE_WORDS = ['AMD', 'EDBA', 'ED', 'RME', 'NYP', 'CUIMC', 'EKG', 'EMS', 'STEMI', 'ECAT', 'RISE', 'QI', 'CV', 'PDF', 'MHA', 'Mo', 'Tristen'];
+  const CASE_WORDS = ['AMD', 'EDBA', 'ED', 'RME', 'NYP', 'CUIMC', 'EKG', 'EMS', 'STEMI', 'ECAT', 'QI', 'CV', 'PDF', 'MHA', 'Mo', 'Tristen'];
   const _CASE_MAP = new Map(CASE_WORDS.map(w => [w.toLowerCase(), w]));
   function normalizeCase(title) {
     let s = title || '';

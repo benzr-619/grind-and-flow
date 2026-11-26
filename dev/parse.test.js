@@ -106,6 +106,7 @@ eq(C('ask mo and tristen re qi'), 'Ask Mo and Tristen re QI', 'names + mixed-cas
 eq(C('ed shift swap'), 'ED shift swap', 'list word as first word');
 eq(C('Ed shift swap'), 'ED shift swap', 'list word in any case');
 eq(C('call the medic'), 'Call the medic', 'list word inside a longer word untouched');
+eq(C('rise early for the shift'), 'Rise early for the shift', 'rise is not a list word');
 eq(C('redo cvs and emsley notes'), 'Redo cvs and emsley notes', 'no partial-word matches');
 eq(C('iPhone backup'), 'iPhone backup', 'first word with an inner capital kept');
 eq(C('(nyp) badge'), '(NYP) badge', 'leading punctuation');
