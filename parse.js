@@ -221,6 +221,27 @@
     return { title: s, isIdea, area, when };
   }
 
+  // Capture-time capitalization (sentence case, add-only). Runs on the title after
+  // parseTitle strips the inline shortcuts, before Data.addTask — never on later edits.
+  //   1. whole title in capitals (≥2 letters, no lowercase) → lowercase it (caps-lock catch)
+  //   2. CASE_WORDS typed in any case → their listed form (whole word; punctuation kept)
+  //   3. uppercase the first letter — unless the first word already has a capital inside
+  //      it (iPhone, eGFR), which is the user's own casing
+  //   Everything else is left exactly as typed.
+  const CASE_WORDS = ['AMD', 'EDBA', 'ED', 'RME', 'NYP', 'CUIMC', 'EKG', 'EMS', 'STEMI', 'ECAT', 'RISE', 'QI', 'CV', 'PDF', 'MHA', 'Mo', 'Tristen'];
+  const _CASE_MAP = new Map(CASE_WORDS.map(w => [w.toLowerCase(), w]));
+  function normalizeCase(title) {
+    let s = title || '';
+    const letters = s.match(/\p{L}/gu) || [];
+    if (letters.length >= 2 && !/\p{Ll}/u.test(s)) s = s.toLowerCase();
+    s = s.replace(/[\p{L}\p{N}]+/gu, w => _CASE_MAP.get(w.toLowerCase()) || w);
+    const m = s.match(/[\p{L}\p{N}]+/u);
+    if (m && /^\p{Ll}/u.test(m[0]) && !/\p{Lu}/u.test(m[0].slice(1))) {
+      s = s.slice(0, m.index) + m[0][0].toUpperCase() + s.slice(m.index + 1);
+    }
+    return s;
+  }
+
   // Close-title match for the "already have: …" hint. Returns the best candidate or null.
   function similarity(a, b) {
     const norm = x => (x || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 2);
@@ -241,7 +262,7 @@
     return bestScore >= 0.6 ? best : null;
   }
 
-  const api = { AREAS, parseWhen, parseArea, parseTitle, parseDate, parseEvery, closeMatch, ymd, addDays, fmt };
+  const api = { AREAS, CASE_WORDS, normalizeCase, parseWhen, parseArea, parseTitle, parseDate, parseEvery, closeMatch, ymd, addDays, fmt };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.GFParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

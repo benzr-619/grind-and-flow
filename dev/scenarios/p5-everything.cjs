@@ -48,7 +48,7 @@ module.exports = {
     await page.click('#ol-input-everything');
     await page.keyboard.type('idea: stats series for residents #research');
     await page.keyboard.press('Enter'); await page.waitForTimeout(300);
-    expect(await page.evaluate(() => Data.ideas().some(t => t.title === 'stats series for residents' && t.area === 'Research')), 'idea added');
+    expect(await page.evaluate(() => Data.ideas().some(t => t.title === 'Stats series for residents' && t.area === 'Research')), 'idea added');
     // detail: open a normal task, set area + asap, add to Today
     await page.click('.ev-it[data-id="x7"] .ev-drift', { force: true }); await page.waitForTimeout(200);
     expect(await page.$('#ol-detail'), 'detail open');

@@ -1166,7 +1166,7 @@ const App = (() => {
     const w = pt.when || {};
     const isIdea = pt.isIdea || _ph.when === 'idea'; // idea wins over urgency/date/recurrence
     Data.addTask({
-      title: pt.title, isIdea, source: 'phone',
+      title: GFParse.normalizeCase(pt.title), isIdea, source: 'phone',
       area: _ph.area || pt.area,
       urgency: isIdea ? null : _ph.when === 'asap' ? 'asap' : _ph.when === 'norush' ? 'norush' : (w.urgency || null),
       dueDate: isIdea ? '' : _ph.when === 'date' ? _ph.dueDate : (w.dueDate || ''),
@@ -1723,7 +1723,7 @@ const App = (() => {
     // Idea wins: no urgency, no date, no recurrence, never straight onto Today.
     const isIdea = pt.isIdea || !!when?.idea;
     const task = Data.addTask({
-      title: pt.title, isIdea, area, source: 'app',
+      title: GFParse.normalizeCase(pt.title), isIdea, area, source: 'app',
       urgency: isIdea ? null : when?.urgency || null, dueDate: isIdea ? '' : when?.dueDate || '',
       recur: isIdea ? null : when?.recur || null, toToday: !!toToday && !isIdea,
     });

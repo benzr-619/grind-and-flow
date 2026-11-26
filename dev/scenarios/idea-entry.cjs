@@ -8,13 +8,13 @@ module.exports = {
     const expect = (c, m) => { if (!c) throw new Error('assert: ' + m); };
     const find = t => page.evaluate(t => Data.get().tasks.find(x => x.title === t) || null, t);
     if (mobile) {
-      await page.fill('#ph-input', 'Podcast on triage');
+      await page.fill('#ph-input', 'podcast on triage for ems');
       await page.click('.ph-chip >> text=asap');
       await page.click('.ph-chip >> text=idea');
       expect((await page.$$eval('.ph-chip.on', e => e.map(x => x.textContent))).join() === 'idea', 'idea chip replaces asap');
       await page.click('.ph-chip >> text=EDBA');
       await page.click('.ph-save');
-      const t = await find('Podcast on triage');
+      const t = await find('Podcast on triage for EMS'); // normalizeCase on the phone too
       expect(t && t.status === 'idea' && t.area === 'EDBA' && t.source === 'phone' && !t.urgency && !t.dueDate, 'phone idea saved: ' + JSON.stringify(t));
       expect((await page.textContent('.ph-toast')).includes('Everything'), 'toast says Everything');
       console.log('  idea (phone) assertions passed');
@@ -50,8 +50,17 @@ module.exports = {
     // idea: prefix + step-2 value → idea wins
     await page.keyboard.type('idea: grant pitch'); await page.keyboard.press('Tab');
     await page.keyboard.type('asap'); await page.keyboard.press('Enter');
-    const p = await find('grant pitch');
+    const p = await find('Grant pitch'); // normalizeCase capitalised it
     expect(p && p.status === 'idea' && !p.urgency, 'idea: wins over asap');
+    // capture-time capitalization: shortcuts stripped first, list words fixed, typed caps kept
+    await page.keyboard.type('idea: send edba\'s pdf to LifeNet #amd'); await page.keyboard.press('Enter');
+    const c = await find("Send EDBA's PDF to LifeNet");
+    expect(c && c.status === 'idea' && c.area === 'AMD', 'normalized idea title: ' + JSON.stringify(c));
+    await page.keyboard.type('RENEW STEMI BADGE'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter');
+    expect(await find('Renew STEMI badge'), 'caps-lock title fixed');
+    // detail-popover edits save exactly what's typed
+    await page.evaluate(id => App._odSet(id, 'title', 'lower case edit amd'), c.id);
+    expect((await page.evaluate(id => Data.findItem(id).title, c.id)) === 'lower case edit amd', 'detail edit not normalized');
     // duplicate hint still applies to ideas
     await page.keyboard.type('residents stats series');
     expect(await page.isVisible('#ol-entry-today .ol-dup'), 'dup hint for existing idea');

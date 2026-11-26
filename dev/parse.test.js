@@ -93,11 +93,34 @@ eq(P.parseTitle('#1 priority thing', T).title, '#1 priority thing', 'non-area # 
 eq(P.parseTitle('Write by the lake', T).title, 'Write by the lake', '"by" without a date kept');
 eq(P.parseTitle('asap', T).title, 'asap', 'never strip to empty');
 
+// ── normalizeCase (capture-time capitalization) ──
+const C = P.normalizeCase;
+eq(C('reply to cardiology'), 'Reply to cardiology', 'lowercase → sentence case');
+eq(C('call LifeNet re iPhone app'), 'Call LifeNet re iPhone app', 'mixed case kept');
+eq(C('Order soil for the Fiddle Leaf'), 'Order soil for the Fiddle Leaf', 'typed capitals never lowered');
+eq(C('RENEW HOSPITAL BADGE'), 'Renew hospital badge', 'all caps → lowercased first');
+eq(C('EMAIL AMD ABOUT EKG'), 'Email AMD about EKG', 'all caps keeps list words');
+eq(C('send edba\'s pdf to amd'), "Send EDBA's PDF to AMD", 'acronyms + possessive');
+eq(C('budget (amd), stemi review.'), 'Budget (AMD), STEMI review.', 'acronyms inside punctuation');
+eq(C('ask mo and tristen re qi'), 'Ask Mo and Tristen re QI', 'names + mixed-case list words');
+eq(C('ed shift swap'), 'ED shift swap', 'list word as first word');
+eq(C('Ed shift swap'), 'ED shift swap', 'list word in any case');
+eq(C('call the medic'), 'Call the medic', 'list word inside a longer word untouched');
+eq(C('redo cvs and emsley notes'), 'Redo cvs and emsley notes', 'no partial-word matches');
+eq(C('iPhone backup'), 'iPhone backup', 'first word with an inner capital kept');
+eq(C('(nyp) badge'), '(NYP) badge', 'leading punctuation');
+eq(C('3 ekg reads'), '3 EKG reads', 'leading digit');
+eq(C(''), '', 'empty');
+eq(C('x'), 'X', 'one character');
+eq(C('A'), 'A', 'one capital (not caps lock)');
+eq(C('OK'), 'Ok', 'two capitals = caps lock');
+
 // ── closeMatch (duplicate hint) ──
 const pool = [{ id: '1', title: 'Reply to cardiology about LifeNet' }, { id: '2', title: 'Order soil for the fiddle leaf' }];
 eq(P.closeMatch('reply to cardiology', pool)?.id, '1', 'substring match');
 eq(P.closeMatch('Order soil for fiddle leaf', pool)?.id, '2', 'word overlap match');
 eq(P.closeMatch('Write the analysis plan', pool), null, 'no match');
 eq(P.closeMatch('abc', pool), null, 'too short');
+eq(P.closeMatch('REPLY TO CARDIOLOGY', pool)?.id, '1', 'closeMatch is case-insensitive');
 
 console.log(`parse.test.js — ${n} assertions passed`);

@@ -43,7 +43,7 @@ module.exports = {
     expect(await page.inputValue('#ph-input') === '', 'input cleared');
     await page.fill('#ph-input', 'water plants every 1w');
     await page.press('#ph-input', 'Enter'); await page.waitForTimeout(100);
-    expect(await page.evaluate(() => Data.recurringTasks().some(x => x.title === 'water plants')), 'every via phone');
+    expect(await page.evaluate(() => Data.recurringTasks().some(x => x.title === 'Water plants')), 'every via phone');
     console.log('  phone assertions passed');
   },
 };
