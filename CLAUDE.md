@@ -120,7 +120,7 @@ Same shape as tasks (lean subset) plus `archived_at` (completion date, text YYYY
 ### `task_events` — activity log
 `id` text PK, `user_id` (default `auth.uid()`), `task_id` text (no FK), `event` check `added`/`offered`/`pulled`/`sent_back`/`started`/`done`, `at` timestamptz, `minutes` int nullable. Index `(user_id, at)`. A Focus session's work minutes live on exactly one event: its `started` row (ended with Back to Today) or its `done` row (ended with Done). `offered` is logged once per task per day.
 
-**Fresh start (2026-11-25, migration `one_list_model`):** all open/recurring tasks were deleted (old list snapshot: `Grind-and-Flow-snapshot-2026-11-25.docx`); the 1 done task moved into `archive`.
+**Fresh start (2026-11-25, migration `one_list_model`):** all open/recurring tasks were deleted (old list snapshot: `Grind-and-Flow-snapshot-2026-11-25.docx`, kept outside the repo and purged from git history 2026-11-26 — `*.docx` is gitignored); the 1 done task moved into `archive`.
 
 ---
 

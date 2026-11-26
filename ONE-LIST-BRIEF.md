@@ -149,7 +149,7 @@ Desktop-first; only Prompt 8 touches mobile.
 A Claude skill ("add to Grind") using the Supabase connector: parse free text into title/area/urgency/
 due/purpose and insert via one fixed, tested template (never freeform SQL — the connector bypasses RLS);
 answer "what's open for EDBA?" / "what did I spend time on?". Later: tune ranking weights from
-`task_events`. Decide whether `gf-coach_ARCHITECTURE.md` is absorbed into this. Keep patient details out.
+`task_events`. Keep patient details out.
 
 ## Later: native rebuild (decided 2026-11-25, not now)
 
