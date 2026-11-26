@@ -3014,6 +3014,11 @@ body { background: var(--ol-bg); color: var(--ol-ink); }
 .ol-keyhint { margin-left: auto; white-space: pre; }
 .ol-keyhint.flash { color: var(--ol-ink); }
 
+.ol-dup { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--ol-grey); }
+.ol-dup[hidden] { display: none; }
+.ol-dup strong { font-weight: 500; color: var(--ol-ink-2); }
+.ol-dup .od-link { text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--ol-line-2); }
+
 /* Today list */
 .ol-empty { margin: 0; font-size: 18px; font-weight: 300; color: var(--ol-faint); }
 .ol-pad { padding: 24px 48px; }

@@ -80,3 +80,10 @@ the touched views and the run fails on any console error / page error. Run it yo
 - Minutes = sum of the task's `task_events` minutes, else `archive.time_spent` (so your 154 historical rows still show their focus time).
 - Decisions: focus minutes on still-open tasks are shown on the day they were logged, marked "· still open", and count toward the week total. Restore brings a row back as a plain open task (archive rows don't keep recurrence/Today state). Delete uses an inline "delete for good? yes / no".
 - Check: `dev/scenarios/p6-log.cjs` (totals, fallback, area totals, week nav, restore, delete). No console errors.
+
+## Prompt 7 — Capture polish ✅
+- Duplicate hint ("already have: …" · keep both · open existing) on a close title match against open tasks, ideas and recurring tasks.
+- Inline shortcuts (`asap`, `no rush`/`norush`, `#area`, `by <date>`, simple dates), `idea:` prefix and `every …` were already built in Prompt 3 (`parse.js`); confirmed end-to-end here.
+- `dev/parse.test.js` — 60 plain-node assertions covering urgency, dates (weekday/same-day/next, month-day, numeric, relative, year rollover, invalid), rolling vs anchored recurrence (incl. month-end clamp), areas, inline title shortcuts, duplicate matching.
+- Decision: "keep both" is remembered for that exact title until the entry is saved/cleared.
+- Check: `node dev/parse.test.js`; `dev/scenarios/p7-capture.cjs`; all earlier scenarios re-run green. No console errors.

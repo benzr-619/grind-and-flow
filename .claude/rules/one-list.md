@@ -38,3 +38,8 @@ Source of truth for behavior: `ONE-LIST-BRIEF.md` (Locked decisions) + the "v2 �
 - `olView === 'log'` → `_renderLog()`; week picker `_logWeek` (Mon-start, ≤ 0 — no future weeks).
 - `_logData(offset)`: finished tasks = non-project `archive` rows whose `archivedAt` falls in the week, grouped by that day. Minutes per finished task = sum of its `task_events` minutes (started + done), else `archive.time_spent` (pre-events history). Focus minutes logged that week on tasks still open appear as "· still open" rows on the day the event was logged. Week total + totals by area (unknown → "No area").
 - Quiet hover actions per finished row: **restore** (`logRestore` → `Data.restoreFromArchive`, then forced to a plain `open` task — no recurrence, not on Today) and **delete** (inline confirm → `Data.deleteFromArchive`).
+
+## Capture polish (Prompt 7)
+- **Duplicate hint** `_olDupHint(ctx)` (runs inside `_entrySync`): parsed title vs open/idea/recurring tasks via `GFParse.closeMatch` (exact, substring ≥6 chars, or word-overlap score ≥ 0.6; titles < 4 chars ignored). Shows `.ol-dup` "already have: …" with **keep both** (`_olDupKeep` — stores `_entry[ctx].dupKeep` so the hint stays away for that title) and **open existing** (`_olDupOpen` — clears the entry, opens the detail popover).
+- Inline shortcuts in the title step show as preview chips while typing (idea / area / when).
+- Parser tests: `node dev/parse.test.js` (60 assertions, fixed today = Wed 2026-11-25). Run after any `parse.js` change.

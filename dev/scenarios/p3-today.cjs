@@ -79,7 +79,7 @@ module.exports = {
     expect(await page.$('.ol-set'), 'restored');
     // nav
     await page.click('text=zoom out'); await page.waitForTimeout(200);
-    await page.click('text=← today'); await page.waitForTimeout(200);
+    await page.click('text=back to today'); await page.waitForTimeout(200);
     await page.click('text=log'); await page.waitForTimeout(200);
     await page.click('text=← today'); await page.waitForTimeout(200);
     console.log('  today assertions passed');

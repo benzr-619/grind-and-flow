@@ -4989,8 +4989,34 @@ const App = (() => {
     if (ctx === 'everything') _olHighlight(task.id);
   }
 
-  // Duplicate hint — filled in Prompt 7.
-  function _olDupHint(ctx) {}
+  // Duplicate hint: on a close title match with an open task / idea / recurring task,
+  // show "already have: …" with keep both (dismiss for this title) or open existing.
+  function _olDupHint(ctx) {
+    const S = _entry[ctx];
+    const box = document.querySelector(`#ol-entry-${ctx} .ol-dup`);
+    if (!box) return;
+    const raw = S.step === 0 ? S.field : S.title;
+    const title = raw.trim() ? GFParse.parseTitle(raw, Data.localToday()).title : '';
+    const pool = Data.get().tasks.filter(t => t.status === 'open' || t.status === 'idea' || t.status === 'recurring');
+    const hit = title && S.dupKeep !== title ? GFParse.closeMatch(title, pool) : null;
+    if (!hit) { box.hidden = true; box.innerHTML = ''; return; }
+    box.hidden = false;
+    box.innerHTML = `<span>already have: <strong>${esc(hit.title)}</strong></span>
+      <button type="button" class="od-link" onmousedown="event.preventDefault()" onclick="App._olDupKeep('${ctx}')">keep both</button>
+      <button type="button" class="od-link" onmousedown="event.preventDefault()" onclick="App._olDupOpen('${ctx}','${hit.id}')">open existing</button>`;
+  }
+  function _olDupKeep(ctx) {
+    const S = _entry[ctx];
+    const raw = S.step === 0 ? S.field : S.title;
+    S.dupKeep = GFParse.parseTitle(raw, Data.localToday()).title;
+    _olDupHint(ctx);
+    document.getElementById('ol-input-' + ctx)?.focus();
+  }
+  function _olDupOpen(ctx, id) {
+    _entry[ctx] = _emptyEntry();
+    _entrySync(ctx);
+    olOpenDetail(id);
+  }
 
   // ── Stubs filled by later prompts (Everything = P5, Log = P6, detail = P5) ──
   function _olBackHeader(right) {
@@ -5537,7 +5563,7 @@ const App = (() => {
     _mOpenCapture, _mCaptureToggleProj, _mCaptureSubmit,
     // One List
     olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olHideOffer, olShowOffer, olOfferAll,
-    _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip,
+    _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip, _olDupKeep, _olDupOpen,
     logWeek, logRestore, logDelAsk, logDel,
     evMode, _evCanvasClick, olCloseDetail, _odSet, _odToday, _odMakeTask, _odDelAsk, _odDel,
   };
