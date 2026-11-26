@@ -227,6 +227,10 @@ const App = (() => {
     window.addEventListener('resize', _onResize);
     document.addEventListener('keydown', _onShortcutKey);
     document.addEventListener('keyup', _onShortcutKeyUp);
+    document.addEventListener('beforeinput', _onStrayBeforeInput, true);
+    document.addEventListener('input', _onStrayInput, true);
+    document.addEventListener('compositionstart', _onStrayComposition, true);
+    document.addEventListener('compositionupdate', _onStrayComposition, true);
     window.addEventListener('blur', _hideKbdHints); // ⌥-tabbing away never sends the keyup
     document.addEventListener('visibilitychange', () => {
       // Tab came back into view — re-sync the timer from the wall clock so time that
@@ -2187,7 +2191,43 @@ const App = (() => {
     clearTimeout(_hintTimer); _hintTimer = null;
     document.body.classList.remove('kbd-hints');
   }
-  function _onShortcutKeyUp(e) { if (e.key === 'Alt') _hideKbdHints(); }
+  function _onShortcutKeyUp(e) {
+    if (e.key === 'Alt') _hideKbdHints();
+    if (_swallow && e.code === _swallow.code) _swallow.until = Math.min(_swallow.until, performance.now() + 100);
+  }
+
+  // Mac Chrome delivers ⌥+key text (†, ß…) and dead-key accents (⌥E ´, ⌥U ¨…) to the
+  // field through the IME, separately from keydown — preventDefault can't stop it, and
+  // a view switch has just focused the new view's entry bar mid-keystroke. So for a
+  // short window after an ⌥ shortcut, text arriving in an entry bar is cancelled
+  // (beforeinput) or reverted to the entry state (input / composition). The window
+  // ends on the shortcut key's keyup (+100ms), the next real keydown, or after 1s.
+  let _swallow = null; // { code, until }
+  function _swallowing(t) {
+    if (!_swallow || !t || !t.classList || !t.classList.contains('ol-input')) return false;
+    if (performance.now() > _swallow.until) { _swallow = null; return false; }
+    return true;
+  }
+  function _entryCtxOf(el) { return (el.id || '').replace('ol-input-', ''); }
+  function _revertEntry(el) { const ctx = _entryCtxOf(el); if (_entry[ctx]) { el.value = ''; _entrySync(ctx); } }
+  function _onStrayBeforeInput(e) {
+    if (!_swallowing(e.target)) return;
+    if (e.cancelable) e.preventDefault();
+  }
+  function _onStrayInput(e) {
+    if (!_swallowing(e.target)) return;
+    e.stopImmediatePropagation(); // keep _olInput from writing the stray char into _entry
+    _revertEntry(e.target);
+  }
+  function _onStrayComposition(e) {
+    if (!_swallowing(e.target)) return;
+    e.stopImmediatePropagation();
+    const el = e.target;
+    _swallow.until = performance.now() + 1000; // cover the commit that ending it fires
+    setTimeout(() => { // end the dead-key composition, then put the text back
+      el.blur(); el.focus({ preventScroll: true }); _revertEntry(el);
+    }, 0);
+  }
 
   function _onShortcutKey(e) {
     if (e.key === 'Alt' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -2195,6 +2235,7 @@ const App = (() => {
       return;
     }
     _hideKbdHints();
+    if (_swallow && e.code !== _swallow.code && !e.repeat) _swallow = null; // real typing resumes
     if (e.defaultPrevented || e.isComposing || _isMobile() || _overlayOpen()) return;
     const combo = _keyCombo(e);
     // Plain keys never fire from an editable field; ⌥ combos do (the entry bar autofocuses).
@@ -2209,6 +2250,7 @@ const App = (() => {
     for (const scope of scopes) { sc = SHORTCUTS.find(s => s.scope === scope && s.keys.includes(combo)); if (sc) break; }
     if (!sc || (sc.pip && !_pipSupported)) return;
     e.preventDefault(); // also on repeats, so a held ⌥T never types into the entry bar
+    if (e.altKey) _swallow = { code: e.code, until: performance.now() + 1000 };
     if (e.repeat) return;
     _runShortcut(sc.action);
   }

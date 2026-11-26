@@ -59,6 +59,35 @@ module.exports = {
     await page.keyboard.press('Alt+KeyT'); await wait(400);
     expect(await view() === 'today', 'real ⌥T → today');
     expect(await page.inputValue('#ol-input-today') === 'Buy milk', 'text kept across ⌥E/⌥T: ' + JSON.stringify(await page.inputValue('#ol-input-today')));
+    // Mac Chrome delivers ⌥ text via the IME after keydown, into the newly focused bar.
+    // Simulate both shapes: an insertText '†' (⌥T) and a dead-key composition '´' (⌥E).
+    const strayInsert = (ch) => page.evaluate((ch) => {
+      const el = document.activeElement;
+      const bi = new InputEvent('beforeinput', { inputType: 'insertText', data: ch, bubbles: true, cancelable: true });
+      if (el.dispatchEvent(bi)) { el.value += ch; el.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: ch, bubbles: true })); return 'inserted'; }
+      return 'blocked';
+    }, ch);
+    await alt('KeyT');
+    expect(await strayInsert('†') === 'blocked', '† after ⌥T is cancelled');
+    expect(await page.inputValue('#ol-input-today') === 'Buy milk', 'no † in the bar');
+    await alt('KeyE');
+    await page.evaluate(() => {
+      const el = document.activeElement;
+      el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+      el.value += '´';
+      el.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: '´', isComposing: true, bubbles: true }));
+    });
+    await wait(100);
+    expect(await view() === 'everything', '⌥E (dead key) → everything');
+    expect(await page.inputValue('#ol-input-everything') === '', 'no ´ in the everything bar: ' + JSON.stringify(await page.inputValue('#ol-input-everything')));
+    expect(await active() === 'ol-input-everything', 'bar still focused after the dead key');
+    // Typing right after a shortcut still works
+    await page.keyboard.type('x');
+    expect(await page.inputValue('#ol-input-everything') === 'x', 'typing after ⌥E works: ' + JSON.stringify(await page.inputValue('#ol-input-everything')));
+    await page.keyboard.press('Backspace');
+    await alt('KeyT');
+    expect(await page.inputValue('#ol-input-today') === 'Buy milk', 'today text intact');
+
     // Plain letters still just type
     await page.keyboard.type('s');
     expect(await page.inputValue('#ol-input-today') === 'Buy milks', 'plain s types');
