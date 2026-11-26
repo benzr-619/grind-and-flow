@@ -3,6 +3,7 @@
 // node for dev/parse.test.js. All dates are local YYYY-MM-DD strings.
 //
 //   parseWhen('asap')        → { urgency:'asap', label:'asap' }
+//   parseWhen('i' | 'idea')  → { idea:true, label:'idea' }
 //   parseWhen('dec 4', today)→ { dueDate:'2026-12-04', label:'by Dec 4' }
 //   parseWhen('every 2w')    → { recur:{ recurrence:'rolling', … }, label:'↻ every 2 weeks' }
 //   parseArea('r')           → 'Research'
@@ -158,13 +159,16 @@
   }
   function ordinal(n) { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return s[(v - 20) % 10] || s[v] || s[0]; }
 
-  // The priority/date step. '' → null. Unparseable → { invalid:true, label }.
+  // The priority/date step: asap · no rush · idea · a date (or every …).
+  // '' → null. Unparseable → { invalid:true, label }. Only exact "i"/"idea" mean idea,
+  // so "in 3d" / "in 2w" still reach the date parser.
   function parseWhen(str, today) {
     const raw = (str || '').trim();
     const q = raw.toLowerCase();
     if (!q) return null;
     if (q === 'a' || q === 'asap' || q === '!') return { urgency: 'asap', label: 'asap' };
     if (q === 'n' || q === 'norush' || q === 'no rush' || q === 'no-rush' || q === 'nr') return { urgency: 'norush', label: 'no rush' };
+    if (q === 'i' || q === 'idea') return { idea: true, label: 'idea' };
     const ev = parseEvery(q, today);
     if (ev) return ev;
     const d = parseDate(q.replace(/^(by|due|before) /, ''), today);

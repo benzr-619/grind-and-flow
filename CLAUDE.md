@@ -26,7 +26,7 @@ Grind & Flow is a single-user personal to-do app built around **one list** (rebu
 
 - **Today** (desktop home) — a numbered list you build each morning, drag to reorder, start item 1 into Focus.
 - **Offered** — a ranked column beside Today (due recurring tasks pinned on top, then transparent points); "I'm set ✓" puts it away for the day.
-- **Entry bar** — one line: title → Tab → priority/date → Tab → area. `every …` makes a recurring task; `idea:` makes an idea.
+- **Entry bar** — one line: title → Tab → priority/date (or idea) → Tab → area. `every …` makes a recurring task; `idea` / `i` in step 2 or an `idea:` prefix makes an idea.
 - **Everything** — "zoom out": every open task, recurring task and idea floating in clusters by area / urgency / date entered.
 - **Focus** — the breathing-orb timer overlay (unchanged look).
 - **Log** — week of finished tasks and focus minutes by area.
@@ -62,7 +62,7 @@ Initializes the Supabase client, resolves the session, renders the sign-in overl
 ### `data.js` — Persistence layer
 All Supabase reads/writes. Optimistic: every mutation updates in-memory `_state` (`tasks`, `archive`, `events`) immediately, then syncs in the background. Field mappers camelCase ↔ snake_case.
 - Generic: `load`, `get`, `findItem`, `upsertTask`, `deleteItem`, `archiveItemWithDate`, `restoreFromArchive`, `deleteFromArchive`.
-- One List: `addTask({title, urgency, dueDate, area, toToday, isIdea, source, notes, recur})` (the single creation path; `recur` = recurrence fields → status `recurring`), `pullToToday`, `sendBack`, `reorderToday(ids)`, `completeTask(id, {minutes, dateStr})` (archives immediately), `logEvent(taskId, event, minutes?)`, `setEventMinutes(eventId, m)`. Selectors: `todayList()`, `openTasks()`, `recurringTasks()`, `ideas()`, `events()`. `localToday()` (local YYYY-MM-DD — never `toISOString`), `AREAS`.
+- One List: `addTask({title, urgency, dueDate, area, toToday, isIdea, source, notes, recur})` (the single creation path; `recur` = recurrence fields → status `recurring`), `pullToToday(id, meta?)`, `sendBack`, `reorderToday(ids, movedId?)`, `completeTask(id, {minutes, dateStr})` (archives immediately), `logEvent(taskId, event, minutes?, meta?)`, `setEventMinutes(eventId, m)`, `todayPosition(id)` → `{position, todaySize}`, `snapshotPriorDay()` (lazy `day_snapshot` telemetry, called from `init()` and the midnight timer). Selectors: `todayList()`, `openTasks()`, `recurringTasks()`, `ideas()`, `events()`. `localToday()` (local YYYY-MM-DD — never `toISOString`), `AREAS`.
 **Must not:** render UI, touch the DOM, or know about auth beyond the injected client.
 
 ### `parse.js` — Entry-bar parser (pure)
@@ -118,7 +118,7 @@ Tables in use: `tasks`, `archive`, `task_events` — all scoped by `user_id`, RL
 Same shape as tasks (lean subset) plus `archived_at` (completion date, text YYYY-MM-DD), `original_status`, `time_spent`, `area`, `recurrence`, `recurrence_series_id`. Gotcha: `archive.blocked/tags/subtasks` are `text`, not boolean/jsonb. Old rows include `type = 'project'` (skipped by the Log).
 
 ### `task_events` — activity log
-`id` text PK, `user_id` (default `auth.uid()`), `task_id` text (no FK), `event` check `added`/`offered`/`pulled`/`sent_back`/`started`/`done`, `at` timestamptz, `minutes` int nullable. Index `(user_id, at)`. A Focus session's work minutes live on exactly one event: its `started` row (ended with Back to Today) or its `done` row (ended with Done). `offered` is logged once per task per day.
+`id` text PK, `user_id` (default `auth.uid()`), `task_id` text (no FK), `event` check `added`/`offered`/`pulled`/`sent_back`/`started`/`done`/`reordered`/`day_snapshot`, `at` timestamptz, `minutes` int nullable, `meta` jsonb nullable (ranking telemetry — shapes in [one-list rule § Ranking telemetry](./.claude/rules/one-list.md#ranking-telemetry-2026-11-26); migration `task_events_meta`). Index `(user_id, at)`. A Focus session's work minutes live on exactly one event: its `started` row (ended with Back to Today) or its `done` row (ended with Done). `offered` is logged once per task per day.
 
 **Fresh start (2026-11-25, migration `one_list_model`):** all open/recurring tasks were deleted (old list snapshot: `Grind-and-Flow-snapshot-2026-11-25.docx`, kept outside the repo and purged from git history 2026-11-26 — `*.docx` is gitignored); the 1 done task moved into `archive`.
 
@@ -159,7 +159,7 @@ None. (The old `gf-completion-dates` key is no longer used.) All user state live
 ### Complete and working (2026-11-25, One List)
 - **Today** — date header with *zoom out* / *log* / sign-out; entry bar; numbered drag-reorder list; hover *not today →* + done circle; *start* on item 1; quiet divider after item 10.
 - **Offered** — due/overdue recurring pinned (✓ to check off, + to pull); points ranking (`RANK_WEIGHTS`: asap +50; by-date overdue +60 / ≤2d +40 / ≤7d +25 / later +10; on Today in last 3 days +30; added in last 3 days +15; age +1/week max +10; no rush −40); ~12 shown with "+ n more"; one reason per row; *I'm set ✓* hides it for the day.
-- **Entry bar** — Tab flow, Enter → Offered/Everything, Shift+Enter → Today, Backspace steps back, Esc clears; inline shortcuts (`#amd asap`, `by fri`, `idea:`); `every 5d|2w|month` (rolling) / `every mon|15th` (anchored); duplicate hint (keep both / open existing).
+- **Entry bar** — Tab flow, Enter → Offered/Everything, Shift+Enter → Today, Backspace steps back, Esc clears; step 2 takes asap / no rush / idea (`i`) / a date — idea wins and goes to Everything (also on Shift+Enter); inline shortcuts (`#amd asap`, `by fri`, `idea:`); `every 5d|2w|month` (rolling) / `every mon|15th` (anchored); duplicate hint (keep both / open existing).
 - **Everything** — zoom-out transition; clusters by area / urgency / date entered with glide; drift; solid dot = on Today, hollow = idea; legible at ~60 items (row/sub-column layout search); inline detail popover (title, priority, due, area, notes, add to / take off Today, make a task, delete; recurring → ↻ cadence + edit recurrence).
 - **Focus** — orb overlay + timer + PiP unchanged; in-memory focus task; Back to Today / Done; "up next on Today" handoff card; `started`/`done` events with minutes.
 - **Recurring** — rolling + anchored, spawn on completion (anchored confirm prompt), backdated completion, alternating pairs; edited via the recurring modal.
@@ -168,7 +168,7 @@ None. (The old `gf-completion-dates` key is no longer used.) All user state live
 - **Auth** — email/password sign-in/up, cross-tab sign-out. **PWA** installable.
 
 ### Not built / known gaps
-- Phase 2: Claude "add to Grind" skill via the Supabase connector (fixed insert template, never freeform SQL); ranking tuning from `task_events`.
+- Phase 2: Claude "add to Grind" skill via the Supabase connector (fixed insert template, never freeform SQL); ranking tuning from `task_events` (telemetry is now being collected in `meta` — nothing reads it yet).
 - Fuller phone design (native SwiftUI rebuild planned later — see `ONE-LIST-BRIEF.md`).
 - Log redesign (week/month toggles, stacked-by-area chart).
 - Focus does not survive a page reload (session ends; minutes up to the last Back/Done are kept).

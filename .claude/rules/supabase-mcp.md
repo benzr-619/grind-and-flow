@@ -38,6 +38,9 @@ All four app tables exist in the `public` schema with RLS enabled:
 - App code (Prompt 9) no longer reads `projects`, `tags` or `commitments` at all.
 - `tasks.status` going forward: `open` / `done` / `recurring` / `idea` (no DB check constraint — enforced in app code).
 
+## Ranking telemetry migration (2026-11-26)
+- Migration `task_events_meta`: `task_events.meta` jsonb nullable; check constraint `task_events_event_check` dropped and re-added with `reordered` and `day_snapshot` added to the event list. Meta shapes: [one-list rule § Ranking telemetry](./one-list.md#ranking-telemetry-2026-11-26).
+
 ## Gotchas
 
 - `archive.blocked`, `archive.tags`, and `archive.subtasks` are stored as `text` (not `boolean`/`jsonb`) — inconsistent with the `projects` and `tasks` tables. Keep this in mind if querying or inserting archive rows directly.

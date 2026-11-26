@@ -213,13 +213,14 @@ const App = (() => {
   function _scheduleMidnight() {
     const now = new Date();
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
-    setTimeout(() => { renderBoard(); _scheduleMidnight(); }, midnight - now);
+    setTimeout(() => { Data.snapshotPriorDay(); renderBoard(); _scheduleMidnight(); }, midnight - now);
   }
 
   // ── Init ── (called only by auth.js)
   async function init() {
     _initialized = true;
     await Data.load();   // async: fetches from Supabase
+    Data.snapshotPriorDay(); // lazy day_snapshot telemetry — before anything touches todayOrder
     _renderFocusRow();
     _startClock();
     _scheduleMidnight();
@@ -289,8 +290,9 @@ const App = (() => {
   function _completeRecurring(id, dateStr) {
     const item = Data.findItem(id);
     if (!item || item.status !== 'recurring') return;
+    const pos = Data.todayPosition(id); // before the spawn/archive change anything
     _maybeSpawnRecurrence(item, dateStr);
-    Data.logEvent(id, 'done');
+    Data.logEvent(id, 'done', null, pos);
     Data.archiveItemWithDate(id, dateStr);
     renderBoard();
   }
@@ -543,8 +545,9 @@ const App = (() => {
     const mins = _endFocusSession(item);
     Data.upsertTask(item);
     if (item.status === 'recurring') {
+      const pos = Data.todayPosition(id);
       _maybeSpawnRecurrence(item, Data.localToday());
-      Data.logEvent(id, 'done', mins || null);
+      Data.logEvent(id, 'done', mins || null, pos);
       Data.archiveItemWithDate(id, Data.localToday());
     } else {
       Data.completeTask(id, { minutes: mins });
@@ -1139,6 +1142,7 @@ const App = (() => {
       c('asap', _ph.when === 'asap', "App._phWhen('asap')") +
       c(_ph.when === 'date' && _ph.dueDate ? 'by ' + _fmtDate(_ph.dueDate) : 'date…', _ph.when === 'date', "App._phWhen('date')") +
       c('no rush', _ph.when === 'norush', "App._phWhen('norush')") +
+      c('idea', _ph.when === 'idea', "App._phWhen('idea')") +
       '<span class="ph-sep" aria-hidden="true"></span>' +
       Data.AREAS.map(a => c(a, _ph.area === a, `App._phArea('${a}')`)).join('');
   }
@@ -1160,16 +1164,17 @@ const App = (() => {
     const raw = (inp.value || '').trim(); if (!raw) return;
     const pt = GFParse.parseTitle(raw, Data.localToday());
     const w = pt.when || {};
+    const isIdea = pt.isIdea || _ph.when === 'idea'; // idea wins over urgency/date/recurrence
     Data.addTask({
-      title: pt.title, isIdea: pt.isIdea, source: 'phone',
+      title: pt.title, isIdea, source: 'phone',
       area: _ph.area || pt.area,
-      urgency: _ph.when === 'asap' ? 'asap' : _ph.when === 'norush' ? 'norush' : (w.urgency || null),
-      dueDate: _ph.when === 'date' ? _ph.dueDate : (w.dueDate || ''),
-      recur: w.recur || null,
+      urgency: isIdea ? null : _ph.when === 'asap' ? 'asap' : _ph.when === 'norush' ? 'norush' : (w.urgency || null),
+      dueDate: isIdea ? '' : _ph.when === 'date' ? _ph.dueDate : (w.dueDate || ''),
+      recur: isIdea ? null : w.recur || null,
     });
     inp.value = ''; _ph.when = null; _ph.dueDate = ''; _ph.area = null;
     _renderPhone();
-    _phToast('Saved — it\'s in Offered on your computer');
+    _phToast(isIdea ? 'Idea saved — it\'s in Everything on your computer' : 'Saved — it\'s in Offered on your computer');
     inp.focus();
   }
 
@@ -1288,29 +1293,34 @@ const App = (() => {
     return '';
   }
 
-  // Score one open task. Returns { score, why, hot } — `why` is the single strongest reason.
+  // Score one open task. Returns { score, why, hot, parts } — `why` is the single strongest
+  // reason; `parts` = the per-weight breakdown (RANK_WEIGHTS keys, plus `age`) that sums to
+  // `score`, logged as ranking telemetry. Only non-zero parts are included.
   function _olScore(t, today) {
     const W = RANK_WEIGHTS;
-    const reasons = []; // [points, text, hot]
-    if (t.urgency === 'asap') reasons.push([W.asap, 'asap', true]);
+    const reasons = []; // [points, text, hot, key]
+    if (t.urgency === 'asap') reasons.push([W.asap, 'asap', true, 'asap']);
     if (t.dueDate) {
       const d = _olDaysBetween(today, t.dueDate);
-      if (d < 0) reasons.push([W.overdue, `overdue · was ${_fmtDate(t.dueDate)}`, true]);
-      else if (d <= 2) reasons.push([W.due2d, d === 0 ? 'due today' : `by ${_fmtDate(t.dueDate)}`, true]);
-      else if (d <= 7) reasons.push([W.due7d, `by ${_fmtDate(t.dueDate)}`, false]);
-      else reasons.push([W.dueLater, `by ${_fmtDate(t.dueDate)}`, false]);
+      if (d < 0) reasons.push([W.overdue, `overdue · was ${_fmtDate(t.dueDate)}`, true, 'overdue']);
+      else if (d <= 2) reasons.push([W.due2d, d === 0 ? 'due today' : `by ${_fmtDate(t.dueDate)}`, true, 'due2d']);
+      else if (d <= 7) reasons.push([W.due7d, `by ${_fmtDate(t.dueDate)}`, false, 'due7d']);
+      else reasons.push([W.dueLater, `by ${_fmtDate(t.dueDate)}`, false, 'dueLater']);
     }
     if (t.todayDate && t.todayDate < today && _olDaysBetween(t.todayDate, today) <= 3) {
-      reasons.push([W.recentToday, `on Today ${_olDayName(t.todayDate)}`, false]);
+      reasons.push([W.recentToday, `on Today ${_olDayName(t.todayDate)}`, false, 'recentToday']);
     }
     const age = t.dateAdded ? _olDaysBetween(t.dateAdded, today) : 0;
-    if (age <= 3) reasons.push([W.recentAdd, _olAddedLabel(t.dateAdded), false]);
-    let score = reasons.reduce((s, r) => s + r[0], 0);
-    score += Math.min(W.ageMax, Math.floor(age / 7) * W.agePerWeek);
-    if (t.urgency === 'norush') score += W.norush;
+    if (age <= 3) reasons.push([W.recentAdd, _olAddedLabel(t.dateAdded), false, 'recentAdd']);
+    const parts = {};
+    reasons.forEach(r => { parts[r[3]] = r[0]; });
+    const agePts = Math.min(W.ageMax, Math.floor(age / 7) * W.agePerWeek);
+    if (agePts) parts.age = agePts;
+    if (t.urgency === 'norush') parts.norush = W.norush;
+    const score = Object.values(parts).reduce((s, v) => s + v, 0);
     const best = reasons.sort((a, b) => b[0] - a[0])[0];
     const why = best ? best[1] : t.urgency === 'norush' ? 'no rush' : _olAddedLabel(t.dateAdded);
-    return { score, why, hot: best ? best[2] : false };
+    return { score, why, hot: best ? best[2] : false, parts };
   }
 
   // Offered = due/overdue recurring (pinned) + ranked open tasks not already on Today.
@@ -1327,13 +1337,32 @@ const App = (() => {
     return { pinned, ranked };
   }
 
-  // Log an `offered` event once per task per day (for later ranking tuning).
+  // Log an `offered` event once per task per day (for later ranking tuning). items are in
+  // display order: meta { rank, score, parts }, or { rank, pinned:true } for due recurring.
   function _olLogOffered(items) {
     const today = Data.localToday();
     const seen = new Set(Data.events()
       .filter(e => e.event === 'offered' && Data.localToday(new Date(e.at)) === today)
       .map(e => e.taskId));
-    items.forEach(o => { if (!seen.has(o.item.id)) Data.logEvent(o.item.id, 'offered'); });
+    items.forEach((o, i) => {
+      if (seen.has(o.item.id)) return;
+      Data.logEvent(o.item.id, 'offered', null, o.pinned ? { rank: i + 1, pinned: true } : { rank: i + 1, score: o.score, parts: o.parts });
+    });
+  }
+
+  // Telemetry for a pull: rank in Offered right now (only when pulled from there), score, parts.
+  function _olPullMeta(id, from) {
+    const t = Data.findItem(id);
+    const base = { from, offeredRank: null, score: null, parts: null };
+    if (!t) return base;
+    if (from === 'offered') {
+      const { pinned, ranked } = _olOffered();
+      const i = [...pinned, ...ranked].findIndex(o => o.item.id === id);
+      if (i >= 0) base.offeredRank = i + 1;
+      if (pinned.some(o => o.item.id === id)) base.pinned = true;
+    }
+    if (t.status !== 'recurring') { const sc = _olScore(t, Data.localToday()); base.score = sc.score; base.parts = sc.parts; }
+    return base;
   }
 
   // Short meta line for a task row: area · reason.
@@ -1444,7 +1473,10 @@ const App = (() => {
     });
   }
   function olSendBack(id) { _olLeave(id, () => { Data.sendBack(id); renderBoard(); }); }
-  function olPull(id) { _olLeave(id, () => { Data.pullToToday(id); renderBoard(); }); }
+  function olPull(id) {
+    const meta = _olPullMeta(id, 'offered'); // rank at the moment of the click, before the fade
+    _olLeave(id, () => { Data.pullToToday(id, meta); renderBoard(); });
+  }
   function olStart(id) { startTask(id); }
 
   // Drag-reorder within Today
@@ -1482,7 +1514,7 @@ const App = (() => {
       if (!tgt.before) idx += 1;
       ids.splice(idx, 0, _olDragId);
     } else ids.push(_olDragId);
-    Data.reorderToday(ids);
+    Data.reorderToday(ids, _olDragId);
     _olDragEnd();
     _renderTodayList();
   }
@@ -1536,8 +1568,9 @@ const App = (() => {
   // ── Entry bar (shared by Today + Everything) ──
   // title → Tab → priority/date → Tab → area. Enter saves at any step (→ Offered /
   // Everything); Shift+Enter → straight onto Today. Backspace on an empty field steps
-  // back; Esc clears. Parsing lives in parse.js (GFParse).
-  const _OL_WHEN_HINTS = ['asap', 'fri', 'dec 4', 'no rush', 'every 2w'];
+  // back; Esc clears. Parsing lives in parse.js (GFParse). Step 2 takes asap · no rush ·
+  // idea · a date — idea (i / idea, or the `idea:` title prefix) wins over urgency/date.
+  const _OL_WHEN_HINTS = ['asap', 'no rush', 'idea', 'fri', 'dec 4', 'every 2w'];
 
   function _entryBarHtml(ctx) {
     return `<div class="ol-entry ol-entry-${ctx}" id="ol-entry-${ctx}">
@@ -1587,11 +1620,12 @@ const App = (() => {
         return chip(h, on, h);
       }).join('');
       if (cur && !cur.invalid && !_OL_WHEN_HINTS.some(h => GFParse.parseWhen(h, today)?.label === cur.label)) hints += `<span class="ol-chip on static">${esc(cur.label)}</span>`;
-      keyhint = cur && cur.invalid ? 'try asap, no rush, fri, dec 4, every 2w' : 'tab → area   ·   enter → save';
+      keyhint = cur && cur.invalid ? 'try asap, no rush, idea, fri, dec 4, every 2w' : 'tab → area   ·   enter → save';
     } else {
       const cur = GFParse.parseArea(S.field);
       hints = Data.AREAS.map(a => chip(a, cur === a, a)).join('');
-      keyhint = 'enter → save' + (ctx === 'today' ? '   ·   shift+enter → straight onto Today' : '');
+      keyhint = S.when?.idea ? 'enter → save idea (→ Everything)'
+        : 'enter → save' + (ctx === 'today' ? '   ·   shift+enter → straight onto Today' : '');
     }
     box.querySelector('.ol-hints').innerHTML = hints;
     const kh = box.querySelector('.ol-keyhint');
@@ -1632,7 +1666,7 @@ const App = (() => {
       if (S.step === 0 && S.field.trim()) { S.title = S.field.trim(); S.field = ''; S.step = 1; }
       else if (S.step === 1) {
         const w = GFParse.parseWhen(S.field, today);
-        if (w && w.invalid) { _olFlash(ctx, "didn't catch that — try asap, no rush, fri, dec 4, every 2w"); return; }
+        if (w && w.invalid) { _olFlash(ctx, "didn't catch that — try asap, no rush, idea, fri, dec 4, every 2w"); return; }
         S.whenRaw = S.field; S.when = w; S.field = ''; S.step = 2;
       }
       _entrySync(ctx);
@@ -1665,17 +1699,19 @@ const App = (() => {
       if (!area) { _olFlash(ctx, 'area: r, a, e or h'); return; }
     }
     if (ctx === 'today' && toToday === undefined) toToday = false;
+    // Idea wins: no urgency, no date, no recurrence, never straight onto Today.
+    const isIdea = pt.isIdea || !!when?.idea;
     const task = Data.addTask({
-      title: pt.title, isIdea: pt.isIdea, area, source: 'app',
-      urgency: when?.urgency || null, dueDate: when?.dueDate || '',
-      recur: when?.recur || null, toToday: !!toToday && !pt.isIdea,
+      title: pt.title, isIdea, area, source: 'app',
+      urgency: isIdea ? null : when?.urgency || null, dueDate: isIdea ? '' : when?.dueDate || '',
+      recur: isIdea ? null : when?.recur || null, toToday: !!toToday && !isIdea,
     });
     if (!task) return;
     _entry[ctx] = _emptyEntry();
-    if (!task.todayDate && olView === 'today') _offerHiddenDate = null; // show where it went
+    if (!task.todayDate && !isIdea && olView === 'today') _offerHiddenDate = null; // show where it went
     _entrySync(ctx);
     _olRefreshLists();
-    _olFlash(ctx, task.status === 'idea' ? 'saved → Ideas' : task.todayDate ? 'saved → Today' : task.status === 'recurring' ? 'saved → recurring' : `saved → ${ctx === 'today' ? 'Offered' : 'Everything'}`);
+    _olFlash(ctx, task.status === 'idea' ? 'idea saved → Everything' : task.todayDate ? 'saved → Today' : task.status === 'recurring' ? 'saved → recurring' : `saved → ${ctx === 'today' ? 'Offered' : 'Everything'}`);
     if (ctx === 'everything') _olHighlight(task.id);
   }
 
@@ -2106,7 +2142,8 @@ const App = (() => {
     _olRefreshLists();
   }
   function _odToday(id, on) {
-    if (on) Data.pullToToday(id); else Data.sendBack(id);
+    if (on) Data.pullToToday(id, _olPullMeta(id, olView === 'everything' ? 'everything' : 'detail'));
+    else Data.sendBack(id);
     const t = Data.findItem(id);
     const pop = document.getElementById('ol-detail');
     if (pop && t) pop.innerHTML = _olDetailHtml(t);

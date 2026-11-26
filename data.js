@@ -126,10 +126,10 @@ const Data = (() => {
 
   // ── task_events (One List) ──
   function _eventFromDb(r) {
-    return { id: r.id, taskId: r.task_id, event: r.event, at: r.at, minutes: r.minutes ?? null };
+    return { id: r.id, taskId: r.task_id, event: r.event, at: r.at, minutes: r.minutes ?? null, meta: r.meta ?? null };
   }
   function _eventToDb(e, uid) {
-    return { id: e.id, user_id: uid, task_id: e.taskId, event: e.event, at: e.at, minutes: e.minutes ?? null };
+    return { id: e.id, user_id: uid, task_id: e.taskId, event: e.event, at: e.at, minutes: e.minutes ?? null, meta: e.meta ?? null };
   }
 
   function _archFromDb(r) {
@@ -290,12 +290,13 @@ const Data = (() => {
     return orders.length ? Math.max(...orders) + 1 : 1;
   }
 
-  // Append-only event log. Optimistic like everything else.
-  function logEvent(taskId, event, minutes) {
+  // Append-only event log. Optimistic like everything else (the sync is fire-and-forget).
+  // `meta` = ranking telemetry (see .claude/rules/one-list.md "Ranking telemetry").
+  function logEvent(taskId, event, minutes, meta) {
     if (!_state.events) _state.events = [];
     const e = {
       id: 'e' + Date.now() + Math.random().toString(36).slice(2, 7),
-      taskId, event, at: new Date().toISOString(), minutes: minutes ?? null,
+      taskId, event, at: new Date().toISOString(), minutes: minutes ?? null, meta: meta ?? null,
     };
     _state.events.push(e);
     _syncEvent(e);
@@ -342,32 +343,70 @@ const Data = (() => {
     if (toToday && !isIdea) { task.todayDate = today; task.todayOrder = _nextTodayOrder(); }
     upsertTask(task);
     logEvent(id, 'added');
-    if (task.todayDate) logEvent(id, 'pulled');
+    if (task.todayDate) logEvent(id, 'pulled', null, { from: 'entry', offeredRank: null, score: null, parts: null, ...todayPosition(id, 'toPosition') });
     return task;
   }
 
-  function pullToToday(id) {
+  // 1-based slot on Today + Today's size, or position null when the task isn't on Today.
+  // `key` renames the position field (e.g. 'toPosition'). Read it before the list changes.
+  function todayPosition(id, key = 'position') {
+    const list = todayList();
+    const i = list.findIndex(x => x.id === id);
+    return { [key]: i < 0 ? null : i + 1, todaySize: list.length };
+  }
+
+  // meta (telemetry, from the caller) = { from, offeredRank, score, parts }; toPosition added here.
+  function pullToToday(id, meta) {
     const t = _state.tasks.find(x => x.id === id); if (!t) return;
     if (t.status === 'idea') t.status = 'open';
     t.todayDate = localToday();
     t.todayOrder = _nextTodayOrder();
     upsertTask(t);
-    logEvent(id, 'pulled');
+    logEvent(id, 'pulled', null, { from: 'offered', offeredRank: null, score: null, parts: null, ...meta, toPosition: todayPosition(id).position });
   }
 
   function sendBack(id) {
     const t = _state.tasks.find(x => x.id === id); if (!t) return;
+    const { position } = todayPosition(id);
     t.todayDate = ''; t.todayOrder = null;
     upsertTask(t);
-    logEvent(id, 'sent_back');
+    logEvent(id, 'sent_back', null, { position });
   }
 
-  // ids = the full Today order, top first.
-  function reorderToday(ids) {
+  // ids = the full Today order, top first. movedId (a drag-drop) → logs `reordered`
+  // { from, to, todaySize } when its slot actually changed.
+  function reorderToday(ids, movedId) {
+    const before = movedId ? todayPosition(movedId).position : null;
     ids.forEach((id, i) => {
       const t = _state.tasks.find(x => x.id === id);
       if (t && t.todayOrder !== i + 1) { t.todayOrder = i + 1; upsertTask(t); }
     });
+    if (movedId && before != null) {
+      const after = todayPosition(movedId);
+      if (after.position !== before) logEvent(movedId, 'reordered', null, { from: before, to: after.position, todaySize: after.todaySize });
+    }
+  }
+
+  // Lazy "end of day" record (there is no midnight job): on the first load of a new local
+  // day, every task still sitting on the most recent prior Today gets one `day_snapshot`
+  // { date, position, todaySize, order }. position/todaySize are among the leftovers (done
+  // tasks are archived by then); order = the raw todayOrder. Deduped per task + date.
+  // Must run before anything rewrites todayOrder (call right after load).
+  function snapshotPriorDay() {
+    const today = localToday();
+    const prior = _state.tasks.map(t => t.todayDate).filter(d => d && d < today).sort().pop();
+    if (!prior) return 0;
+    const left = _state.tasks
+      .filter(t => t.todayDate === prior && (t.status === 'open' || t.status === 'recurring'))
+      .sort((a, b) => (a.todayOrder ?? Infinity) - (b.todayOrder ?? Infinity));
+    const have = new Set(events().filter(e => e.event === 'day_snapshot' && e.meta?.date === prior).map(e => e.taskId));
+    let n = 0;
+    left.forEach((t, i) => {
+      if (have.has(t.id)) return;
+      logEvent(t.id, 'day_snapshot', null, { date: prior, position: i + 1, todaySize: left.length, order: t.todayOrder ?? null });
+      n++;
+    });
+    return n;
   }
 
   // completeTask — archives immediately (same path as the midnight auto-archive), stamped
@@ -375,7 +414,7 @@ const Data = (() => {
   // Recurrence spawning is UI-side (app.js _maybeSpawnRecurrence) and must run before this.
   function completeTask(id, { minutes, dateStr } = {}) {
     const t = _state.tasks.find(x => x.id === id); if (!t) return;
-    logEvent(id, 'done', minutes || null);
+    logEvent(id, 'done', minutes || null, todayPosition(id));
     archiveItemWithDate(id, dateStr || localToday());
   }
 
@@ -395,6 +434,7 @@ const Data = (() => {
     setClient, load, get, findItem,
     upsertTask, deleteItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive,
     AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent, setEventMinutes,
+    todayPosition, snapshotPriorDay,
     todayList, openTasks, recurringTasks, ideas, events,
   };
 })();

@@ -18,6 +18,12 @@ eq(P.parseWhen('no rush', T).urgency, 'norush', 'no rush');
 eq(P.parseWhen('n', T).urgency, 'norush', 'n → norush');
 eq(P.parseWhen('norush', T).urgency, 'norush', 'norush');
 eq(P.parseWhen('', T), null, 'empty → null');
+eq(P.parseWhen('i', T), { idea: true, label: 'idea' }, 'i → idea');
+eq(P.parseWhen('idea', T), { idea: true, label: 'idea' }, 'idea');
+eq(P.parseWhen('IDEA', T).idea, true, 'idea case-insensitive');
+eq(P.parseWhen('in 3d', T).idea, undefined, 'in 3d is not an idea');
+eq(P.parseWhen('in 2w', T).dueDate, '2026-12-09', 'in 2w still a date');
+eq(P.parseWhen('ideas', T).invalid, true, 'longer than idea → date parser (invalid)');
 
 // ── parseWhen: dates ──
 eq(P.parseWhen('fri', T).dueDate, '2026-11-27', 'fri → this Friday');
@@ -73,6 +79,10 @@ eq(P.parseTitle('Reply to cardiology #amd asap', T), { title: 'Reply to cardiolo
 eq(P.parseTitle('idea: stats series #research', T).isIdea, true, 'idea: prefix');
 eq(P.parseTitle('idea: stats series #research', T).title, 'stats series', 'idea: title stripped');
 eq(P.parseTitle('Idea:x', T).isIdea, true, 'idea: case/spacing');
+eq(P.parseTitle('idea: grant pitch by dec 4', T).isIdea, true, 'idea: + trailing date → still idea');
+eq(P.parseTitle('idea: grant pitch by dec 4', T).title, 'grant pitch', 'idea: + date title stripped');
+eq(P.parseTitle('idea: grant pitch by dec 4', T).when.dueDate, '2026-12-04', 'idea: + date parsed (app ignores it)');
+eq(P.parseTitle('new idea board by fri', T).isIdea, false, '"idea" mid-title is not the prefix');
 eq(P.parseTitle('draft grant by dec 4', T).when.dueDate, '2026-12-04', 'by date');
 eq(P.parseTitle('draft grant by dec 4', T).title, 'draft grant', 'by date stripped');
 eq(P.parseTitle('reorganize closet no rush', T).when.urgency, 'norush', 'trailing no rush');
