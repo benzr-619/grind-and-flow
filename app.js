@@ -226,6 +226,8 @@ const App = (() => {
     renderBoard();
     window.addEventListener('resize', _onResize);
     document.addEventListener('keydown', _onShortcutKey);
+    document.addEventListener('keyup', _onShortcutKeyUp);
+    window.addEventListener('blur', _hideKbdHints); // ⌥-tabbing away never sends the keyup
     document.addEventListener('visibilitychange', () => {
       // Tab came back into view — re-sync the timer from the wall clock so time that
       // passed while the browser throttled setInterval is applied at once.
@@ -398,23 +400,23 @@ const App = (() => {
 
     // Bottom controls — minimal, low contrast.
     // Layout reads spatially: Back to Today (backward) left · main action middle · Done (forward) right.
-    const backBtn = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Back to Today</button>`;
-    const doneBtn = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
+    const backBtn = `<button class="oc-btn" data-sc="back" onclick="App.removeFromDoing('${task.id}')">Back to Today</button>`;
+    const doneBtn = `<button class="oc-btn" data-sc="done" onclick="App.markDoingDone('${task.id}')">Done</button>`;
     // Float/Dock — only when Document PiP is available (Chromium). Pops the orb into
     // an always-on-top window that follows the user across apps.
     const floatBtn = !_pipSupported ? ''
-      : _pipWin ? `<button class="oc-btn" onclick="App.closeFocusPip()">Dock orb</button>`
-      : `<button class="oc-btn" onclick="App.openFocusPip()">Float ↗</button>`;
+      : _pipWin ? `<button class="oc-btn" data-sc="float" onclick="App.closeFocusPip()">Dock orb</button>`
+      : `<button class="oc-btn" data-sc="float" onclick="App.openFocusPip()">Float ↗</button>`;
     if (atBoundary) {
       const n = TIMER_SEQ[timerSegIdx].m;
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}${floatBtn}`;
+        <button class="oc-btn primary" data-sc="playPause" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}${floatBtn}`;
     } else if (!isActive) {
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}${floatBtn}`;
+        <button class="oc-btn primary" data-sc="playPause" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}${floatBtn}`;
     } else {
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
+        <button class="oc-btn primary" data-sc="playPause" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
         <button class="oc-btn" onclick="App.skipSegment()">Skip</button>${doneBtn}${floatBtn}`;
     }
 
@@ -455,6 +457,7 @@ const App = (() => {
     pip.document.body.appendChild(stage);
     pip.addEventListener('pagehide', closeFocusPip);
     pip.document.addEventListener('keydown', _onShortcutKey); // shortcuts work while the float has focus
+    pip.document.addEventListener('keyup', _onShortcutKeyUp);
     _renderFocusRow();
   }
 
@@ -569,11 +572,11 @@ const App = (() => {
         ${next ? `<span class="fu-label">Up next on Today</span>
           <span class="fu-title">${esc(next.title)}</span>
           ${why ? `<span class="fu-why">${esc(why)}</span>` : ''}
-          <button class="oc-btn primary" onclick="App.startTask('${next.id}')">Start ›</button>`
+          <button class="oc-btn primary" data-sc="startNext" onclick="App.startTask('${next.id}')">Start ›</button>`
         : `<span class="fu-label">Today's list is clear</span>`}
       </div>
       <div class="orb-controls">
-        <button class="oc-btn" onclick="App.focusBackToToday()">Back to Today</button>
+        <button class="oc-btn" data-sc="back" onclick="App.focusBackToToday()">Back to Today</button>
       </div>`;
     const clock = document.getElementById('focus-clock-time'); if (clock) clock.remove();
   }
@@ -1378,9 +1381,9 @@ const App = (() => {
       <header class="ol-header">
         <span class="ol-date">${_olFmtLongDate()}</span>
         <nav class="ol-nav" aria-label="Views">
-          <button class="ol-navbtn" onclick="App.olGo('everything')">${_OL_ZOOM_ICON}zoom out</button>
-          <button class="ol-navbtn" onclick="App.olGo('log')">log</button>
-          <button class="ol-navbtn ol-kbd-hint" onclick="App.toggleShortcuts()" title="Keyboard shortcuts">${_comboText(_HELP_KEY)} shortcuts</button>
+          <button class="ol-navbtn" data-sc="everything" onclick="App.olGo('everything')">${_OL_ZOOM_ICON}zoom out</button>
+          <button class="ol-navbtn" data-sc="log" onclick="App.olGo('log')">log</button>
+          <button class="ol-navbtn ol-kbd-hint" data-sc="help" onclick="App.toggleShortcuts()" title="Keyboard shortcuts">${_comboText(_HELP_KEY)} shortcuts</button>
           <button class="ol-navbtn ol-signout" onclick="Auth.handleLogout()" title="Sign out" aria-label="Sign out">${_OL_SIGNOUT_ICON}</button>
         </nav>
       </header>
@@ -1413,7 +1416,7 @@ const App = (() => {
             ${_olMeta(t) ? `<div class="ol-row-meta">${esc(_olMeta(t))}</div>` : ''}
           </div>
           <button class="ol-hv ol-notoday" onclick="App.olSendBack('${t.id}')">not today →</button>
-          ${i === 0 ? `<button class="ol-start" onclick="App.olStart('${t.id}')"><span class="ol-start-dot" aria-hidden="true"></span>start</button>` : ''}
+          ${i === 0 ? `<button class="ol-start" data-sc="start" onclick="App.olStart('${t.id}')"><span class="ol-start-dot" aria-hidden="true"></span>start</button>` : ''}
           <button class="ol-hv ol-done" aria-label="Mark done" title="Done" onclick="App.olDone('${t.id}')"></button>
         </div>
       </li>`).join('')}</ol>
@@ -1704,7 +1707,7 @@ const App = (() => {
   // ── Stubs filled by later prompts (Everything = P5, Log = P6, detail = P5) ──
   function _olBackHeader(right) {
     return `<header class="ol-header">
-      <button class="ol-navbtn" onclick="App.olGo('today')">← today</button>
+      <button class="ol-navbtn" data-sc="today" onclick="App.olGo('today')">← today</button>
       <span>${right || ''}</span>
     </header>`;
   }
@@ -1770,7 +1773,7 @@ const App = (() => {
     }).join('');
     return `
       <header class="ol-header">
-        <button class="ol-navbtn" onclick="App.olGo('today')">← today</button>
+        <button class="ol-navbtn" data-sc="today" onclick="App.olGo('today')">← today</button>
         <span class="lg-week">
           <button class="ol-navbtn" onclick="App.logWeek(-1)" aria-label="Previous week">‹</button>
           <span>week of ${weekLbl}</span>
@@ -1846,7 +1849,7 @@ const App = (() => {
     const modes = [['area', 'area'], ['urgency', 'urgency'], ['entered', 'date entered']];
     return `
       <header class="ol-header ev-header">
-        <button class="ol-navbtn" onclick="App.olGo('today')"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M21 21l-5-5"></path></svg>back to today</button>
+        <button class="ol-navbtn" data-sc="today" onclick="App.olGo('today')"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6M21 21l-5-5"></path></svg>back to today</button>
         <div class="ev-modes" role="group" aria-label="Group by">
           ${modes.map(([id, label]) => `<button class="ev-mode${_evMode === id ? ' on' : ''}" aria-pressed="${_evMode === id}" onclick="App.evMode('${id}')">${label}</button>`).join('')}
         </div>
@@ -2166,7 +2169,32 @@ const App = (() => {
     return !!(document.getElementById('modal-root')?.innerHTML.trim() || document.getElementById('ol-detail'));
   }
 
+  // Hold ⌥ (alone) for _HINT_DELAY ms → faint key labels on the controls they trigger
+  // (body.kbd-hints + data-kbd on every [data-sc]). Any other key, letting go of ⌥, or
+  // leaving the window hides them; the delay keeps a quick ⌥T from flashing them.
+  const _HINT_DELAY = 400;
+  let _hintTimer = null;
+  function _showKbdHints() {
+    _hintTimer = null;
+    if (_isMobile() || _overlayOpen() || _shortcutsOpen) return;
+    document.querySelectorAll('[data-sc]').forEach(el => {
+      const sc = SHORTCUTS.find(s => s.action === el.dataset.sc);
+      if (sc) el.dataset.kbd = _comboText(sc.keys[0]);
+    });
+    document.body.classList.add('kbd-hints');
+  }
+  function _hideKbdHints() {
+    clearTimeout(_hintTimer); _hintTimer = null;
+    document.body.classList.remove('kbd-hints');
+  }
+  function _onShortcutKeyUp(e) { if (e.key === 'Alt') _hideKbdHints(); }
+
   function _onShortcutKey(e) {
+    if (e.key === 'Alt' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      if (!e.repeat && !_hintTimer && !document.body.classList.contains('kbd-hints')) _hintTimer = setTimeout(_showKbdHints, _HINT_DELAY);
+      return;
+    }
+    _hideKbdHints();
     if (e.defaultPrevented || e.isComposing || _isMobile() || _overlayOpen()) return;
     const combo = _keyCombo(e);
     // Plain keys never fire from an editable field; ⌥ combos do (the entry bar autofocuses).

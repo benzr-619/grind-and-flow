@@ -86,6 +86,24 @@ module.exports = {
     expect(!(await page.$('#ol-shortcuts')), '⌥/ closes sheet');
     await page.fill('#ol-input-today', '');
 
+    // Hold ⌥ → faint hints after a short delay; gone on release / on another key
+    const hints = () => page.evaluate(() => document.body.classList.contains('kbd-hints'));
+    await page.keyboard.down('Alt'); await wait(150);
+    expect(!(await hints()), 'no hints before the delay');
+    await wait(400);
+    expect(await hints(), 'hints after holding ⌥');
+    const zoomHint = await page.evaluate(() => document.querySelector('[data-sc="everything"]').dataset.kbd);
+    expect(/E$/.test(zoomHint), 'zoom out hint: ' + zoomHint);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-sc="start"]'), '::after').opacity) !== '0', 'start hint visible');
+    await page.screenshot({ path: (process.env.SHOT_DIR || '.') + '/shortcuts-hints.png' });
+    await page.keyboard.up('Alt'); await wait(50);
+    expect(!(await hints()), 'hints gone on release');
+    await page.keyboard.down('Alt'); await page.keyboard.press('KeyL'); await wait(600);
+    expect(!(await hints()), 'quick ⌥L does not show hints');
+    expect(await view() === 'log', '⌥L (held) → log');
+    await page.keyboard.up('Alt');
+    await alt('KeyT');
+
     // Detail popover open → shortcuts ignored
     await page.click('.ol-li[data-id="a"] .ol-row-title'); await wait();
     await alt('KeyL');
@@ -101,6 +119,10 @@ module.exports = {
     await alt('KeyL');
     expect(await view() === 'today' && await focusVisible(), '⌥L ignored in focus');
     // Space pauses / resumes, without scrolling
+    await page.keyboard.down('Alt'); await wait(500);
+    expect(await hints(), 'hints in focus');
+    await page.screenshot({ path: (process.env.SHOT_DIR || '.') + '/shortcuts-hints-focus.png' });
+    await page.keyboard.up('Alt');
     const label = () => page.textContent('#focus-orb-controls .oc-btn.primary');
     expect((await label()).includes('Pause'), 'running: ' + await label());
     const y0 = await page.evaluate(() => window.scrollY);
