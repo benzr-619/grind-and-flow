@@ -6,37 +6,23 @@ This design system document functions as an explicit instruction guide to implem
 
 ---
 
-## 0. REDESIGN DIRECTION — NORTH STAR (current, 2026)
+## 0. NORTH STAR — ONE LIST (current, 2026-11-25)
 
-The app is being rebuilt (see `REDESIGN-BRIEF.md`) around **four distinct modes, each with its own visual personality.** Build order: Focus → Planning → Projects → Calendar.
+> Replaces the four-mode (Planning · Focus · Projects · Calendar) direction. Source: `ONE-LIST-BRIEF.md` + the "v2 — minimal" mockups.
 
-1. **Planning** — the task board. Columns are **This Week / Next / Done**. **Inbox is no longer a column** — it's a deliberate *review activity* (see Inbox Review). Capture into Inbox still happens via "+ New Task".
-2. **Focus** — an immersive full-screen **breathing orb** + timer (shipped).
-3. **Projects** — a spatial floating canvas (planned; not built).
-4. **Calendar** — a week-view planning surface for the weekly review ritual (planned; not built).
+**Why:** the app went unused because it needed upkeep. Principles: one list always visible, no upkeep, nothing disappears on its own, Today is a fresh page each day, capture is one line, simple first.
 
-### 0.1 The core aesthetic axis — **Flow vs Grind**
+### 0.1 The aesthetic — minimal
+* **Off-white ground, near-black ink, one sans (Inter), lots of white space, almost no chrome.** No cards, no borders around rows, no shadows, no tag pills. Hierarchy comes from size and weight (large light numerals, 20px titles, 12–13px grey meta), not boxes.
+* **Tokens** live in `style.css :root` under the `--ol-*` prefix: `--ol-bg #FCFCFA`, `--ol-ink #171717`, `--ol-ink-2 #3A3A36`, greys `--ol-grey #6B6B66` / `--ol-grey-2 #75756F` / `--ol-faint #9A9A94`, hairlines `--ol-line #ECECE8` / `--ol-line-2 #DDDDD8`, `--ol-chip #F1EFEA`, **one warm accent** `--ol-accent #C98B2A` (drop lines, highlights), `--ol-start #E89A38` (the start dot, tying to the Focus orb), `--ol-hot #A0522D` (urgent reason text only). Area colours `--area-research/amd/edba/home` are used only in Everything cluster labels + dots. Font: `--font-ol` (Inter 300/400/500/600, Google Fonts link in `index.html`).
+* Controls are text buttons or hairline-bordered pills (`border-radius` = full). Hover-reveal for secondary row actions ("not today →", done circle). Focus-visible ring = 2px `--ol-accent`.
+* Motion: gentle and optional — row fade-out on done, zoom-out into Everything, glide between clusters, slow drift. All gated by `prefers-reduced-motion`.
 
-The two halves of the product name are two distinct visual languages. **Do not mix them.**
+### 0.2 Focus is the one exception
+The **Focus orb overlay** (`#focus-zone`) keeps its own visual language unchanged — soft breathing orb, paper ground, serif/mono meta, `--focus-*` tokens. It is the one calm, immersive moment; see `.claude/rules/focus-mode.md`.
 
-* **FLOW = calm / soft.** This is the **Focus** experience *only*. Soft radial-gradient **orbs** with blurred, imperfect (organically morphing) edges; a slow ~8s breathing animation; warm-amber (work) ↔ cool-blue (break) with a slow 1.6s colour crossfade. Dreamy, ambient, low-contrast chrome.
-  * **Soft orbs/auras/blur are reserved exclusively for Focus Mode.** Do not reuse the orb language anywhere else — it dilutes the one calm moment in the app.
-* **GRIND = firm / structured.** Everything about *processing, triage, planning, organizing*. **Firm flat shapes** — solid circles, connected spines/nodes on a subtle grid — in a **vivid flat palette** (coral, green, blue, pink, yellow, charcoal). No blur, no soft glow. Deliberate, tactile, structured. The **Inbox Review wheel** is the canonical Grind surface.
-
-### 0.2 Immersive activity overlays
-
-Deliberate, single-purpose activities **take over the full screen** as fixed overlays (`position: fixed; inset: 0; z-index: 200`) rather than living inline on the board: you *enter* the activity, do it, and *leave*. Both shipped overlays use the **paper ground + ink type + minimal chrome** language and fade in via an `.active` class. Desktop-only — hidden at ≤640px (mobile keeps its own simpler flows).
-* `#focus-zone` — Focus Mode orb. See `.claude/rules/focus-mode.md`.
-* `#inbox-review` — Inbox Review wheel. See `.claude/rules/inbox-review.md`.
-
-### 0.3 New palettes introduced by the redesign
-
-* **Focus orb (Flow):** `--focus-amber-core/mid/edge` (work, anchored to the `--amber` family) and `--focus-blue-core/mid/edge` (break, a cool blue not otherwise in the palette), plus `--focus-break-paper` (overlay tint on break). Radial gradients fading to transparent; never hard-edged.
-* **Inbox Review (Grind):** a **vivid, display-only** palette mapped from each task's tag — work→coral `#E85D3A`, school→green `#6FB08C`, personal→blue `#5E9BD4`, custom slots→violet/pink/coral/yellow/green; untagged→charcoal `#2A2A28`. These are **brighter than the muted card tag colours on purpose** and live only in the review (`REVIEW_COLORS` in `app.js`) — they do **not** replace the muted board palette.
-
-### 0.4 What's superseded
-
-§4.4 (Timer Bar & Control Strip) and parts of §4.5 below describe the **pre-redesign inline timer strip**, which has been **replaced by the Focus orb** (`_renderTimerTrack()` is now a no-op). They're retained for historical context only. The Calm/Pushy boundary framework (§4.5) survives conceptually — it now renders inside the orb meta, not a banner.
+### 0.3 Legacy
+Everything below (§1 onward — the paper/ink/steel/sage planner palette, Bricolage/Source Serif/JetBrains Mono type, cards, Kanban columns, the Flow-vs-Grind axis) is **legacy**. Its tokens (`--paper`, `--ink`, `--steel`, `--sage`, `--amber`, `--font-display`, `--font-body`, `--font-mono` …) remain in `:root` only because the Focus overlay and a few shared modals still use them. Do not use them for new One List UI.
 
 ---
 

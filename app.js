@@ -363,8 +363,7 @@ const App = (() => {
     const ms = midnight - now;
     setTimeout(() => {
       _autoArchiveStaleDoneTasks();
-      _dailyRollover();           // advance overdue scheduled tasks + auto-promote to Next, live
-      renderBoard();
+      renderBoard();              // One List: Today re-renders as a fresh page at midnight
       _scheduleMidnightArchive(); // reschedule for the next midnight
     }, ms);
   }
@@ -375,7 +374,7 @@ const App = (() => {
     await Data.load();   // async: fetches from Supabase
     _migrateData();
     _autoArchiveStaleDoneTasks(); // move any stale done tasks into archive on load
-    _dailyRollover();             // advance overdue scheduled tasks + auto-promote to Next
+    // One List: no _dailyRollover — Today is a fresh page; yesterday's items just stop matching.
     _updateTopbarDate();
     setInterval(_updateTopbarDate, 60000);
     _renderFocusRow();
@@ -468,6 +467,7 @@ const App = (() => {
   // ── Render ──
   function renderBoard() {
     if (_isMobile()) { _renderMobileApp(); return; }
+    _renderOL(); return; // One List — the old board/canvas/week paths below are unreachable (deleted in Prompt 9)
     const board = document.getElementById('board');
     if (!board) return;
 
@@ -1374,6 +1374,7 @@ const App = (() => {
     const item = Data.findItem(id);
     if (!item || item.status !== 'recurring') return;
     _maybeSpawnRecurrence(item, dateStr);
+    Data.logEvent(id, 'done');
     Data.archiveItemWithDate(id, dateStr);
     renderBoard();
   }
@@ -4472,6 +4473,473 @@ const App = (() => {
     }, 16);
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // ONE LIST (2026-11-25) — Today home, Offered ranking, entry bar.
+  // See ONE-LIST-BRIEF.md + .claude/rules/one-list.md.
+  // ═══════════════════════════════════════════════════════════
+
+  let olView = 'today';            // 'today' | 'everything' | 'log'
+  let _offerHiddenDate = null;     // "I'm set ✓" — hidden for the rest of that day only
+  let _offerShowAll = false;       // "+ n more" expands past OFFER_LIMIT
+  let _olDragId = null;            // Today drag-reorder
+  const OFFER_LIMIT = 12;
+
+  // Ranking weights — the one place to tune the Offered order. No ML.
+  const RANK_WEIGHTS = {
+    asap: 50,
+    overdue: 60, due2d: 40, due7d: 25, dueLater: 10,
+    recentToday: 30,   // was on Today in the last 3 days and not done
+    recentAdd: 15,     // added in the last 3 days
+    agePerWeek: 1, ageMax: 10,
+    norush: -40,
+  };
+
+  function _emptyEntry() { return { step: 0, title: '', when: null, whenRaw: '', field: '' }; }
+  const _entry = { today: _emptyEntry(), everything: _emptyEntry() };
+
+  function _olFmtLongDate() {
+    return new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+  function _olDaysBetween(a, b) { // b - a in whole days, local dates
+    return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+  }
+  function _olDayName(ds) {
+    const n = _olDaysBetween(ds, Data.localToday());
+    if (n === 1) return 'yesterday';
+    return new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+  }
+  function _olAddedLabel(ds) {
+    if (!ds) return '';
+    const n = _olDaysBetween(ds, Data.localToday());
+    if (n <= 0) return 'added today';
+    if (n === 1) return 'added yesterday';
+    if (n < 14) return `added ${n} days ago`;
+    if (n < 60) return `added ${Math.round(n / 7)} weeks ago`;
+    return `added ${Math.round(n / 30)} months ago`;
+  }
+  function _olRecurWhen(item) {
+    const d = _recurDueState(item);
+    if (d.daysUntil == null) return '↻';
+    if (d.daysUntil < 0) return `↻ ${-d.daysUntil}d overdue`;
+    if (d.daysUntil === 0) return '↻ due today';
+    if (d.daysUntil === 1) return '↻ due tomorrow';
+    return `↻ in ${d.daysUntil}d`;
+  }
+  function _olCadence(item) {
+    if (item.recurrence === 'rolling') {
+      const n = item.recurrenceIntervalN || 1, u = item.recurrenceIntervalUnit || 'days';
+      return `every ${n === 1 ? '' : n + ' '}${n === 1 ? u.replace(/s$/, '') : u}`;
+    }
+    if (item.recurrence === 'anchored') {
+      if (item.recurrenceWeekdays?.length) return 'every ' + item.recurrenceWeekdays.map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(' ');
+      if (item.recurrenceMonthDay) return `every ${item.recurrenceMonthDay} of the month`;
+      return 'date-anchored';
+    }
+    return '';
+  }
+
+  // Score one open task. Returns { score, why, hot } — `why` is the single strongest reason.
+  function _olScore(t, today) {
+    const W = RANK_WEIGHTS;
+    const reasons = []; // [points, text, hot]
+    if (t.urgency === 'asap') reasons.push([W.asap, 'asap', true]);
+    if (t.dueDate) {
+      const d = _olDaysBetween(today, t.dueDate);
+      if (d < 0) reasons.push([W.overdue, `overdue · was ${_fmtDate(t.dueDate)}`, true]);
+      else if (d <= 2) reasons.push([W.due2d, d === 0 ? 'due today' : `by ${_fmtDate(t.dueDate)}`, true]);
+      else if (d <= 7) reasons.push([W.due7d, `by ${_fmtDate(t.dueDate)}`, false]);
+      else reasons.push([W.dueLater, `by ${_fmtDate(t.dueDate)}`, false]);
+    }
+    if (t.todayDate && t.todayDate < today && _olDaysBetween(t.todayDate, today) <= 3) {
+      reasons.push([W.recentToday, `on Today ${_olDayName(t.todayDate)}`, false]);
+    }
+    const age = t.dateAdded ? _olDaysBetween(t.dateAdded, today) : 0;
+    if (age <= 3) reasons.push([W.recentAdd, _olAddedLabel(t.dateAdded), false]);
+    let score = reasons.reduce((s, r) => s + r[0], 0);
+    score += Math.min(W.ageMax, Math.floor(age / 7) * W.agePerWeek);
+    if (t.urgency === 'norush') score += W.norush;
+    const best = reasons.sort((a, b) => b[0] - a[0])[0];
+    const why = best ? best[1] : t.urgency === 'norush' ? 'no rush' : _olAddedLabel(t.dateAdded);
+    return { score, why, hot: best ? best[2] : false };
+  }
+
+  // Offered = due/overdue recurring (pinned) + ranked open tasks not already on Today.
+  function _olOffered() {
+    const today = Data.localToday();
+    const onToday = new Set(Data.todayList().map(t => t.id));
+    const pinned = _recurDueList()
+      .filter(d => !onToday.has(d.item.id))
+      .map(d => ({ item: d.item, pinned: true, why: _olRecurWhen(d.item), hot: d.daysUntil <= 0 }));
+    const ranked = Data.openTasks()
+      .filter(t => !onToday.has(t.id))
+      .map(t => ({ item: t, ..._olScore(t, today) }))
+      .sort((a, b) => b.score - a.score || (a.item.dateAdded || '').localeCompare(b.item.dateAdded || '') || a.item.id.localeCompare(b.item.id));
+    return { pinned, ranked };
+  }
+
+  // Log an `offered` event once per task per day (for later ranking tuning).
+  function _olLogOffered(items) {
+    const today = Data.localToday();
+    const seen = new Set(Data.events()
+      .filter(e => e.event === 'offered' && Data.localToday(new Date(e.at)) === today)
+      .map(e => e.taskId));
+    items.forEach(o => { if (!seen.has(o.item.id)) Data.logEvent(o.item.id, 'offered'); });
+  }
+
+  // Short meta line for a task row: area · reason.
+  function _olMeta(t) {
+    const parts = [];
+    if (t.area) parts.push(t.area);
+    if (t.status === 'recurring') parts.push(_olRecurWhen(t));
+    else {
+      if (t.urgency === 'asap') parts.push('asap');
+      if (t.dueDate) parts.push(t.dueDate < Data.localToday() ? `overdue · was ${_fmtDate(t.dueDate)}` : `by ${_fmtDate(t.dueDate)}`);
+      if (t.urgency === 'norush') parts.push('no rush');
+    }
+    return parts.join(' · ');
+  }
+
+  // ── Shell ──
+  function _renderOL() {
+    const root = document.getElementById('ol-view');
+    if (!root) return;
+    document.body.dataset.olView = olView;
+    if (olView === 'everything') { root.innerHTML = _renderEverything(); _afterEverythingRender(); return; }
+    if (olView === 'log') { root.innerHTML = _renderLog(); return; }
+    root.innerHTML = _renderTodayView();
+    _renderTodayList();
+    _renderOffered();
+    _entrySync('today');
+    const inp = document.getElementById('ol-input-today');
+    if (inp && !document.getElementById('modal-root').innerHTML && document.activeElement?.tagName !== 'INPUT') inp.focus({ preventScroll: true });
+  }
+
+  function olGo(v) {
+    olView = v;
+    renderBoard();
+  }
+
+  const _OL_ZOOM_ICON = `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M21 21l-5-5"></path></svg>`;
+  const _OL_SIGNOUT_ICON = `<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
+
+  function _renderTodayView() {
+    return `
+      <header class="ol-header">
+        <span class="ol-date">${_olFmtLongDate()}</span>
+        <nav class="ol-nav" aria-label="Views">
+          <button class="ol-navbtn" onclick="App.olGo('everything')">${_OL_ZOOM_ICON}zoom out</button>
+          <button class="ol-navbtn" onclick="App.olGo('log')">log</button>
+          <button class="ol-navbtn ol-signout" onclick="Auth.handleLogout()" title="Sign out" aria-label="Sign out">${_OL_SIGNOUT_ICON}</button>
+        </nav>
+      </header>
+      <div class="ol-today-wrap">
+        <main class="ol-today-main">
+          ${_entryBarHtml('today')}
+          <div id="ol-today-list"></div>
+        </main>
+        <div id="ol-offered" class="ol-offered-col"></div>
+      </div>`;
+  }
+
+  // ── Today list ──
+  function _renderTodayList() {
+    const el = document.getElementById('ol-today-list');
+    if (!el) return;
+    const list = Data.todayList();
+    if (!list.length) {
+      el.innerHTML = `<p class="ol-empty">Nothing yet. Pick from the right, or just start typing.</p>`;
+      return;
+    }
+    el.innerHTML = `<ol class="ol-today" ondragover="App._olListDragOver(event)" ondrop="App._olDrop(event)">${list.map((t, i) => `
+      <li class="ol-li" data-id="${t.id}" draggable="true"
+        ondragstart="App._olDragStart(event,'${t.id}')" ondragend="App._olDragEnd()">
+        ${i === 10 ? '<div class="ol-ten-line" aria-hidden="true"></div>' : ''}
+        <div class="ol-row${i >= 10 ? ' past-ten' : ''}">
+          <span class="ol-num">${i + 1}</span>
+          <div class="ol-row-body">
+            <div class="ol-row-title" onclick="App.olOpenDetail('${t.id}')">${esc(t.title)}</div>
+            ${_olMeta(t) ? `<div class="ol-row-meta">${esc(_olMeta(t))}</div>` : ''}
+          </div>
+          <button class="ol-hv ol-notoday" onclick="App.olSendBack('${t.id}')">not today →</button>
+          ${i === 0 ? `<button class="ol-start" onclick="App.olStart('${t.id}')"><span class="ol-start-dot" aria-hidden="true"></span>start</button>` : ''}
+          <button class="ol-hv ol-done" aria-label="Mark done" title="Done" onclick="App.olDone('${t.id}')"></button>
+        </div>
+      </li>`).join('')}</ol>
+      ${list.length > 1 ? '<p class="ol-drag-hint">drag to reorder</p>' : ''}`;
+  }
+
+  function _olLeave(id, then) {
+    const li = document.querySelector(`.ol-li[data-id="${id}"], .ol-off-row[data-id="${id}"]`);
+    if (li && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      li.classList.add('ol-leaving');
+      setTimeout(then, 200);
+    } else then();
+  }
+
+  function olDone(id) {
+    const t = Data.findItem(id); if (!t) return;
+    _olLeave(id, () => {
+      if (t.status === 'recurring') _completeRecurring(id, Data.localToday());
+      else Data.completeTask(id);
+      renderBoard();
+    });
+  }
+  function olSendBack(id) { _olLeave(id, () => { Data.sendBack(id); renderBoard(); }); }
+  function olPull(id) { _olLeave(id, () => { Data.pullToToday(id); renderBoard(); }); }
+  function olStart(id) { startTask(id); }
+
+  // Drag-reorder within Today
+  function _olDragStart(e, id) {
+    _olDragId = id;
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch (err) {}
+    setTimeout(() => document.querySelector(`.ol-li[data-id="${id}"]`)?.classList.add('dragging'), 0);
+  }
+  function _olDragEnd() {
+    _olDragId = null;
+    document.querySelectorAll('.ol-li').forEach(li => li.classList.remove('dragging', 'drop-above', 'drop-below'));
+  }
+  function _olDropTarget(e) {
+    const lis = [...document.querySelectorAll('.ol-li:not(.dragging)')];
+    for (const li of lis) {
+      const r = li.getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) return { li, before: true };
+    }
+    return lis.length ? { li: lis[lis.length - 1], before: false } : null;
+  }
+  function _olListDragOver(e) {
+    if (!_olDragId) return;
+    e.preventDefault();
+    document.querySelectorAll('.ol-li').forEach(li => li.classList.remove('drop-above', 'drop-below'));
+    const tgt = _olDropTarget(e);
+    if (tgt) tgt.li.classList.add(tgt.before ? 'drop-above' : 'drop-below');
+  }
+  function _olDrop(e) {
+    if (!_olDragId) return;
+    e.preventDefault();
+    const tgt = _olDropTarget(e);
+    const ids = Data.todayList().map(t => t.id).filter(x => x !== _olDragId);
+    if (tgt) {
+      let idx = ids.indexOf(tgt.li.dataset.id);
+      if (!tgt.before) idx += 1;
+      ids.splice(idx, 0, _olDragId);
+    } else ids.push(_olDragId);
+    Data.reorderToday(ids);
+    _olDragEnd();
+    _renderTodayList();
+  }
+
+  // ── Offered column ──
+  function _renderOffered() {
+    const el = document.getElementById('ol-offered');
+    if (!el) return;
+    const { pinned, ranked } = _olOffered();
+    const total = pinned.length + ranked.length;
+    if (_offerHiddenDate === Data.localToday()) {
+      el.innerHTML = `<button class="ol-show-off" onclick="App.olShowOffer()">+ show offered (${total})</button>`;
+      return;
+    }
+    const shown = _offerShowAll ? ranked : ranked.slice(0, Math.max(0, OFFER_LIMIT - pinned.length));
+    const more = ranked.length - shown.length;
+    _olLogOffered([...pinned, ...shown]);
+    const row = (o) => {
+      const t = o.item;
+      const why = [t.area, o.why].filter(Boolean).join(' · ');
+      return `<div class="ol-off-row" data-id="${t.id}">
+        <button class="ol-add" onclick="App.olPull('${t.id}')" aria-label="Add to Today" title="Add to Today">+</button>
+        <div class="ol-off-body">
+          <div class="ol-off-title" onclick="App.olOpenDetail('${t.id}')">${esc(t.title)}</div>
+          <div class="ol-off-why${o.hot ? ' hot' : ''}">${esc(why)}</div>
+        </div>
+        ${o.pinned ? `<button class="ol-off-check" onclick="App.olDone('${t.id}')" aria-label="Done — complete this occurrence" title="Done">✓</button>` : ''}
+      </div>`;
+    };
+    el.innerHTML = `
+      <aside class="ol-offered" aria-labelledby="ol-off-h">
+        <div class="ol-off-head">
+          <h2 id="ol-off-h">Offered</h2>
+          <button class="ol-set" onclick="App.olHideOffer()">I'm set ✓</button>
+        </div>
+        ${total ? [...pinned, ...shown].map(row).join('') : `<p class="ol-off-empty">Nothing waiting. Anything you add lands here.</p>`}
+        ${more > 0 ? `<button class="ol-more" onclick="App.olOfferAll(true)">+ ${more} more</button>` : ''}
+        ${_offerShowAll && ranked.length > OFFER_LIMIT ? `<button class="ol-more" onclick="App.olOfferAll(false)">show fewer</button>` : ''}
+      </aside>`;
+  }
+  function olHideOffer() { _offerHiddenDate = Data.localToday(); _renderOffered(); }
+  function olShowOffer() { _offerHiddenDate = null; _renderOffered(); }
+  function olOfferAll(v) { _offerShowAll = !!v; _renderOffered(); }
+
+  // Re-render whatever lists the current view shows (not the entry bar — keeps focus).
+  function _olRefreshLists() {
+    if (olView === 'today') { _renderTodayList(); _renderOffered(); }
+    else if (olView === 'everything') _refreshEverything();
+  }
+
+  // ── Entry bar (shared by Today + Everything) ──
+  // title → Tab → priority/date → Tab → area. Enter saves at any step (→ Offered /
+  // Everything); Shift+Enter → straight onto Today. Backspace on an empty field steps
+  // back; Esc clears. Parsing lives in parse.js (GFParse).
+  const _OL_WHEN_HINTS = ['asap', 'fri', 'dec 4', 'no rush', 'every 2w'];
+
+  function _entryBarHtml(ctx) {
+    return `<div class="ol-entry ol-entry-${ctx}" id="ol-entry-${ctx}">
+      <div class="ol-entry-line">
+        <span class="ol-tok ol-tok-title" hidden></span>
+        <span class="ol-tok ol-tok-when" hidden></span>
+        <label class="ol-sr" for="ol-input-${ctx}">Add a task</label>
+        <input id="ol-input-${ctx}" class="ol-input" autocomplete="off" spellcheck="false"
+          onkeydown="App._olKey(event,'${ctx}')" oninput="App._olInput(event,'${ctx}')" />
+      </div>
+      <div class="ol-entry-sub">
+        <span class="ol-hints"></span>
+        <span class="ol-keyhint"></span>
+      </div>
+      <div class="ol-dup" hidden></div>
+    </div>`;
+  }
+
+  function _entrySync(ctx) {
+    const S = _entry[ctx];
+    const box = document.getElementById('ol-entry-' + ctx);
+    if (!box) return;
+    const inp = box.querySelector('.ol-input');
+    if (inp.value !== S.field) inp.value = S.field;
+    box.classList.toggle('stepped', S.step > 0);
+    const tTok = box.querySelector('.ol-tok-title'), wTok = box.querySelector('.ol-tok-when');
+    tTok.hidden = S.step === 0; tTok.textContent = S.title;
+    wTok.hidden = !(S.step === 2 && S.when); wTok.textContent = S.when ? S.when.label : '';
+    const today = Data.localToday();
+    inp.placeholder = S.step === 0 ? (ctx === 'today' ? "what's on your mind…" : 'add to everything…')
+      : S.step === 1 ? 'priority or date (optional)' : 'area (optional) · type a letter';
+    const chip = (t, on, val) => `<button type="button" class="ol-chip${on ? ' on' : ''}" tabindex="-1" onmousedown="event.preventDefault()" onclick="App._olChip('${ctx}','${val}')">${esc(t)}</button>`;
+    let hints = '', keyhint = '';
+    if (S.step === 0) {
+      const pt = S.field.trim() ? GFParse.parseTitle(S.field, today) : null;
+      const bits = [];
+      if (pt?.isIdea) bits.push('idea');
+      if (pt?.area) bits.push(pt.area);
+      if (pt?.when) bits.push(pt.when.label);
+      hints = bits.map(b => `<span class="ol-chip on static">${esc(b)}</span>`).join('');
+      keyhint = S.field.trim() ? 'tab → priority / date   ·   enter → save' + (ctx === 'today' ? '   ·   shift+enter → Today' : '') : '';
+    } else if (S.step === 1) {
+      const cur = GFParse.parseWhen(S.field, today);
+      hints = _OL_WHEN_HINTS.map(h => {
+        const hv = GFParse.parseWhen(h, today);
+        const on = !!cur && !cur.invalid && hv && cur.label === hv.label;
+        return chip(h, on, h);
+      }).join('');
+      if (cur && !cur.invalid && !_OL_WHEN_HINTS.some(h => GFParse.parseWhen(h, today)?.label === cur.label)) hints += `<span class="ol-chip on static">${esc(cur.label)}</span>`;
+      keyhint = cur && cur.invalid ? 'try asap, no rush, fri, dec 4, every 2w' : 'tab → area   ·   enter → save';
+    } else {
+      const cur = GFParse.parseArea(S.field);
+      hints = Data.AREAS.map(a => chip(a, cur === a, a)).join('');
+      keyhint = 'enter → save' + (ctx === 'today' ? '   ·   shift+enter → straight onto Today' : '');
+    }
+    box.querySelector('.ol-hints').innerHTML = hints;
+    const kh = box.querySelector('.ol-keyhint');
+    if (!kh.dataset.flash) kh.textContent = keyhint;
+    _olDupHint(ctx);
+  }
+
+  function _olFlash(ctx, msg) {
+    const kh = document.querySelector(`#ol-entry-${ctx} .ol-keyhint`);
+    if (!kh) return;
+    kh.dataset.flash = '1'; kh.textContent = msg; kh.classList.add('flash');
+    clearTimeout(kh._t);
+    kh._t = setTimeout(() => { delete kh.dataset.flash; kh.classList.remove('flash'); _entrySync(ctx); }, 1600);
+  }
+
+  function _olInput(e, ctx) { _entry[ctx].field = e.target.value; _entrySync(ctx); }
+
+  function _olChip(ctx, val) {
+    const S = _entry[ctx];
+    S.field = val;
+    _entrySync(ctx);
+    document.getElementById('ol-input-' + ctx)?.focus();
+  }
+
+  function _olStepBack(ctx) {
+    const S = _entry[ctx];
+    if (S.step === 2) { S.step = 1; S.field = S.whenRaw; S.when = null; }
+    else if (S.step === 1) { S.step = 0; S.field = S.title; S.title = ''; }
+    _entrySync(ctx);
+  }
+
+  function _olKey(e, ctx) {
+    const S = _entry[ctx];
+    const today = Data.localToday();
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) { _olStepBack(ctx); return; }
+      if (S.step === 0 && S.field.trim()) { S.title = S.field.trim(); S.field = ''; S.step = 1; }
+      else if (S.step === 1) {
+        const w = GFParse.parseWhen(S.field, today);
+        if (w && w.invalid) { _olFlash(ctx, "didn't catch that — try asap, no rush, fri, dec 4, every 2w"); return; }
+        S.whenRaw = S.field; S.when = w; S.field = ''; S.step = 2;
+      }
+      _entrySync(ctx);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      _olSave(ctx, e.shiftKey);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      _entry[ctx] = _emptyEntry();
+      _entrySync(ctx);
+    } else if (e.key === 'Backspace' && !S.field && S.step > 0) {
+      e.preventDefault();
+      _olStepBack(ctx);
+    }
+  }
+
+  function _olSave(ctx, toToday) {
+    const S = _entry[ctx];
+    const today = Data.localToday();
+    const rawTitle = S.step === 0 ? S.field : S.title;
+    if (!rawTitle.trim()) return;
+    const pt = GFParse.parseTitle(rawTitle, today);
+    let when = pt.when;
+    if (S.step === 1 && S.field.trim()) when = GFParse.parseWhen(S.field, today);
+    else if (S.step === 2 && S.when) when = S.when;
+    if (when && when.invalid) { _olFlash(ctx, "didn't catch that date — fix it or clear it"); return; }
+    let area = pt.area;
+    if (S.step === 2 && S.field.trim()) {
+      area = GFParse.parseArea(S.field);
+      if (!area) { _olFlash(ctx, 'area: r, a, e or h'); return; }
+    }
+    if (ctx === 'today' && toToday === undefined) toToday = false;
+    const task = Data.addTask({
+      title: pt.title, isIdea: pt.isIdea, area, source: 'app',
+      urgency: when?.urgency || null, dueDate: when?.dueDate || '',
+      recur: when?.recur || null, toToday: !!toToday && !pt.isIdea,
+    });
+    if (!task) return;
+    _entry[ctx] = _emptyEntry();
+    if (!task.todayDate && olView === 'today') _offerHiddenDate = null; // show where it went
+    _entrySync(ctx);
+    _olRefreshLists();
+    _olFlash(ctx, task.status === 'idea' ? 'saved → Ideas' : task.todayDate ? 'saved → Today' : task.status === 'recurring' ? 'saved → recurring' : `saved → ${ctx === 'today' ? 'Offered' : 'Everything'}`);
+    if (ctx === 'everything') _olHighlight(task.id);
+  }
+
+  // Duplicate hint — filled in Prompt 7.
+  function _olDupHint(ctx) {}
+  function _olHighlight(id) {}
+
+  // ── Stubs filled by later prompts (Everything = P5, Log = P6, detail = P5) ──
+  function _olBackHeader(right) {
+    return `<header class="ol-header">
+      <button class="ol-navbtn" onclick="App.olGo('today')">← today</button>
+      <span>${right || ''}</span>
+    </header>`;
+  }
+  function _renderEverything() { return _olBackHeader() + `<p class="ol-empty ol-pad">Everything — coming next.</p>`; }
+  function _afterEverythingRender() {}
+  function _refreshEverything() {}
+  function _renderLog() { return _olBackHeader() + `<p class="ol-empty ol-pad">Log — coming next.</p>`; }
+  function olOpenDetail(id) {
+    const t = Data.findItem(id); if (!t) return;
+    if (t.status === 'recurring') openRecurringModal(id);
+  }
+
   // ── Confirm modal ──
   function _showConfirm(title, msg, confirmLabel, onConfirm) {
     _showModal(`
@@ -4497,7 +4965,7 @@ const App = (() => {
   }
 
   // ── Helpers ──
-  function _today() { return new Date().toISOString().split('T')[0]; }
+  function _today() { return Data.localToday(); } // local date (was toISOString → UTC, wrong in the evening)
   function _daysDiff(ds) { if (!ds) return 0; return Math.floor((new Date() - new Date(ds + 'T00:00:00')) / 86400000); }
   function _isOverdue(ds) { if (!ds) return false; return new Date(ds) < new Date(_today()); }
   function _fmtDate(ds) { if (!ds) return ''; return new Date(ds+'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
@@ -4590,6 +5058,9 @@ const App = (() => {
     _mSheetComplete, _mSheetCompleteRecur, _mSheetMoveToday, _mSheetMove, _mSheetLater,
     _mConfirmDeleteInSheet, _mResetDeleteInSheet, _mDeleteFromSheet,
     _mOpenCapture, _mCaptureToggleProj, _mCaptureSubmit,
+    // One List
+    olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olHideOffer, olShowOffer, olOfferAll,
+    _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip,
   };
 })();
 

@@ -69,6 +69,29 @@
   --wc-slot-3:   #F2C94C;
   --wc-slot-4:   #6FB08C;
 
+  /* ── One List tokens (2026-11-25) — the app's aesthetic everywhere except the
+     Focus orb overlay. Off-white ground, near-black ink, a few greys, one warm accent. ── */
+  --ol-bg:      #FCFCFA;   /* ground */
+  --ol-surface: #FFFFFF;   /* popovers, phone capture bar */
+  --ol-ink:     #171717;   /* primary text */
+  --ol-ink-2:   #3A3A36;   /* secondary text */
+  --ol-grey:    #6B6B66;   /* labels, nav (4.5:1+ on ground) */
+  --ol-grey-2:  #75756F;   /* meta lines */
+  --ol-faint:   #9A9A94;   /* placeholders, hints (large / non-essential text only) */
+  --ol-line:    #ECECE8;   /* hairlines */
+  --ol-line-2:  #DDDDD8;   /* control borders */
+  --ol-chip:    #F1EFEA;   /* token chips */
+  --ol-accent:  #C98B2A;   /* the one warm accent — drop lines, highlights */
+  --ol-start:   #E89A38;   /* start dot (ties to the Focus orb amber) */
+  --ol-hot:     #A0522D;   /* urgent reason text (asap / overdue / due recurring) */
+  --ol-hilite:  #FBE7C6;   /* just-added highlight */
+  /* Area colours — Everything cluster labels + dots only */
+  --area-research: #4F6FA0;
+  --area-amd:      #9B4A3E;
+  --area-edba:     #2B6E4E;
+  --area-home:     #8A7F70;
+  --font-ol: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
   --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-body:    'Source Serif 4', Georgia, serif;
   --font-mono:    'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
@@ -2934,3 +2957,102 @@ select.modal-input { cursor: pointer; }
   color: var(--sage-deep); margin: -4px 0 12px;
 }
 .modal-timespent strong { color: var(--ink); }
+
+/* ════════════════════════════════════════════════════════════
+   ONE LIST (2026-11-25) — Today / Offered / entry bar.
+   Minimal: Inter, off-white ground, near-black ink, almost no chrome.
+   The old paper/serif/mono planner look survives only inside #focus-zone.
+════════════════════════════════════════════════════════════ */
+body { background: var(--ol-bg); color: var(--ol-ink); }
+#app { background: var(--ol-bg); }
+.ol-app { font-family: var(--font-ol); color: var(--ol-ink); background: var(--ol-bg); min-height: 100vh; font-size: 14px; line-height: 1.45; }
+.ol-app button { font-family: inherit; cursor: pointer; }
+.ol-sr { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+.ol-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 28px 48px; min-height: 100px; box-sizing: border-box; }
+.ol-date { font-size: 13px; color: var(--ol-grey); }
+.ol-nav { display: flex; gap: 4px; align-items: center; }
+.ol-navbtn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; font-size: 13px; color: var(--ol-grey); border-radius: 22px; transition: color .15s; }
+.ol-navbtn:hover { color: var(--ol-ink); }
+.ol-navbtn:focus-visible, .ol-app button:focus-visible { outline: 2px solid var(--ol-accent); outline-offset: 2px; }
+.ol-input:focus, .ol-input:focus-visible { outline: none; } /* the underline is the focus indicator */
+.ol-signout { opacity: .55; padding: 0 10px; }
+.ol-signout:hover { opacity: 1; }
+
+.ol-today-wrap { display: flex; flex-wrap: wrap; gap: 64px; max-width: 1120px; margin: 0 auto; padding: 24px 48px 96px; box-sizing: border-box; }
+.ol-today-main { flex: 999 1 520px; min-width: 0; max-width: 620px; }
+.ol-offered-col { flex: 1 1 300px; max-width: 340px; align-self: flex-start; padding-top: 108px; }
+
+/* Entry bar */
+.ol-entry { margin: 0 0 56px; }
+.ol-entry-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 52px; border-bottom: 1px solid var(--ol-line-2); transition: border-color .15s; }
+.ol-entry.stepped .ol-entry-line, .ol-entry-line:focus-within { border-bottom-color: var(--ol-ink); }
+.ol-tok-title { font-size: 20px; font-weight: 300; }
+.ol-tok-when { font-size: 13px; padding: 4px 10px; border-radius: 14px; background: var(--ol-chip); color: var(--ol-ink-2); }
+.ol-tok[hidden] { display: none; }
+.ol-input { flex: 1; min-width: 160px; height: 50px; padding: 0; font-family: var(--font-ol); font-size: 20px; font-weight: 300; color: var(--ol-ink); background: transparent; border: none; outline: none; }
+.ol-entry.stepped .ol-input { font-size: 16px; }
+.ol-input::placeholder { color: var(--ol-faint); }
+.ol-entry-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 30px; margin-top: 10px; font-size: 12px; color: var(--ol-grey-2); }
+.ol-hints { display: flex; flex-wrap: wrap; gap: 8px; }
+.ol-chip { padding: 3px 9px; border-radius: 12px; border: 1px solid var(--ol-line-2); background: transparent; color: var(--ol-grey); font-size: 12px; line-height: 1.4; }
+.ol-chip:hover { color: var(--ol-ink); border-color: var(--ol-ink-2); }
+.ol-chip.on { background: var(--ol-ink); color: var(--ol-bg); border-color: var(--ol-ink); }
+.ol-chip.static { cursor: default; }
+.ol-keyhint { margin-left: auto; white-space: pre; }
+.ol-keyhint.flash { color: var(--ol-ink); }
+
+/* Today list */
+.ol-empty { margin: 0; font-size: 18px; font-weight: 300; color: var(--ol-faint); }
+.ol-pad { padding: 24px 48px; }
+.ol-today { list-style: none; margin: 0; padding: 0; }
+.ol-li { cursor: grab; transition: opacity .2s, transform .2s; }
+.ol-li.dragging { opacity: .35; }
+.ol-li.ol-leaving, .ol-off-row.ol-leaving { opacity: 0; transform: translateX(12px); }
+.ol-row { display: flex; align-items: baseline; gap: 24px; padding: 14px 0; border-top: 2px solid transparent; border-bottom: 2px solid transparent; }
+.ol-li.drop-above .ol-row { border-top-color: var(--ol-accent); }
+.ol-li.drop-below .ol-row { border-bottom-color: var(--ol-accent); }
+.ol-num { width: 32px; flex: none; text-align: right; font-size: 28px; font-weight: 300; color: var(--ol-ink); font-variant-numeric: tabular-nums; }
+.ol-row.past-ten .ol-num { color: var(--ol-faint); }
+.ol-row-body { flex: 1; min-width: 0; }
+.ol-row-title { font-size: 20px; line-height: 1.35; cursor: pointer; overflow-wrap: anywhere; }
+.ol-row-meta { margin-top: 4px; font-size: 12px; color: var(--ol-grey-2); }
+.ol-ten-line { height: 1px; background: var(--ol-line); margin: 18px 0 18px 56px; }
+.ol-hv { opacity: 0; transition: opacity .15s; }
+.ol-li:hover .ol-hv, .ol-li:focus-within .ol-hv { opacity: 1; }
+.ol-notoday { flex: none; align-self: center; min-height: 36px; padding: 0 10px; font-size: 12px; color: var(--ol-grey-2); white-space: nowrap; }
+.ol-notoday:hover { color: var(--ol-ink); }
+.ol-done { flex: none; align-self: center; width: 28px; height: 28px; border: 1px solid var(--ol-faint); border-radius: 50%; background: transparent; padding: 0; position: relative; }
+.ol-done:hover { border-color: var(--ol-ink); }
+.ol-done:hover::after { content: ''; position: absolute; left: 9px; top: 6px; width: 6px; height: 11px; border: solid var(--ol-ink); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.ol-start { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; font-size: 13px; color: var(--ol-ink); border: 1px solid var(--ol-line-2); border-radius: 20px; background: transparent; }
+.ol-start:hover { border-color: var(--ol-ink); }
+.ol-start-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ol-start); }
+.ol-drag-hint { margin: 20px 0 0 56px; font-size: 12px; color: var(--ol-faint); }
+
+/* Offered */
+.ol-off-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+.ol-off-head h2 { margin: 0; font-size: 13px; font-weight: 500; color: var(--ol-grey); }
+.ol-set { min-height: 36px; padding: 0 12px; border: 1px solid var(--ol-line-2); border-radius: 18px; background: transparent; font-size: 12px; color: var(--ol-ink); }
+.ol-set:hover { border-color: var(--ol-ink); }
+.ol-off-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; transition: opacity .2s, transform .2s; }
+.ol-add { flex: none; width: 28px; height: 28px; margin-top: -2px; border: 1px solid var(--ol-line-2); border-radius: 50%; background: transparent; padding: 0; font-size: 16px; line-height: 1; color: var(--ol-grey); }
+.ol-add:hover { border-color: var(--ol-ink); color: var(--ol-ink); }
+.ol-off-body { flex: 1; min-width: 0; }
+.ol-off-title { font-size: 15px; line-height: 1.4; color: var(--ol-ink-2); cursor: pointer; overflow-wrap: anywhere; }
+.ol-off-title:hover { color: var(--ol-ink); }
+.ol-off-why { margin-top: 2px; font-size: 12px; color: var(--ol-grey-2); }
+.ol-off-why.hot { color: var(--ol-hot); }
+.ol-off-check { flex: none; width: 28px; height: 28px; margin-top: -2px; border: 1px solid var(--ol-line-2); border-radius: 50%; font-size: 12px; color: var(--ol-grey); }
+.ol-off-check:hover { border-color: var(--ol-ink); color: var(--ol-ink); }
+.ol-off-empty { font-size: 13px; color: var(--ol-faint); }
+.ol-more, .ol-show-off { min-height: 36px; padding: 0; border: none; background: none; font-size: 13px; color: var(--ol-grey-2); }
+.ol-more:hover, .ol-show-off:hover { color: var(--ol-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ol-li, .ol-off-row, .ol-hv, .ol-entry-line { transition: none; }
+}
+/* Desktop One List hidden on phones — the phone surface is #mobile-app (Prompt 8). */
+@media (max-width: 640px) {
+  .ol-app { display: none !important; }
+}

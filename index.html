@@ -6,10 +6,12 @@
   <title>Grind &amp; Flow</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Grind &amp; Flow">
-  <meta name="theme-color" content="#f8f5f0">
+  <meta name="theme-color" content="#FCFCFA">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-180.png">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -30,30 +32,8 @@
 
 <div id="app" style="display:none">
 
-  <!-- ── Topbar ── -->
-  <header class="topbar">
-    <div class="topbar-left">
-      <nav class="tab-group tab-group-primary">
-        <button class="tab tab-primary active" id="tab-tasks"    onclick="App.switchView('tasks')">Tasks</button>
-        <button class="tab tab-primary"        id="tab-projects" onclick="App.switchView('projects')">Projects</button>
-      </nav>
-    </div>
-    <div class="topbar-right">
-      <div class="nav-icons">
-        <button class="nav-action nav-icon" id="act-review"  onclick="App.openInboxReview()" title="Review Inbox"><i class="ti ti-list-check"></i></button>
-        <button class="nav-action nav-icon" id="act-week"    onclick="App.switchView('calendar')" title="Week"><i class="ti ti-calendar-week"></i></button>
-        <button class="tab nav-icon"        id="tab-archive" onclick="App.switchView('archive')" title="Archive"><i class="ti ti-archive"></i></button>
-      </div>
-      <input type="file" id="import-file" accept=".json" style="display:none" onchange="App.onImportFile(event)" />
-      <button class="btn-icon btn-logout" onclick="Auth.handleLogout()" title="Sign out">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <polyline points="16 17 21 12 16 7"/>
-          <line x1="21" y1="12" x2="9" y2="12"/>
-        </svg>
-      </button>
-    </div>
-  </header>
+  <!-- ── One List (desktop): header + view rendered by App._renderOL() ── -->
+  <div id="ol-app" class="ol-app"><div id="ol-view"></div></div>
 
   <!-- Save banner -->
   <div class="save-banner" id="save-banner" style="display:none">
@@ -99,26 +79,13 @@
     </section>
   </div>
 
-  <!-- ── Board ── -->
-  <main class="board-section">
-    <div class="board-head">
-      <div class="board-head-left">
-        <div class="topbar-date" id="topbar-date"></div>
-        <h1 class="board-title" id="board-title">Tasks</h1>
-      </div>
-      <div class="board-actions" id="board-actions">
-        <!-- rendered by JS -->
-      </div>
-    </div>
-    <div id="board"></div>
-  </main>
-
 </div>
 <!-- ── Inbox Review: full-screen triage overlay (desktop only) ── -->
 <div id="inbox-review" class="inbox-review"><!-- rendered by App._renderInboxReview() --></div>
 <div id="modal-root"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="data.js"></script>
+<script src="parse.js"></script>
 <script src="auth.js"></script>
 <script src="app.js"></script>
 <script>

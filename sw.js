@@ -2,7 +2,7 @@
 // Caches the app shell so the PWA launches reliably from the home screen.
 // Supabase API calls are always sent to the network (never cached).
 
-const CACHE = 'gf-shell-v3';
+const CACHE = 'gf-shell-v4';
 
 const SHELL = [
   '/grind-and-flow/',
@@ -11,6 +11,7 @@ const SHELL = [
   '/grind-and-flow/app.js',
   '/grind-and-flow/auth.js',
   '/grind-and-flow/data.js',
+  '/grind-and-flow/parse.js',
   '/grind-and-flow/manifest.json',
   '/grind-and-flow/icon-192.png',
   '/grind-and-flow/icon-512.png',
