@@ -1,3 +1,9 @@
+> **One List (2026-11-25) — what changed; the rest of this file is history.**
+> - There is no Recurring column or due banner any more. Recurring tasks are **created from the entry bar** (`every 5d` / `every 2w` / `every month` → rolling; `every mon [thu]` / `every 15th` → anchored with the default rule; parsed by `parse.js`), **pinned at the top of Offered** when due-soon/overdue (✓ checks off via `completeRecurringToday`; `+` pulls onto Today like any task), shown in Everything with ↻ + cadence, and **edited** via `openRecurringModal` from the detail popover ("edit recurrence…"). The phone lists due ones too.
+> - Kept unchanged: `_maybeSpawnRecurrence` (now also copies `area`/`source` to the next occurrence), `_nextRollingDate`, `_nextAnchoredSuggestedDate`, the anchored confirm (`_openRecurConfirm`, desktop overlay + phone sheet), `_recurDueState`, `_recurDueList`, `_completeRecurring` (now also logs a `done` task_event), `openRecurLogDate` backdating, alternating pairs, `recurrenceLastCompletedAt`.
+> - Tags are retired: the modal no longer has tag fields (alternate snapshot `tags` is always `[]`). Area is edited in the detail popover.
+> - Removed: `_renderRecurringCard`, `_renderRecurDueBanner`, the "+ new recurring" column button, `openDetail`'s redirect.
+
 # Recurring tasks
 
 Session 2026-07-01, reworked same day after user feedback on the first design (see

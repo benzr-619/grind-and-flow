@@ -1,3 +1,5 @@
+> **RETIRED 2026-11-25 (One List).** Inbox Review was deleted in Prompt 9 — there is no Inbox; new tasks land in Offered. `tasks.later_count` remains unused. Kept for history only.
+
 # Inbox Review — constellation canvas
 
 Phase 2 (session 2026-06-16, redesigned 2026-06-16). The Inbox (`backlog`) is **no longer a board column** — it's a deliberate **review activity** opened from a "Review Inbox" button. The board renders **This Week / Next / Done** only.

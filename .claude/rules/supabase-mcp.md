@@ -35,6 +35,7 @@ All four app tables exist in the `public` schema with RLS enabled:
 - Migration `one_list_model`: `tasks` gained `today_date` (date), `today_order` (numeric), `area` (check Research/AMD/EDBA/Home), `urgency` (check asap/norush), `purpose`, `effort` (check S/M/L), `source` (check app/phone/claude), `meta` (jsonb). `archive` gained `area`.
 - New table `task_events` (id text PK, user_id uuid default auth.uid(), task_id text, event check added/offered/pulled/sent_back/started/done, at timestamptz default now(), minutes int). RLS `auth.uid() = user_id`; index `task_events_user_at_idx (user_id, at)`.
 - Fresh start: 1 done task moved to `archive` (now 154 rows), then all `tasks` rows deleted (0 rows). The row counts in the inventory table above are pre-migration and stale.
+- App code (Prompt 9) no longer reads `projects`, `tags` or `commitments` at all.
 - `tasks.status` going forward: `open` / `done` / `recurring` / `idea` (no DB check constraint — enforced in app code).
 
 ## Gotchas

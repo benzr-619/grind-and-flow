@@ -1,3 +1,5 @@
+> **RETIRED 2026-11-25 (One List).** The This Week / Next / Done board was deleted in Prompt 9; Today + Offered replace it. `tasks.board_order` remains unused. Kept for history only.
+
 # Tasks board — This Week / Next / Done drag-reorder
 
 Session 2026-07-01. The board (`renderBoard()`'s non-project, non-calendar branch) renders `This Week`/`Next`/`Done` columns as `.col-body[data-col]` drop zones of `.card` elements (`backlog`/Inbox is reviewed separately — see [inbox-review](./inbox-review.md)).

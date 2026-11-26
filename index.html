@@ -9,7 +9,6 @@
   <meta name="theme-color" content="#FCFCFA">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-180.png">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" />
   <link rel="stylesheet" href="style.css" />
@@ -35,12 +34,6 @@
   <!-- ── One List (desktop): header + view rendered by App._renderOL() ── -->
   <div id="ol-app" class="ol-app"><div id="ol-view"></div></div>
 
-  <!-- Save banner -->
-  <div class="save-banner" id="save-banner" style="display:none">
-    <span>Unsaved changes</span>
-    <button class="save-now-btn" onclick="App.exportData()">Export ↓</button>
-    <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
-  </div>
 
   <!-- ── Phone stopgap (≤640px): rendered by App._renderPhone() — bare Today + due recurring + capture ── -->
   <div id="mobile-app" class="ph-app"></div>
@@ -48,10 +41,7 @@
   <!-- ── Focus zone: full-screen breathing-orb overlay ── -->
   <div id="focus-zone" class="focus-zone">
     <div class="focus-meta" id="focus-meta"><!-- label, title, #focus-clock-time, sub/elapsed, boundary msg — rendered by JS --></div>
-    <div class="orb-area" id="doing-cards-row"
-      ondragover="App._onDoingDragOver(event)"
-      ondragleave="App._onDoingDragLeave(event)"
-      ondrop="App._onDoingDrop(event)">
+    <div class="orb-area" id="doing-cards-row">
       <div class="orb-glow" id="focus-orb-glow"></div>
       <div class="orb-wrap"><div class="orb" id="focus-orb"></div></div>
     </div>
@@ -61,8 +51,6 @@
   </div>
 
 </div>
-<!-- ── Inbox Review: full-screen triage overlay (desktop only) ── -->
-<div id="inbox-review" class="inbox-review"><!-- rendered by App._renderInboxReview() --></div>
 <div id="modal-root"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="data.js"></script>

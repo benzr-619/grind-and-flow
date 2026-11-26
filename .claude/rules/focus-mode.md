@@ -37,7 +37,7 @@ The orb itself carries **no text**. Work/break is conveyed by orb color + the `w
 ## Stable ids preserved (CLAUDE.md DOM-stability)
 
 - `#focus-zone`, `#doing-section`, `#focus-clock-time` — kept.
-- `#doing-cards-row` — moved onto `.orb-area` (still the drop target; keeps drag-swap working via `_onDoingDrop`).
+- `#doing-cards-row` — on `.orb-area`; the subtree that moves into the PiP window. (The drag-swap drop handlers were removed in One List Prompt 9 — nothing is dragged onto the orb any more.)
 
 ---
 

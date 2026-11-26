@@ -1,3 +1,5 @@
+> **RETIRED 2026-11-25 (One List).** Projects canvas + project-space modal deleted in Prompt 9; projects became the four areas. The `projects` and `tags` tables remain, unused. Kept for history only.
+
 # Projects Spatial Canvas + first-class task model
 
 Redesign Phase 3 (session 2026-06-16). Canvas layout and orb system iterated in session 2026-06-19.

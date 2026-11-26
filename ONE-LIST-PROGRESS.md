@@ -98,3 +98,15 @@ the touched views and the run fails on any console error / page error. Run it yo
 - `.claude/rules/mobile.md` rewritten; fuller phone design noted as future work (native rebuild).
 - Not verified on a real iPhone (keyboard/safe-area behaviour) — headless Chromium 390×844 with synthetic touch only.
 - Check: `node dev/smoke.cjs dev/scenarios/p8-phone.cjs --mobile` (numbering, due recurring, tap complete + undo, swipe complete, recurring complete/respawn, chip capture, `every` capture). No console errors.
+
+## Prompt 9 — Cleanup ✅
+- **app.js 5,650 → 2,170 lines.** Deleted: Inbox Review, Week view + commitments UI, Projects canvas + project space, Tasks board columns/cards/drag, `_dailyRollover`, tag UI (incl. from the recurring modal), Archive view, filters, export/import, the old mobile companion, New-item/Detail modals, completion-date localStorage. Kept: Focus + PiP, recurring logic + modal, One List, phone.
+- **data.js 680 → 400 lines:** only `tasks`, `archive`, `task_events` are loaded/written. Tables `projects`/`tags`/`commitments` kept in Supabase, untouched.
+- **style.css 3,199 → ~975 lines:** automated prune to selectors still referenced, then hand-checked; remaining legacy shells (recurring modal, confirm overlays, phone sheet, sign-in) re-pointed to the minimal tokens. `index.html`: removed Tabler icons, save banner, Inbox Review mount, orb drag handlers. SW cache bumped to `gf-shell-v5`.
+- **Bug fixes found while cleaning:** (1) a recurring task's next occurrence now keeps its **area** (it was dropped on spawn); (2) `_hashStr` returned a 0–1 float, so Everything's jitter/drift offsets were all ~0 — now a uint32.
+- **Docs:** CLAUDE.md rewritten (overview, module map incl. `parse.js` + `dev/`, data model, conventions, feature status). Retired rules moved to `.claude/rules/_retired/` with a one-line note each (tasks-board, projects-canvas, calendar-week, inbox-review). `recurring-tasks.md`, `focus-mode.md`, `supabase-mcp.md`, `one-list.md` updated.
+- Check: every scenario re-run green (data, today, focus, everything, log, capture, phone, plain boot) + `p9-tour.cjs` click-through screenshotting Today, detail, Everything, recurring modal, anchored confirm, Focus, Log. `node dev/parse.test.js` 60/60. No console errors.
+
+## Merge
+All prompts done; app loads and Today, entry, Offered and Focus work with no console errors in the harness → merged `one-list` into `main` and pushed for GitHub Pages.
+**Things to check yourself on first real use** (I couldn't sign in): the first add/complete writes to Supabase without errors (open DevTools console once), and the phone surface on your actual iPhone/PWA (keyboard + safe areas). If GitHub Pages serves a stale version, reload twice (service worker is network-first).

@@ -5,7 +5,7 @@ Source of truth for behavior: `ONE-LIST-BRIEF.md` (Locked decisions) + the "v2 �
 
 ## Render path
 - `index.html`: `#ol-app > #ol-view` (the old `.topbar` and `.board-section` markup were removed).
-- `renderBoard()` → on mobile still the phone path; on desktop `_renderOL()` and return (old board code below it is unreachable until Prompt 9 deletes it).
+- `renderBoard()` → `_renderPhone()` at ≤640px, else `_renderOL()`. (The old board/canvas/week/inbox/archive code was deleted in Prompt 9.)
 - `_renderOL()` dispatches on module state `olView` (`'today' | 'everything' | 'log'`); each view renders its own header. `App.olGo(v)` switches. `document.body.dataset.olView` is stamped.
 - Today = `_renderTodayView()` (shell) + `_renderTodayList()` + `_renderOffered()`; `_olRefreshLists()` re-renders lists without touching the entry bar (keeps focus/typed text).
 
@@ -13,7 +13,7 @@ Source of truth for behavior: `ONE-LIST-BRIEF.md` (Locked decisions) + the "v2 �
 - `Data.todayList()` (todayDate === local today, sorted by `todayOrder`). Numbered 1…n; item 1 gets **start** (`olStart` → Focus, Prompt 4); a quiet `.ol-ten-line` divider before item 11 and greyed numerals after 10.
 - Hover reveals "not today →" (`olSendBack` → `Data.sendBack`) and the done circle (`olDone`: recurring → `_completeRecurring(id, today)`; else `Data.completeTask`). Rows fade out (`.ol-leaving`, reduced-motion skips).
 - Drag-reorder: HTML5 DnD on `.ol-li`; `_olDropTarget` picks before/after by cursor midpoint; `Data.reorderToday(ids)` rewrites `todayOrder` 1..n. Drop indicator = `.drop-above/.drop-below` accent border.
-- No rollover: `_dailyRollover` is no longer called (init + midnight timer). Yesterday's items just stop matching and earn the "on Today <day>" carry-over points in Offered.
+- No rollover: `_dailyRollover` is gone; a midnight timer (`_scheduleMidnight`) just re-renders. Yesterday's items just stop matching and earn the "on Today <day>" carry-over points in Offered.
 
 ## Offered (ranking)
 - `RANK_WEIGHTS` constant (app.js) is the one place to tune. `_olScore(task, today)` → `{score, why, hot}`; `why` = the single strongest positive reason (fallback: "no rush" / "added N days ago").
@@ -43,3 +43,8 @@ Source of truth for behavior: `ONE-LIST-BRIEF.md` (Locked decisions) + the "v2 �
 - **Duplicate hint** `_olDupHint(ctx)` (runs inside `_entrySync`): parsed title vs open/idea/recurring tasks via `GFParse.closeMatch` (exact, substring ≥6 chars, or word-overlap score ≥ 0.6; titles < 4 chars ignored). Shows `.ol-dup` "already have: …" with **keep both** (`_olDupKeep` — stores `_entry[ctx].dupKeep` so the hint stays away for that title) and **open existing** (`_olDupOpen` — clears the entry, opens the detail popover).
 - Inline shortcuts in the title step show as preview chips while typing (idea / area / when).
 - Parser tests: `node dev/parse.test.js` (60 assertions, fixed today = Wed 2026-11-25). Run after any `parse.js` change.
+
+## Cleanup notes (Prompt 9)
+- `_hashStr` now returns a uint32 (FNV-1a). It used to return a [0,1) float (for the old project orbs), which made Everything's `% n` jitter/drift-delays all ~0 — fixed.
+- CSS was pruned automatically to selectors still referenced by `app.js` / `index.html` / `auth.js` (3,199 → ~1,000 lines), then hand-checked. Legacy shells (recurring modal, `.rc-*` overlays, phone bottom sheet, auth) get the minimal look by re-pointing legacy tokens to `--ol-*` inside them (block at the end of `style.css`).
+- Smoke checks: `./dev/serve.sh &` then `NODE_PATH=<dir with playwright 1.61> node dev/smoke.cjs dev/scenarios/<name>.cjs [--mobile]`; `p9-tour.cjs` screenshots every view.

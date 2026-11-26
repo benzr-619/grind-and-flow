@@ -1,3 +1,5 @@
+> **RETIRED 2026-11-25 (One List).** The Week view, commitments UI and `_dailyRollover` were deleted in Prompt 9; the `commitments` table and `tasks.day_order`/`time_spent` columns remain. Kept for history only.
+
 # Week (Calendar) view — redesign phase 4
 
 Session 2026-06-19. The final of the four redesign modes (Planning · Focus · Projects · **Calendar**). A desktop-first weekly-review surface in the **Grind** visual language (graph-paper ground, flat vivid tag-coloured chips — cousin of the Inbox Review constellation; **no** Focus-orb soft/blur). Top-level `view`, rendered into `#board` like Projects — **not** a z-200 overlay.
