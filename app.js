@@ -475,7 +475,7 @@ const App = (() => {
 
   // ── Render ──
   function renderBoard() {
-    if (_isMobile()) { _renderMobileApp(); return; }
+    if (_isMobile()) { _renderPhone(); return; }
     _renderOL(); return; // One List — the old board/canvas/week paths below are unreachable (deleted in Prompt 9)
     const board = document.getElementById('board');
     if (!board) return;
@@ -4534,6 +4534,144 @@ const App = (() => {
     }, 16);
   }
 
+
+  // ═══ Phone stopgap (Prompt 8) — deliberately bare; full phone design is future work ═══
+  // Numbered Today (tap circle or swipe right to complete, with undo), due recurring
+  // tasks, and a one-line capture pinned at the bottom with tap chips
+  // (asap / date… / no rush | areas). No Everything, Log or Focus on the phone.
+  const _ph = { when: null, dueDate: '', area: null };
+  let _phSwipe = null;
+  let _phUndo = null;
+
+  function _renderPhone() {
+    const root = document.getElementById('mobile-app');
+    if (!root) return;
+    if (!root.querySelector('.ph-capture')) {
+      root.innerHTML = `
+        <header class="ph-head">
+          <span class="ph-date"></span>
+          <button class="ph-signout" onclick="Auth.handleLogout()" aria-label="Sign out">sign out</button>
+        </header>
+        <div class="ph-scroll" id="ph-scroll"></div>
+        <form class="ph-capture" onsubmit="event.preventDefault();App._phSave()">
+          <div class="ph-cap-line">
+            <label class="ol-sr" for="ph-input">Capture a task</label>
+            <input id="ph-input" class="ph-input" placeholder="capture…" autocomplete="off" enterkeyhint="done" />
+            <button type="submit" class="ph-save">save</button>
+          </div>
+          <div class="ph-chips" id="ph-chips"></div>
+          <input type="date" id="ph-date-pick" class="ph-date-pick" tabindex="-1" aria-hidden="true" onchange="App._phPickDate(this.value)" />
+        </form>`;
+    }
+    root.querySelector('.ph-date').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    _phRenderChips();
+    const today = Data.todayList();
+    const onToday = new Set(today.map(t => t.id));
+    const due = _recurDueList().filter(d => !onToday.has(d.item.id));
+    const row = (t, label, isRec) => `
+      <li class="ph-row" data-id="${t.id}"
+        ontouchstart="App._phTouchStart(event,'${t.id}')" ontouchmove="App._phTouchMove(event)" ontouchend="App._phTouchEnd(event)">
+        <span class="ph-num${isRec ? ' rec' : ''}">${label}</span>
+        <div class="ph-body"><div class="ph-title">${esc(t.title)}</div>${_olMeta(t) ? `<div class="ph-meta${isRec ? ' hot' : ''}">${esc(_olMeta(t))}</div>` : ''}</div>
+        <button class="ph-done" onclick="App._phDone('${t.id}')" aria-label="Done: ${esc(t.title)}"></button>
+      </li>`;
+    document.getElementById('ph-scroll').innerHTML = `
+      ${today.length ? `<ol class="ph-list">${today.map((t, i) => row(t, i + 1, false)).join('')}</ol>`
+        : `<p class="ph-empty">Nothing on Today. Pick on your computer, or capture below.</p>`}
+      ${due.length ? `<ol class="ph-list ph-due">${due.map(d => row(d.item, '↻', true)).join('')}</ol>` : ''}`;
+  }
+
+  function _phRenderChips() {
+    const el = document.getElementById('ph-chips'); if (!el) return;
+    const c = (label, on, call) => `<button type="button" class="ph-chip${on ? ' on' : ''}" onclick="${call}">${esc(label)}</button>`;
+    el.innerHTML =
+      c('asap', _ph.when === 'asap', "App._phWhen('asap')") +
+      c(_ph.when === 'date' && _ph.dueDate ? 'by ' + _fmtDate(_ph.dueDate) : 'date…', _ph.when === 'date', "App._phWhen('date')") +
+      c('no rush', _ph.when === 'norush', "App._phWhen('norush')") +
+      '<span class="ph-sep" aria-hidden="true"></span>' +
+      Data.AREAS.map(a => c(a, _ph.area === a, `App._phArea('${a}')`)).join('');
+  }
+  function _phWhen(w) {
+    if (w === 'date') {
+      const pick = document.getElementById('ph-date-pick');
+      if (_ph.when === 'date') { _ph.when = null; _ph.dueDate = ''; _phRenderChips(); return; }
+      try { pick.showPicker(); } catch (e) { pick.focus(); pick.click(); }
+      return;
+    }
+    _ph.when = _ph.when === w ? null : w; _ph.dueDate = '';
+    _phRenderChips();
+  }
+  function _phPickDate(v) { if (v) { _ph.when = 'date'; _ph.dueDate = v; } _phRenderChips(); }
+  function _phArea(a) { _ph.area = _ph.area === a ? null : a; _phRenderChips(); }
+
+  function _phSave() {
+    const inp = document.getElementById('ph-input');
+    const raw = (inp.value || '').trim(); if (!raw) return;
+    const pt = GFParse.parseTitle(raw, Data.localToday());
+    const w = pt.when || {};
+    Data.addTask({
+      title: pt.title, isIdea: pt.isIdea, source: 'phone',
+      area: _ph.area || pt.area,
+      urgency: _ph.when === 'asap' ? 'asap' : _ph.when === 'norush' ? 'norush' : (w.urgency || null),
+      dueDate: _ph.when === 'date' ? _ph.dueDate : (w.dueDate || ''),
+      recur: w.recur || null,
+    });
+    inp.value = ''; _ph.when = null; _ph.dueDate = ''; _ph.area = null;
+    _renderPhone();
+    _phToast('Saved — it\'s in Offered on your computer');
+    inp.focus();
+  }
+
+  function _phDone(id) {
+    const t = Data.findItem(id); if (!t) return;
+    const li = document.querySelector(`.ph-row[data-id="${id}"]`);
+    const go = () => {
+      if (t.status === 'recurring') { _completeRecurring(id, Data.localToday()); _phToast('Done'); return; }
+      const snap = JSON.parse(JSON.stringify(t));
+      Data.completeTask(id);
+      renderBoard();
+      _phToast('Done', () => { Data.deleteFromArchive(id); Data.upsertTask(snap); renderBoard(); });
+    };
+    if (li && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) { li.classList.add('leaving'); setTimeout(go, 180); } else go();
+  }
+
+  function _phToast(msg, undo) {
+    document.querySelector('.ph-toast')?.remove();
+    clearTimeout(_phUndo);
+    const el = document.createElement('div');
+    el.className = 'ph-toast'; el.setAttribute('role', 'status');
+    el.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button type="button">Undo</button>' : ''}`;
+    if (undo) el.querySelector('button').onclick = () => { el.remove(); clearTimeout(_phUndo); undo(); };
+    document.body.appendChild(el);
+    _phUndo = setTimeout(() => el.remove(), undo ? 4000 : 1800);
+  }
+
+  // Swipe right ≥ 35% of the row to complete; vertical movement hands back to scrolling.
+  function _phTouchStart(e, id) {
+    const t = e.touches[0];
+    _phSwipe = { id, x: t.clientX, y: t.clientY, dx: 0, decided: false, el: e.currentTarget };
+  }
+  function _phTouchMove(e) {
+    if (!_phSwipe) return;
+    const t = e.touches[0];
+    const dx = t.clientX - _phSwipe.x, dy = t.clientY - _phSwipe.y;
+    if (!_phSwipe.decided) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx)) { _phSwipe = null; return; }
+      _phSwipe.decided = true;
+    }
+    e.preventDefault();
+    _phSwipe.dx = Math.max(0, dx);
+    _phSwipe.el.style.transform = `translateX(${_phSwipe.dx}px)`;
+    _phSwipe.el.classList.toggle('arming', _phSwipe.dx > _phSwipe.el.offsetWidth * 0.35);
+  }
+  function _phTouchEnd() {
+    const s = _phSwipe; _phSwipe = null;
+    if (!s || !s.decided) return;
+    if (s.dx > s.el.offsetWidth * 0.35) _phDone(s.id);
+    else { s.el.style.transform = ''; s.el.classList.remove('arming'); }
+  }
+
   // ═══════════════════════════════════════════════════════════
   // ONE LIST (2026-11-25) — Today home, Offered ranking, entry bar.
   // See ONE-LIST-BRIEF.md + .claude/rules/one-list.md.
@@ -5565,6 +5703,7 @@ const App = (() => {
     olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olHideOffer, olShowOffer, olOfferAll,
     _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip, _olDupKeep, _olDupOpen,
     logWeek, logRestore, logDelAsk, logDel,
+    _phSave, _phWhen, _phPickDate, _phArea, _phDone, _phTouchStart, _phTouchMove, _phTouchEnd,
     evMode, _evCanvasClick, olCloseDetail, _odSet, _odToday, _odMakeTask, _odDelAsk, _odDel,
   };
 })();

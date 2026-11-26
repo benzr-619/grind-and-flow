@@ -42,27 +42,8 @@
     <button class="banner-dismiss" onclick="App.dismissBanner()">✕</button>
   </div>
 
-  <!-- ── Mobile app shell — separate render path from the desktop board, hidden on desktop ── -->
-  <div id="mobile-app" class="m-app">
-    <header class="m-header">
-      <div class="m-header-title" id="m-header-title">Now</div>
-      <button class="m-header-signout" onclick="Auth.handleLogout()" title="Sign out">⌄</button>
-    </header>
-    <div class="m-content" id="m-content"><!-- rendered by JS --></div>
-    <button class="m-fab" id="m-fab" onclick="App._mOpenCapture()" title="Capture">＋</button>
-    <nav class="m-tabbar">
-      <button class="m-tab active" id="m-tab-now" onclick="App._mSwitchTab('now')">
-        <span class="m-tab-icon">●</span><span class="m-tab-label">Now</span>
-      </button>
-      <button class="m-tab" id="m-tab-projects" onclick="App._mSwitchTab('projects')">
-        <span class="m-tab-icon">◇</span><span class="m-tab-label">Projects</span>
-      </button>
-      <button class="m-tab" id="m-tab-inbox" onclick="App._mSwitchTab('inbox')">
-        <span class="m-tab-icon">✉</span><span class="m-tab-label">Inbox</span>
-        <span class="m-tab-badge" id="m-inbox-badge" style="display:none"></span>
-      </button>
-    </nav>
-  </div>
+  <!-- ── Phone stopgap (≤640px): rendered by App._renderPhone() — bare Today + due recurring + capture ── -->
+  <div id="mobile-app" class="ph-app"></div>
 
   <!-- ── Focus zone: full-screen breathing-orb overlay ── -->
   <div id="focus-zone" class="focus-zone">

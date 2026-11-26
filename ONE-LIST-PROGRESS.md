@@ -87,3 +87,14 @@ the touched views and the run fails on any console error / page error. Run it yo
 - `dev/parse.test.js` — 60 plain-node assertions covering urgency, dates (weekday/same-day/next, month-day, numeric, relative, year rollover, invalid), rolling vs anchored recurrence (incl. month-end clamp), areas, inline title shortcuts, duplicate matching.
 - Decision: "keep both" is remembered for that exact title until the entry is saved/cleared.
 - Check: `node dev/parse.test.js`; `dev/scenarios/p7-capture.cjs`; all earlier scenarios re-run green. No console errors.
+
+## Prompt 8 — Phone stopgap ✅
+- New bare ≤640px surface replacing the old companion (which relied on retired statuses): date, numbered Today, due recurring (↻), tap circle or swipe right to complete, capture bar pinned at the bottom with chips `asap · date… · no rush | Research AMD EDBA Home` + save.
+- Decisions:
+  - Undo toast (4s) after completing a plain task — swipes are easy to fire by accident. Not for recurring (that respawns).
+  - Inline shortcuts work on the phone too (`every 2w`, `#amd`, `idea:`); chips override inline text.
+  - Phone captures go to Offered (never straight to Today) — matches "no Offered on mobile; pick on the computer".
+  - Phone shows Today in desktop order; no reorder/pull on the phone.
+- `.claude/rules/mobile.md` rewritten; fuller phone design noted as future work (native rebuild).
+- Not verified on a real iPhone (keyboard/safe-area behaviour) — headless Chromium 390×844 with synthetic touch only.
+- Check: `node dev/smoke.cjs dev/scenarios/p8-phone.cjs --mobile` (numbering, due recurring, tap complete + undo, swipe complete, recurring complete/respawn, chip capture, `every` capture). No console errors.

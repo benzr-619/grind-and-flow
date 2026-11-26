@@ -1771,6 +1771,7 @@ select.modal-input { cursor: pointer; }
 
 /* Mobile-only elements — hidden on desktop */
 .m-app   { display: none; }
+.ph-app  { display: none; }
 .m-toast { display: none; }
 
 /* ════════════════════════════════════════
@@ -3153,3 +3154,46 @@ body { background: var(--ol-bg); color: var(--ol-ink); }
 @media (max-width: 640px) {
   .ol-app { display: none !important; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   PHONE STOPGAP (≤640px, One List Prompt 8) — bare: Today, due
+   recurring, one-line capture with tap chips. Full design later.
+════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .m-app { display: none !important; }
+  .ph-app { display: flex; flex-direction: column; position: fixed; inset: 0; height: 100dvh; z-index: 50; background: var(--ol-bg); color: var(--ol-ink); font-family: var(--font-ol); }
+  .ph-app button { font-family: inherit; cursor: pointer; }
+  .ph-head { display: flex; justify-content: space-between; align-items: center; padding: calc(env(safe-area-inset-top, 0px) + 28px) 24px 12px; }
+  .ph-date { font-size: 13px; color: var(--ol-grey); }
+  .ph-signout { min-height: 44px; padding: 0 4px; font-size: 12px; color: var(--ol-faint); }
+  .ph-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 24px 24px; }
+  .ph-list { list-style: none; margin: 0; padding: 0; }
+  .ph-due { margin-top: 18px; padding-top: 6px; border-top: 1px solid var(--ol-line); }
+  .ph-row { display: flex; align-items: center; gap: 16px; min-height: 56px; padding: 10px 0; background: var(--ol-bg); transition: transform .18s, opacity .18s; touch-action: pan-y; }
+  .ph-row.arming .ph-done { border-color: var(--ol-ink); background: var(--ol-ink); }
+  .ph-row.leaving { opacity: 0; transform: translateX(40%) !important; }
+  .ph-num { width: 22px; flex: none; text-align: right; font-size: 24px; font-weight: 300; font-variant-numeric: tabular-nums; }
+  .ph-num.rec { font-size: 16px; color: var(--ol-hot); }
+  .ph-body { flex: 1; min-width: 0; }
+  .ph-title { font-size: 18px; line-height: 1.35; overflow-wrap: anywhere; }
+  .ph-meta { margin-top: 3px; font-size: 12px; color: var(--ol-grey-2); }
+  .ph-meta.hot { color: var(--ol-hot); }
+  .ph-done { flex: none; width: 44px; height: 44px; border-radius: 50%; border: none; background: transparent; position: relative; }
+  .ph-done::before { content: ''; position: absolute; inset: 9px; border: 1px solid var(--ol-faint); border-radius: 50%; }
+  .ph-done:active::before { border-color: var(--ol-ink); background: var(--ol-chip); }
+  .ph-empty { margin: 8px 0 0; font-size: 16px; font-weight: 300; color: var(--ol-faint); }
+  .ph-capture { padding: 8px 14px calc(env(safe-area-inset-bottom, 0px) + 10px); border-top: 1px solid var(--ol-line); background: var(--ol-surface); }
+  .ph-cap-line { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+  .ph-input { flex: 1; min-width: 0; height: 46px; padding: 0; border: none; outline: none; background: transparent; font-family: var(--font-ol); font-size: 18px; font-weight: 300; color: var(--ol-ink); }
+  .ph-input::placeholder { color: var(--ol-faint); }
+  .ph-save { min-height: 40px; padding: 0 16px; border-radius: 20px; background: var(--ol-ink); color: var(--ol-bg); font-size: 14px; border: none; }
+  .ph-chips { display: flex; gap: 6px; overflow-x: auto; padding: 6px 0 2px; scrollbar-width: none; }
+  .ph-chips::-webkit-scrollbar { display: none; }
+  .ph-chip { flex: none; min-height: 36px; padding: 0 13px; border: 1px solid var(--ol-line-2); border-radius: 18px; background: transparent; color: var(--ol-ink-2); font-size: 13px; }
+  .ph-chip.on { background: var(--ol-ink); border-color: var(--ol-ink); color: var(--ol-bg); }
+  .ph-sep { flex: none; width: 1px; background: var(--ol-line); margin: 6px 2px; }
+  .ph-date-pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .ph-toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 120px); z-index: 300; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--ol-ink); color: var(--ol-bg); font-family: var(--font-ol); font-size: 14px; }
+  .ph-toast button { color: var(--ol-start); font-weight: 600; font-family: inherit; min-height: 32px; }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) { .ph-row { transition: none; } }
