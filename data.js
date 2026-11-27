@@ -128,10 +128,10 @@ const Data = (() => {
 
   // ── task_events (One List) ──
   function _eventFromDb(r) {
-    return { id: r.id, taskId: r.task_id, event: r.event, at: r.at, minutes: r.minutes ?? null, meta: r.meta ?? null };
+    return { id: r.id, taskId: r.task_id, event: r.event, at: r.at, minutes: r.minutes ?? null, seconds: r.seconds ?? null, meta: r.meta ?? null };
   }
   function _eventToDb(e, uid) {
-    return { id: e.id, user_id: uid, task_id: e.taskId, event: e.event, at: e.at, minutes: e.minutes ?? null, meta: e.meta ?? null };
+    return { id: e.id, user_id: uid, task_id: e.taskId, event: e.event, at: e.at, minutes: e.minutes ?? null, seconds: e.seconds ?? null, meta: e.meta ?? null };
   }
 
   function _archFromDb(r) {
@@ -294,11 +294,13 @@ const Data = (() => {
 
   // Append-only event log. Optimistic like everything else (the sync is fire-and-forget).
   // `meta` = ranking telemetry (see .claude/rules/one-list.md "Ranking telemetry").
-  function logEvent(taskId, event, minutes, meta) {
+  // `seconds` (optional, 6th arg) = exact Focus work seconds; `minutes` stays the rounded
+  // value for older readers. A session's time lives on exactly one event.
+  function logEvent(taskId, event, minutes, meta, seconds) {
     if (!_state.events) _state.events = [];
     const e = {
       id: 'e' + Date.now() + Math.random().toString(36).slice(2, 7),
-      taskId, event, at: new Date().toISOString(), minutes: minutes ?? null, meta: meta ?? null,
+      taskId, event, at: new Date().toISOString(), minutes: minutes ?? null, seconds: seconds ?? null, meta: meta ?? null,
     };
     _state.events.push(e);
     _syncEvent(e);
@@ -307,9 +309,17 @@ const Data = (() => {
 
   // Set minutes on an existing event (Focus "Back to Today" writes the session's work
   // minutes onto its `started` row).
-  function setEventMinutes(eventId, minutes) {
+  function setEventMinutes(eventId, minutes, seconds) {
     const e = (_state.events || []).find(x => x.id === eventId); if (!e) return;
     e.minutes = minutes;
+    if (seconds !== undefined) e.seconds = seconds;
+    _syncEvent(e);
+  }
+
+  // Merge keys into an existing event's meta (Focus flow mode marks its `started` row).
+  function patchEventMeta(eventId, patch) {
+    const e = (_state.events || []).find(x => x.id === eventId); if (!e) return;
+    e.meta = { ...(e.meta || {}), ...patch };
     _syncEvent(e);
   }
 
@@ -414,9 +424,9 @@ const Data = (() => {
   // completeTask — archives immediately (same path as the midnight auto-archive), stamped
   // with dateStr (default today), and logs `done` with any focus minutes from this session.
   // Recurrence spawning is UI-side (app.js _maybeSpawnRecurrence) and must run before this.
-  function completeTask(id, { minutes, dateStr } = {}) {
+  function completeTask(id, { minutes, seconds, dateStr, meta } = {}) {
     const t = _state.tasks.find(x => x.id === id); if (!t) return;
-    logEvent(id, 'done', minutes || null, todayPosition(id));
+    logEvent(id, 'done', minutes || null, { ...todayPosition(id), ...(meta || {}) }, seconds || null);
     archiveItemWithDate(id, dateStr || localToday());
   }
 
@@ -435,7 +445,7 @@ const Data = (() => {
   return {
     setClient, load, get, findItem,
     upsertTask, deleteItem, archiveItemWithDate, restoreFromArchive, deleteFromArchive,
-    AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent, setEventMinutes,
+    AREAS, localToday, addTask, pullToToday, sendBack, reorderToday, completeTask, logEvent, setEventMinutes, patchEventMeta,
     todayPosition, snapshotPriorDay,
     todayList, openTasks, recurringTasks, ideas, events,
   };

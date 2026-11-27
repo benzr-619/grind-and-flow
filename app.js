@@ -30,7 +30,6 @@ const App = (() => {
   let timerRunning = false;
   let timerAtBoundary = false; // true when a segment just ended and the next hasn't started yet
   let timerInterval = null;
-  let timerElapsedInterval = null;
   // Wall-clock references — used to correct for browser background throttling
   let _timerStartedAt = 0;   // Date.now() when current segment was started/resumed
   let _timerStartSecs = 0;   // timerSecsRemaining at that moment
@@ -47,10 +46,17 @@ const App = (() => {
   // ── Focus (One List) — which task is in Focus is in-memory, not a status. ──
   // Focus is opened from Today item 1 ("start"); the task stays on Today the whole time,
   // and a reload simply ends the session (minutes already logged are kept).
-  // _focusHandoff = the post-Done "up next on Today" card state.
   let _focusId = null;
   let _focusStartEventId = null;
-  let _focusHandoff = null; // { doneTitle, minutes } while the up-next card shows
+  let _focusHandoff = null; // { doneTitle, minutes } — overlay-only post-Done card
+  let _focusSurface = null; // 'pip' | 'pending' (requestWindow in flight) | 'overlay' (fallback)
+  let _pipOpening = false;
+  // Flow mode — the current work segment never ends; the clock counts up. In-memory,
+  // reset whenever a session starts or ends. _flowUsed → meta.flow on started/done.
+  let _flowMode = false, _flowUsed = false;
+  let _flowSecs = 0, _flowSince = 0; // flow clock (excludes pauses)
+  // Session work time in seconds (wall clock) — see _syncCounters.
+  let _workSecs = 0, _workSince = 0;
 
   // ── Recurring tasks ──
   // Two kinds: 'rolling' (interval measured from the completion date — fully automatic)
@@ -339,7 +345,14 @@ const App = (() => {
     _completeRecurring(id, dateVal);
   }
 
-  // ── Focus Mode orb (full-screen overlay) ──
+  // ── Focus surfaces (2026-11-27) ──
+  // Pop-out by default: on Chromium a session lives in the Document PiP window
+  // (_focusSurface 'pip'; 'pending' while requestWindow is in flight) and the main
+  // window stays on Today with a one-line "in focus" indicator. Fallback: the
+  // full-screen #focus-zone overlay (_focusSurface 'overlay') when PiP isn't supported
+  // or requestWindow rejects. Closing the PiP = Back to Today.
+  function _overlayShown() { return _focusSurface === 'overlay'; }
+
   function _renderFocusRow() {
     const fz = document.getElementById('focus-zone');
     const meta = document.getElementById('focus-meta');
@@ -350,10 +363,15 @@ const App = (() => {
     const glowEl = fdoc.getElementById('focus-orb-glow');
     if (!fz || !meta || !controls) return;
 
-    const task = _focusId ? Data.findItem(_focusId) || null : null;
+    let task = _focusId ? Data.findItem(_focusId) || null : null;
+    if (_focusId && !task) {
+      // The task vanished under the session (deleted from the detail popover) — end it.
+      _endFocusSession(null);
+      _focusId = null; _focusStartEventId = null; _focusSurface = null;
+    }
 
-    if ((task || _focusHandoff) && document.activeElement?.closest?.('#ol-view')) document.activeElement.blur();
-    if (!task && _focusHandoff) { _renderFocusHandoff(fz, meta, controls, orbEl, glowEl); return; }
+    if (_overlayShown() && (task || _focusHandoff) && document.activeElement?.closest?.('#ol-view')) document.activeElement.blur();
+    if (!task && _focusHandoff) { _renderFocusHandoff(fz, meta, controls, orbEl, glowEl); _renderFocusLine(); return; }
     fz.classList.remove('handoff');
 
     if (!task) {
@@ -362,6 +380,7 @@ const App = (() => {
       fz.classList.remove('active', 'break');
       meta.innerHTML = '';
       controls.innerHTML = '';
+      _renderFocusLine();
       _renderClock();
       return;
     }
@@ -369,18 +388,16 @@ const App = (() => {
     const isActive    = timerTask && timerTask.id === task.id;
     const isRunning   = isActive && timerRunning;
     const atBoundary  = isActive && timerAtBoundary;
+    const flow        = isActive && _flowMode;
     // At a boundary, timerSegIdx has already advanced to the NEXT segment — its
     // kind drives the orb colour and copy (work just ended → break next = calm).
-    const isBreak     = isActive ? TIMER_SEQ[timerSegIdx].kind === 'break' : false;
+    // Flow keeps the orb on work whatever segment it was turned on in.
+    const isBreak     = isActive && !flow ? TIMER_SEQ[timerSegIdx].kind === 'break' : false;
     const isCalm      = atBoundary && isBreak;
     const paused      = isActive && !timerRunning && !timerAtBoundary;
     const stateClass  = isBreak ? 'break' : 'work';
 
-    // Show overlay + drive orb visuals via class swaps (keeps colour/breathe smooth)
-    // display:flex overrides the base .focus-zone{display:none}; mobile hides via !important
-    fz.style.display = 'flex';
-    requestAnimationFrame(() => fz.classList.add('active'));
-    fz.classList.toggle('break', isBreak);
+    // Orb visuals via class swaps on the persistent nodes (keeps colour/breathe smooth).
     if (orbEl)  orbEl.className  = `orb ${stateClass}${paused ? ' paused' : ''}`;
     if (glowEl) glowEl.className = `orb-glow ${stateClass}${paused ? ' paused' : ''}`;
     fdoc.getElementById('doing-cards-row')?.setAttribute('data-id', task.id);
@@ -390,18 +407,36 @@ const App = (() => {
       const stage = _pipWin.document.getElementById('pip-stage');
       stage?.classList.toggle('boundary-settle', atBoundary);
       if (!atBoundary) stage?.classList.remove('boundary-nudge');
+      _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak, isCalm, flow });
+    }
+    _renderFocusLine();
+
+    if (!_overlayShown()) {
+      // Pop-out path: the overlay stays hidden; Today stays usable.
+      fz.style.display = 'none';
+      fz.classList.remove('active', 'break');
+      meta.innerHTML = '';
+      controls.innerHTML = '';
+      _renderClock();
+      return;
     }
 
-    // Top-left meta: label · tags · title · big timer · sub (work/break + elapsed, or boundary copy)
+    // ── Fallback: full-screen overlay ──
+    // display:flex overrides the base .focus-zone{display:none}; mobile hides via !important
+    fz.style.display = 'flex';
+    requestAnimationFrame(() => fz.classList.add('active'));
+    fz.classList.toggle('break', isBreak);
+
+    // Top-left meta: label · title · big timer · sub (work/break/flow, or boundary copy)
     const boundaryMsg = isCalm
       ? '✓ Focus block done. Take five — you earned it.'
       : "Break's over. Time to get back to it.";
-    const elapsed = (isActive && timerTask ? timerTask._elapsed : 0) || 0;
     const subHtml = atBoundary
       ? `<span class="fmeta-boundary ${isCalm ? 'calm' : 'pushy'}">${boundaryMsg}</span>`
+      : flow ? 'flow'
       : isBreak
         ? 'break · step away'
-        : `work · <span class="doing-elapsed-val">${elapsed}m</span> elapsed`;
+        : `work · <span class="doing-elapsed-val">${_workMinsNow()}m</span> elapsed`;
     meta.innerHTML = `
       <p class="fmeta-label">${isBreak ? 'Breathe' : 'Flow state'}</p>
       <p class="fmeta-title">${esc(task.title)}</p>
@@ -410,43 +445,66 @@ const App = (() => {
 
     // Bottom controls — minimal, low contrast.
     // Layout reads spatially: Back to Today (backward) left · main action middle · Done (forward) right.
-    const backBtn = `<button class="oc-btn" data-sc="back" onclick="App.removeFromDoing('${task.id}')">Back to Today</button>`;
-    const doneBtn = `<button class="oc-btn" data-sc="done" onclick="App.markDoingDone('${task.id}')">Done</button>`;
-    // Float/Dock — only when Document PiP is available (Chromium). Pops the orb into
-    // an always-on-top window that follows the user across apps.
-    const floatBtn = !_pipSupported ? ''
-      : _pipWin ? `<button class="oc-btn" data-sc="float" onclick="App.closeFocusPip()">Dock orb</button>`
-      : `<button class="oc-btn" data-sc="float" onclick="App.openFocusPip()">Float ↗</button>`;
+    const backBtn = `<button class="oc-btn" data-sc="back" onclick="App.removeFromDoing()">Back to Today</button>`;
+    const doneBtn = `<button class="oc-btn" data-sc="done" onclick="App.markDoingDone()">Done</button>`;
+    const flowBtn = `<button class="oc-btn${flow ? ' on' : ''}" data-sc="flow" aria-pressed="${flow}" onclick="App.toggleFlow()">${flow ? 'End flow' : 'Flow'}</button>`;
+    // Float ↗ — only when PiP exists (it was refused or failed when this session started).
+    const floatBtn = _pipSupported && !_pipWin ? `<button class="oc-btn" data-sc="float" onclick="App.openFocusPip()">Float ↗</button>` : '';
     if (atBoundary) {
       const n = TIMER_SEQ[timerSegIdx].m;
+      // Work → break boundary: Skip goes straight into the next work segment.
+      const skipBtn = isCalm ? `<button class="oc-btn" onclick="App.skipSegment()">Skip</button>` : '';
       controls.innerHTML = `${backBtn}
-        <button class="oc-btn primary" data-sc="playPause" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${doneBtn}${floatBtn}`;
+        <button class="oc-btn primary" data-sc="playPause" onclick="App.startNextSegment()">Start ${n}-min ${isBreak ? 'break' : 'work'} ›</button>${skipBtn}${doneBtn}${floatBtn}`;
     } else if (!isActive) {
       controls.innerHTML = `${backBtn}
         <button class="oc-btn primary" data-sc="playPause" onclick="App.activateTask('${task.id}')">Start focus</button>${doneBtn}${floatBtn}`;
     } else {
       controls.innerHTML = `${backBtn}
         <button class="oc-btn primary" data-sc="playPause" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
-        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>${doneBtn}${floatBtn}`;
+        ${flow ? '' : `<button class="oc-btn" onclick="App.skipSegment()">Skip</button>`}${flowBtn}${doneBtn}${floatBtn}`;
     }
-
-    if (_pipWin) _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak });
     _renderClock();
   }
 
-  // ── PiP float — detach the orb into an always-on-top window ──
+  // Today's quiet "in focus: <title> · <clock>" line (pop-out path only). Click → raise.
+  function _renderFocusLine() {
+    const el = document.getElementById('ol-focus-line');
+    if (!el) return;
+    const t = _focusId && !_overlayShown() ? Data.findItem(_focusId) : null;
+    el.innerHTML = t
+      ? `<button class="ol-focus-line" onclick="App.focusRaise()" title="Show the focus window">in focus: <span class="ofl-t">${esc(t.title)}</span> · <span id="ol-focus-clock" class="ofl-c"></span></button>`
+      : '';
+    if (t) _renderClock();
+  }
+
+  // ── PiP — the Focus surface (Document Picture-in-Picture) ──
   // Document PiP shares this JS realm, so the live timer keeps running; we just
   // relocate the orb DOM (#doing-cards-row) between #focus-zone and the PiP body.
   function _focusDoc() { return _pipWin ? _pipWin.document : document; }
 
-  async function openFocusPip() {
-    if (!_pipSupported || _pipWin) return;
+  // Call synchronously inside a click/keydown: requestWindow() needs that user
+  // activation. Resolves → surface 'pip'; rejects → the full-screen overlay.
+  function _openPip() {
+    if (!_pipSupported || _pipWin || _pipOpening) return;
+    _pipOpening = true;
+    let req;
+    try { req = window.documentPictureInPicture.requestWindow({ width: 260, height: 240 }); }
+    catch (e) { req = Promise.reject(e); }
+    Promise.resolve(req).then(pip => {
+      _pipOpening = false;
+      if (!_focusId) { try { pip.close(); } catch (e) {} return; } // session ended meanwhile
+      _mountPip(pip);
+      _focusSurface = 'pip';
+      _renderFocusRow();
+    }).catch(() => {
+      _pipOpening = false;
+      if (_focusId && !_pipWin) { _focusSurface = 'overlay'; _renderFocusRow(); }
+    });
+  }
+
+  function _mountPip(pip) {
     const orbArea = document.getElementById('doing-cards-row');
-    if (!orbArea) return;
-    let pip;
-    try {
-      pip = await window.documentPictureInPicture.requestWindow({ width: 220, height: 220 });
-    } catch (e) { return; } // gesture/permission rejected — stay docked
     _pipWin = pip;
     // Carry the stylesheet across (tokens, .orb gradients, keyframes) + compact layer.
     document.querySelectorAll('link[rel="stylesheet"], style').forEach(node => {
@@ -455,114 +513,184 @@ const App = (() => {
     pip.document.body.className = 'pip-orb';
     // Inline onclick="App.*" handlers in the PiP doc resolve App via the PiP global.
     pip.App = App;
-    // Stage: the relocated orb subtree + a hover overlay (remaining time + controls).
+    // Stage: the relocated orb subtree + a hover overlay (title, clock, controls).
     const stage = pip.document.createElement('div');
     stage.className = 'pip-stage';
     stage.id = 'pip-stage';
     const hover = pip.document.createElement('div');
     hover.className = 'pip-hover';
     hover.id = 'pip-hover';
-    stage.appendChild(orbArea);   // moves the live node into the PiP document
+    if (orbArea) stage.appendChild(orbArea);   // moves the live node into the PiP document
     stage.appendChild(hover);
     pip.document.body.appendChild(stage);
-    pip.addEventListener('pagehide', closeFocusPip);
+    pip.addEventListener('pagehide', _onPipPagehide);
     pip.document.addEventListener('keydown', _onShortcutKey); // shortcuts work while the float has focus
     pip.document.addEventListener('keyup', _onShortcutKeyUp);
-    _renderFocusRow();
   }
 
-  function closeFocusPip() {
+  // Native close / back-to-tab = Back to Today. Our own closes null _pipWin first,
+  // so this only runs once, and only for a close the app didn't make.
+  function _onPipPagehide() {
     const pip = _pipWin;
     if (!pip) return;
-    _pipWin = null; // null first so re-entrancy from pagehide is a no-op
+    _pipWin = null;
+    _returnOrb(pip);
+    if (_focusId) removeFromDoing();
+  }
+
+  function _returnOrb(pip) {
     // Return the orb subtree to the full-screen overlay, before the controls section.
     const orbArea = pip.document.getElementById('doing-cards-row');
     const fz = document.getElementById('focus-zone');
     const anchor = document.getElementById('doing-section');
     if (orbArea && fz) fz.insertBefore(orbArea, anchor);
-    try { pip.close(); } catch (e) {}
-    _renderFocusRow();
   }
 
-  // Render the PiP hover overlay (remaining time + compact controls) to current state.
-  function _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak }) {
+  // Close the PiP without ending anything (callers end/re-render themselves).
+  function closeFocusPip() {
+    const pip = _pipWin;
+    if (!pip) return;
+    _pipWin = null; // null first so the pagehide it fires is a no-op
+    _returnOrb(pip);
+    try { pip.close(); } catch (e) {}
+  }
+
+  // Float ↗ (overlay) and ⌥F: raise the PiP, or (re)open it for the running session.
+  function openFocusPip() { focusRaise(); }
+  function focusRaise() {
+    if (_pipWin) { try { _pipWin.focus(); } catch (e) {} return; }
+    if (_focusId) _openPip();
+  }
+
+  // Render the PiP hover overlay (title, clock, state, compact controls) to current state.
+  function _renderPipExtras(task, { isActive, isRunning, atBoundary, isBreak, isCalm, flow }) {
     const hover = _pipWin && _pipWin.document.getElementById('pip-hover');
     if (!hover) return;
     // Uniform buttons (no .primary emphasis) — the tiny float reads calmer, and
-    // every control only brightens on hover. The PiP title bar's native
-    // back-to-tab button already docks the orb, so no custom Dock button here.
-    const back = `<button class="oc-btn" onclick="App.removeFromDoing('${task.id}')">Return</button>`;
-    const done = `<button class="oc-btn" onclick="App.markDoingDone('${task.id}')">Done</button>`;
-    let mid;
+    // every control only brightens on hover. No Dock: closing the window = Back to Today.
+    const back = `<button class="oc-btn" onclick="App.removeFromDoing()">Back to Today</button>`;
+    const done = `<button class="oc-btn" onclick="App.markDoingDone()">Done</button>`;
+    let mid, state;
     if (atBoundary) {
       const n = TIMER_SEQ[timerSegIdx].m;
-      mid = `<button class="oc-btn" onclick="App.startNextSegment()">Start ${n}m ${isBreak ? 'break' : 'work'} ›</button>`;
+      mid = `<button class="oc-btn" onclick="App.startNextSegment()">Start ${n}m ${isBreak ? 'break' : 'work'} ›</button>`
+        + (isCalm ? `<button class="oc-btn" onclick="App.skipSegment()">Skip</button>` : '');
+      state = isCalm ? 'work done' : 'break done';
     } else if (!isActive) {
       mid = `<button class="oc-btn" onclick="App.activateTask('${task.id}')">Start</button>`;
+      state = '';
     } else {
-      mid = `<button class="oc-btn" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>
-        <button class="oc-btn" onclick="App.skipSegment()">Skip</button>`;
+      mid = `<button class="oc-btn" onclick="App.timerTogglePlay()">${isRunning ? 'Pause' : 'Resume'}</button>`
+        + (flow ? '' : `<button class="oc-btn" onclick="App.skipSegment()">Skip</button>`)
+        + `<button class="oc-btn${flow ? ' on' : ''}" aria-pressed="${flow}" onclick="App.toggleFlow()">${flow ? 'End flow' : 'Flow'}</button>`;
+      state = flow ? 'flow' : isBreak ? 'break' : 'work';
+      if (!isRunning) state += ' · paused';
     }
     hover.innerHTML = `
+      <div class="pip-title">${esc(task.title)}</div>
       <div class="pip-clock" id="pip-clock-time">--<span class="fc-colon">:</span>--</div>
+      ${state ? `<div class="pip-state">${state}</div>` : ''}
       <div class="pip-controls">${back}${mid}${done}</div>`;
   }
 
-  // Ends the timer for `id` and returns this session's work minutes (also accrued
-  // onto item.timeSpent, which carries into the archive).
+  // ── Work-time accounting (seconds, wall clock) ──
+  // Work counts while a work segment runs, while in flow, and while waiting at a
+  // work→break boundary (the overrun — timerSegIdx has already advanced to the break).
+  // Paused time, breaks and break→work boundaries don't count. _syncCounters() closes
+  // the open interval and reopens it if the new state counts; call it after every
+  // timer state change.
+  function _workCounts() {
+    if (!timerTask) return false;
+    const kind = TIMER_SEQ[timerSegIdx] && TIMER_SEQ[timerSegIdx].kind;
+    if (timerRunning) return _flowMode || kind === 'work';
+    return timerAtBoundary && kind === 'break';
+  }
+  function _syncCounters() {
+    const now = Date.now();
+    if (_workSince) { _workSecs += (now - _workSince) / 1000; _workSince = 0; }
+    if (_workCounts()) _workSince = now;
+    if (_flowSince) { _flowSecs += (now - _flowSince) / 1000; _flowSince = 0; }
+    if (_flowMode && timerRunning && timerTask) _flowSince = now;
+  }
+  function _workSecsNow() { return _workSecs + (_workSince ? (Date.now() - _workSince) / 1000 : 0); }
+  function _workMinsNow() { return Math.round(_workSecsNow() / 60); }
+  function _flowSecsNow() { return _flowSecs + (_flowSince ? (Date.now() - _flowSince) / 1000 : 0); }
+
+  // Ends the timer and returns this session's work time ({secs, mins, flow}); mins
+  // (rounded) is also accrued onto item.timeSpent, which carries into the archive.
   function _endFocusSession(item) {
-    let mins = 0;
-    if (timerTask && timerTask.id === item.id) {
-      mins = timerTask._workElapsed || 0;
-      item.timeSpent = (item.timeSpent || 0) + mins;
+    let r = { secs: 0, mins: 0, flow: false };
+    if (timerTask) {
+      timerRunning = false; timerAtBoundary = false;
+      _syncCounters();
+      const secs = Math.round(_workSecs);
+      r = { secs, mins: Math.round(secs / 60), flow: _flowUsed };
+      if (item && timerTask.id === item.id) item.timeSpent = (item.timeSpent || 0) + r.mins;
       clearInterval(timerInterval);
-      clearInterval(timerElapsedInterval);
       _stopBoundaryFlash();
       timerTask = null;
-      timerRunning = false;
-      timerAtBoundary = false;
       timerSecsRemaining = 0;
     }
-    return mins;
+    _workSecs = 0; _workSince = 0; _flowSecs = 0; _flowSince = 0;
+    _flowMode = false; _flowUsed = false;
+    return r;
   }
 
-  // "Back to Today" — leave Focus; the task stays on Today. Work minutes go onto the
-  // session's `started` event (so the Log can count them per day) and timeSpent.
-  function removeFromDoing(id) {
-    const item = Data.findItem(id);
+  // Write a session's time onto its `started` event (it ended without Done).
+  function _closeStartedEvent(r) {
+    if (_focusStartEventId && r.secs) Data.setEventMinutes(_focusStartEventId, r.mins || null, r.secs);
+  }
+
+  // "Back to Today" — leave Focus; the task stays on Today. Work time goes onto the
+  // session's `started` event (so the Log can count it per day) and timeSpent.
+  // Safe to call twice (the second call finds no session).
+  function removeFromDoing() {
     _focusHandoff = null;
-    if (item) {
-      const mins = _endFocusSession(item);
-      Data.upsertTask(item);
-      if (mins && _focusStartEventId) Data.setEventMinutes(_focusStartEventId, mins);
+    if (_focusId) {
+      const item = Data.findItem(_focusId);
+      const r = _endFocusSession(item);
+      if (item) Data.upsertTask(item);
+      _closeStartedEvent(r);
     }
-    _focusId = null; _focusStartEventId = null;
+    _focusId = null; _focusStartEventId = null; _focusSurface = null;
     _renderFocusRow();
     renderBoard();
   }
 
   // Done in Focus — complete (archive; recurring spawns its next occurrence), log `done`
-  // with this session's work minutes, then show the "up next on Today" card.
-  function markDoingDone(id) {
+  // with this session's work time. Pop-out: close the window + a quiet note on Today.
+  // Overlay: a "✓ <title> · Nm" card with Back to Today. Nothing starts next.
+  function markDoingDone() {
+    const id = _focusId;
+    if (!id) return;
     const item = Data.findItem(id);
-    if (!item) return;
-    const mins = _endFocusSession(item);
+    if (!item) { removeFromDoing(); return; }
+    const overlay = _overlayShown();
+    const r = _endFocusSession(item);
     Data.upsertTask(item);
+    const extra = r.flow ? { flow: true } : {};
     if (item.status === 'recurring') {
       const pos = Data.todayPosition(id);
       _maybeSpawnRecurrence(item, Data.localToday());
-      Data.logEvent(id, 'done', mins || null, pos);
+      Data.logEvent(id, 'done', r.mins || null, { ...pos, ...extra }, r.secs || null);
       Data.archiveItemWithDate(id, Data.localToday());
     } else {
-      Data.completeTask(id, { minutes: mins });
+      Data.completeTask(id, { minutes: r.mins, seconds: r.secs, meta: extra });
     }
     _focusId = null; _focusStartEventId = null;
-    _focusHandoff = { doneTitle: item.title, minutes: mins };
+    const note = `✓ ${item.title}${r.mins ? ` · ${r.mins}m` : ''}`;
+    if (overlay) {
+      _focusHandoff = { doneTitle: item.title, minutes: r.mins };
+    } else {
+      _focusSurface = null;
+      closeFocusPip();
+    }
     _renderFocusRow();
     renderBoard();
+    if (!overlay && (olView === 'today' || olView === 'everything')) _olFlash(olView, note, 3200);
   }
 
-  // Post-Done card: the next Today item with a one-tap start, or "back to Today".
+  // Overlay-only post-Done card: "✓ <title> · Nm" and Back to Today.
   function _renderFocusHandoff(fz, meta, controls, orbEl, glowEl) {
     if (_pipWin) closeFocusPip();
     fz.style.display = 'flex';
@@ -571,29 +699,18 @@ const App = (() => {
     fz.classList.add('handoff');
     if (orbEl)  orbEl.className  = 'orb work paused';
     if (glowEl) glowEl.className = 'orb-glow work paused';
-    const next = Data.todayList()[0] || null;
     const h = _focusHandoff;
     meta.innerHTML = `
       <p class="fmeta-label">Done</p>
-      <p class="fmeta-title">✓ ${esc(h.doneTitle)}</p>
-      <p class="fmeta-sub">${h.minutes ? `${h.minutes}m focused` : 'nice.'}</p>`;
-    const why = next ? _olMeta(next) : '';
+      <p class="fmeta-title">✓ ${esc(h.doneTitle)}${h.minutes ? ` · ${h.minutes}m` : ''}</p>`;
     controls.innerHTML = `
-      <div class="focus-upnext">
-        ${next ? `<span class="fu-label">Up next on Today</span>
-          <span class="fu-title">${esc(next.title)}</span>
-          ${why ? `<span class="fu-why">${esc(why)}</span>` : ''}
-          <button class="oc-btn primary" data-sc="startNext" onclick="App.startTask('${next.id}')">Start ›</button>`
-        : `<span class="fu-label">Today's list is clear</span>`}
-      </div>
       <div class="orb-controls">
         <button class="oc-btn" data-sc="back" onclick="App.focusBackToToday()">Back to Today</button>
       </div>`;
-    const clock = document.getElementById('focus-clock-time'); if (clock) clock.remove();
   }
 
   function focusBackToToday() {
-    _focusHandoff = null;
+    _focusHandoff = null; _focusSurface = null;
     _renderFocusRow();
     renderBoard();
   }
@@ -611,14 +728,22 @@ const App = (() => {
     _renderClock();
   }
 
+  function _fmtClock(secs) {
+    secs = Math.max(0, Math.floor(secs));
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), sec = secs % 60;
+    const c = '<span class="fc-colon">:</span>';
+    return h ? `${h}${c}${String(m).padStart(2,'0')}${c}${String(sec).padStart(2,'0')}`
+             : `${String(m).padStart(2,'0')}${c}${String(sec).padStart(2,'0')}`;
+  }
   function _renderClock() {
-    // The remaining-time readout exists on the main screen and, while floating,
-    // also in the PiP hover overlay (#pip-clock-time). Write to whichever exist.
+    // The readout exists on the overlay, in the PiP hover overlay (#pip-clock-time) and
+    // on Today's "in focus" line (#ol-focus-clock). Write to whichever exist.
+    // Flow counts up from when flow started; otherwise remaining time in the segment.
     let html;
-    if (timerTask && timerSecsRemaining >= 0) {
-      const m = String(Math.floor(timerSecsRemaining / 60)).padStart(2,'0');
-      const s = String(timerSecsRemaining % 60).padStart(2,'0');
-      html = `${m}<span class="fc-colon">:</span>${s}`;
+    if (timerTask && _flowMode) {
+      html = _fmtClock(_flowSecsNow());
+    } else if (timerTask && timerSecsRemaining >= 0) {
+      html = _fmtClock(timerSecsRemaining);
     } else {
       const now = new Date();
       const m = String(now.getHours()).padStart(2,'0');
@@ -629,34 +754,48 @@ const App = (() => {
     if (el) el.innerHTML = html;
     const pipEl = _pipWin && _pipWin.document.getElementById('pip-clock-time');
     if (pipEl) pipEl.innerHTML = html;
+    const line = document.getElementById('ol-focus-clock');
+    if (line) line.innerHTML = timerTask ? (timerAtBoundary ? 'break time' : html) : '';
+    const ev = document.querySelector('.doing-elapsed-val');
+    if (ev && timerTask) ev.textContent = `${_workMinsNow()}m`;
   }
 
-  // Open Focus on a task (Today item 1's "start", or the up-next card). Any task
-  // already in Focus is ended as "Back to Today" first, keeping its minutes.
-  function startTask(id) {
+  // Open Focus on a task (Today item 1's "start", ⌥S, ⌥⇧S). Any other task already in
+  // Focus is ended as "Back to Today" first, keeping its minutes. The task already in
+  // Focus just raises the pop-out (⌥⇧S also turns flow on). opts.flow = start in flow.
+  // On Chromium this opens the PiP synchronously, inside the click/keydown gesture.
+  function startTask(id, opts = {}) {
     const item = Data.findItem(id);
     if (!item || item.type === 'project') return;
+    if (_focusId === id && timerTask && timerTask.id === id) {
+      if (opts.flow && !_flowMode && !timerAtBoundary) toggleFlow();
+      focusRaise();
+      return;
+    }
     _focusHandoff = null;
-    if (_focusId && _focusId !== id) {
+    if (_focusId) {
       const prev = Data.findItem(_focusId);
-      if (prev) {
-        const mins = _endFocusSession(prev);
-        Data.upsertTask(prev);
-        if (mins && _focusStartEventId) Data.setEventMinutes(_focusStartEventId, mins);
-      }
+      const r = _endFocusSession(prev);
+      if (prev) Data.upsertTask(prev);
+      _closeStartedEvent(r);
+    } else {
+      _endFocusSession(null); // clear any stray timer state
     }
-    if (_focusId !== id) {
-      _focusId = id;
-      _focusStartEventId = Data.logEvent(id, 'started').id;
-    }
+    _focusId = id;
+    _flowMode = !!opts.flow; _flowUsed = _flowMode;
+    _focusStartEventId = Data.logEvent(id, 'started', null, _flowMode ? { flow: true } : null).id;
+    const wantPip = _pipSupported && !_isMobile();
+    _focusSurface = !wantPip ? 'overlay' : _pipWin ? 'pip' : 'pending';
+    if (wantPip && !_pipWin) _openPip(); // must stay synchronous with the gesture
     activateTask(id);
   }
 
   function activateTask(id) {
     const item = Data.findItem(id); if (!item) return;
     if (timerTask && timerTask.id === id) { timerAtBoundary = false; _startTimer(); _renderFocusRow(); _renderTimerTrack(); return; }
-    clearInterval(timerInterval); clearInterval(timerElapsedInterval);
-    timerTask = { ...item, _elapsed: 0 };
+    clearInterval(timerInterval);
+    _workSecs = 0; _workSince = 0; _flowSecs = 0; _flowSince = 0;
+    timerTask = { ...item };
     timerSegIdx = 0;
     timerSecsRemaining = TIMER_SEQ[0].m * 60;
     timerAtBoundary = false;
@@ -664,6 +803,27 @@ const App = (() => {
     _requestNotifPermission();
     _startTimer();
     _renderFocusRow(); _renderTimerTrack(); renderBoard();
+  }
+
+  // Flow on: the current work segment never ends (no boundary, chime, notification or
+  // nudge), the clock counts up from now, Skip hides. Off: start small — the first
+  // 5-minute work segment of TIMER_SEQ. Running state only (not at a boundary).
+  function toggleFlow() {
+    if (!timerTask || timerAtBoundary) return;
+    if (!_flowMode) {
+      _flowMode = true;
+      _flowSecs = 0; _flowSince = 0;
+      if (!_flowUsed && _focusStartEventId) Data.patchEventMeta(_focusStartEventId, { flow: true });
+      _flowUsed = true;
+      if (timerRunning) _syncCounters(); else _startTimer();
+    } else {
+      _flowMode = false;
+      _flowSecs = 0; _flowSince = 0;
+      timerSegIdx = 0;
+      timerSecsRemaining = TIMER_SEQ[0].m * 60;
+      _startTimer();
+    }
+    _renderFocusRow();
   }
 
   function _playStartChime() {
@@ -748,22 +908,11 @@ const App = (() => {
     _timerStartedAt = Date.now();
     _timerStartSecs = timerSecsRemaining;
     timerInterval = setInterval(_timerTick, 1000);
-    clearInterval(timerElapsedInterval);
-    timerElapsedInterval = setInterval(() => {
-      if (timerTask) {
-        timerTask._elapsed = (timerTask._elapsed || 0) + 1;
-        // Accumulate only WORK-segment minutes — the foundation for future
-        // duration estimates. Persisted to item.timeSpent on Done/Return.
-        if (TIMER_SEQ[timerSegIdx] && TIMER_SEQ[timerSegIdx].kind === 'work') {
-          timerTask._workElapsed = (timerTask._workElapsed || 0) + 1;
-        }
-        const el = document.querySelector('.doing-elapsed-val');
-        if (el) el.innerHTML = `${timerTask._elapsed}<span style="font-size:12px;color:var(--muted);font-style:normal;margin-left:1px">m</span>`;
-      }
-    }, 60000);
+    _syncCounters();
   }
 
   function _timerTick() {
+    if (_flowMode) { _renderClock(); return; } // flow: the segment never ends
     // Derive remaining time from wall clock — immune to interval throttling in background tabs
     const wallElapsed = Math.floor((Date.now() - _timerStartedAt) / 1000);
     timerSecsRemaining = Math.max(0, _timerStartSecs - wallElapsed);
@@ -773,12 +922,12 @@ const App = (() => {
     } else {
       // Segment complete — stop and wait for user to start the next one
       clearInterval(timerInterval);
-      clearInterval(timerElapsedInterval);
       timerRunning = false;
       timerAtBoundary = true;
       // Advance index to the next segment (loop back to 0 at the end)
       timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
       timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
+      _syncCounters(); // work→break: the wait keeps counting as work (overrun)
       _fireSegmentNotification();
       _playEndChime();
       _renderTimerTrack(); _renderFocusRow();
@@ -800,18 +949,14 @@ const App = (() => {
   }
 
   function timerTogglePlay() {
+    if (!timerTask) return;
+    if (timerAtBoundary) { startNextSegment(); return; }
     if (timerRunning) {
-      clearInterval(timerInterval); clearInterval(timerElapsedInterval);
+      clearInterval(timerInterval);
       timerRunning = false;
+      _syncCounters();
     } else { _startTimer(); }
     _renderFocusRow();
-  }
-
-  function _timerJump(idx) {
-    timerSegIdx = idx; timerSecsRemaining = TIMER_SEQ[idx].m * 60;
-    timerAtBoundary = false;
-    if (timerTask && timerRunning) _startTimer();
-    _renderFocusRow(); _renderClock();
   }
 
   function startNextSegment() {
@@ -821,9 +966,11 @@ const App = (() => {
     _renderFocusRow();
   }
 
-  // Skip the current segment and start the next one immediately
+  // Skip the current segment and start the next one immediately. At a work→break
+  // boundary timerSegIdx already points at the break, so this skips the break.
   function skipSegment() {
-    if (!timerTask) return;
+    if (!timerTask || _flowMode) return;
+    if (timerAtBoundary && TIMER_SEQ[timerSegIdx].kind !== 'break') return; // break→work: just Start
     timerSegIdx = (timerSegIdx + 1) % TIMER_SEQ.length;
     timerSecsRemaining = TIMER_SEQ[timerSegIdx].m * 60;
     timerAtBoundary = false;
@@ -1435,6 +1582,7 @@ const App = (() => {
     _renderTodayList();
     _renderOffered();
     _entrySync('today');
+    _renderFocusLine();
     const inp = document.getElementById('ol-input-today');
     if (inp && !_focusOpen() && !document.getElementById('modal-root').innerHTML && document.activeElement?.tagName !== 'INPUT') inp.focus({ preventScroll: true });
   }
@@ -1468,6 +1616,7 @@ const App = (() => {
       </header>
       <div class="ol-today-wrap">
         <main class="ol-today-main">
+          <div id="ol-focus-line"></div>
           ${_entryBarHtml('today')}
           <div id="ol-today-list"></div>
         </main>
@@ -1512,6 +1661,7 @@ const App = (() => {
 
   function olDone(id) {
     const t = Data.findItem(id); if (!t) return;
+    if (id === _focusId) { markDoingDone(); return; } // ticking off the task in Focus = Done
     _olLeave(id, () => {
       if (t.status === 'recurring') _completeRecurring(id, Data.localToday());
       else Data.completeTask(id);
@@ -1679,12 +1829,12 @@ const App = (() => {
     _olDupHint(ctx);
   }
 
-  function _olFlash(ctx, msg) {
+  function _olFlash(ctx, msg, ms = 1600) {
     const kh = document.querySelector(`#ol-entry-${ctx} .ol-keyhint`);
     if (!kh) return;
     kh.dataset.flash = '1'; kh.textContent = msg; kh.classList.add('flash');
     clearTimeout(kh._t);
-    kh._t = setTimeout(() => { delete kh.dataset.flash; kh.classList.remove('flash'); _entrySync(ctx); }, 1600);
+    kh._t = setTimeout(() => { delete kh.dataset.flash; kh.classList.remove('flash'); _entrySync(ctx); }, ms);
   }
 
   function _olInput(e, ctx) { _entry[ctx].field = e.target.value; _entrySync(ctx); }
@@ -1802,7 +1952,9 @@ const App = (() => {
   // Minutes per finished task = sum of its task_events minutes (started/done), falling
   // back to archive.time_spent for history from before task_events existed.
   let _logWeek = 0;
-  function _logFmtMin(m) {
+  // Takes seconds; rounds once, for display (never sum rounded minutes).
+  function _logFmtMin(secs) {
+    const m = Math.round((secs || 0) / 60);
     if (!m) return '—';
     const h = Math.floor(m / 60), r = m % 60;
     return h ? `${h}h ${String(r).padStart(2, '0')}m` : `${r}m`;
@@ -1816,22 +1968,25 @@ const App = (() => {
     const mon = _logMonday(offset);
     const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return Data.localToday(d); });
     const inWeek = new Set(days);
+    // Seconds per event: exact `seconds` when logged (2026-11-27+), else minutes × 60.
+    const evSecs = e => e.seconds != null ? e.seconds : (e.minutes || 0) * 60;
     const evMin = {};
-    Data.events().forEach(e => { if (e.minutes) evMin[e.taskId] = (evMin[e.taskId] || 0) + e.minutes; });
+    Data.events().forEach(e => { const v = evSecs(e); if (v) evMin[e.taskId] = (evMin[e.taskId] || 0) + v; });
     const byDay = {}; days.forEach(d => { byDay[d] = []; });
     (Data.get().archive || []).forEach(a => {
       if (a.type === 'project' || !inWeek.has(a.archivedAt)) return;
-      const m = evMin[a.id] != null ? evMin[a.id] : (a.timeSpent || 0);
+      const m = evMin[a.id] != null ? evMin[a.id] : (a.timeSpent || 0) * 60;
       byDay[a.archivedAt].push({ id: a.id, title: a.title, area: a.area || '', m });
     });
     // Focus minutes on tasks that are still open, by the day they were logged
     Data.events().forEach(e => {
-      if (!e.minutes || !Data.findItem(e.taskId)) return;
+      const v = evSecs(e);
+      if (!v || !Data.findItem(e.taskId)) return;
       const d = Data.localToday(new Date(e.at));
       if (!inWeek.has(d)) return;
       const t = Data.findItem(e.taskId);
       const row = byDay[d].find(r => r.id === t.id && r.open);
-      if (row) row.m += e.minutes; else byDay[d].push({ id: t.id, title: t.title, area: t.area || '', m: e.minutes, open: true });
+      if (row) row.m += v; else byDay[d].push({ id: t.id, title: t.title, area: t.area || '', m: v, open: true });
     });
     let total = 0; const areas = {};
     days.forEach(d => byDay[d].forEach(r => { total += r.m; const k = r.area || 'No area'; areas[k] = (areas[k] || 0) + r.m; }));
@@ -2223,19 +2378,22 @@ const App = (() => {
   // a Mac ⌥+letter types a special character and ⌥E/⌥N/⌥U/⌥I are dead keys.
   // ⌥ combos also fire while the entry bar has focus (it autofocuses on Today and
   // Everything); plain keys (Space/Esc) only when nothing editable has focus.
-  // Scopes: 'global' (Focus closed), 'focus' (overlay open, incl. the post-Done handoff),
-  // 'handoff' (handoff card only — checked before 'focus'). The cheat sheet renders from this list.
+  // Scopes: 'global' (no session, or the main window during a pop-out session) and
+  // 'focus' (a session: the PiP document or the fallback overlay — plain Space/Esc only
+  // there; from the main window during a pop-out session only the ⌥ focus combos fire).
+  // The cheat sheet renders from this list.
   const SHORTCUTS = [
     { scope: 'global',  keys: ['alt+KeyT'],  action: 'today',      label: 'Today' },
     { scope: 'global',  keys: ['alt+KeyE'],  action: 'everything', label: 'Everything (zoom out)' },
     { scope: 'global',  keys: ['alt+KeyL'],  action: 'log',        label: 'Log' },
     { scope: 'global',  keys: ['alt+KeyS'],  action: 'start',      label: 'Start Today item 1' },
+    { scope: 'global',  keys: ['alt+shift+KeyS'], action: 'startFlow', label: 'Start Today item 1 in flow (no breaks)' },
     { scope: 'global',  keys: ['alt+Slash'], action: 'help',       label: 'Show / hide this list' },
-    { scope: 'handoff', keys: ['alt+Enter'], action: 'startNext',  label: 'After Done: start the up-next item' },
     { scope: 'focus',   keys: ['Space'],     action: 'playPause',  label: 'Pause / resume (start the next segment at a boundary)' },
     { scope: 'focus',   keys: ['Escape'],    action: 'back',       label: 'Back to Today' },
     { scope: 'focus',   keys: ['alt+Enter'], action: 'done',       label: 'Done' },
-    { scope: 'focus',   keys: ['alt+KeyF'],  action: 'float',      label: 'Float / dock the orb', pip: true },
+    { scope: 'focus',   keys: ['alt+KeyW'],  action: 'flow',       label: 'Flow on / off (no breaks; off restarts at 5 min)' },
+    { scope: 'focus',   keys: ['alt+KeyF'],  action: 'float',      label: 'Raise the focus window (reopen it if closed)', pip: true },
   ];
   const _HELP_KEY = SHORTCUTS.find(s => s.action === 'help').keys[0];
   const _IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -2245,7 +2403,8 @@ const App = (() => {
   function _keyCombo(e) {
     return ((e.metaKey || e.ctrlKey) ? 'mod+' : '') + (e.altKey ? 'alt+' : '') + (e.shiftKey ? 'shift+' : '') + (e.code || '');
   }
-  function _focusOpen() { return !!(_focusId || _focusHandoff); }
+  // The fallback overlay (or its post-Done card) is covering the main window.
+  function _focusOpen() { return !!((_focusId && _overlayShown()) || _focusHandoff); }
   function _isTypingTarget(el) {
     if (!el || !el.tagName) return false;
     return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable;
@@ -2327,8 +2486,13 @@ const App = (() => {
       if (combo === 'Escape' || combo === _HELP_KEY) { e.preventDefault(); toggleShortcuts(false); }
       return;
     }
-    const handoff = _focusHandoff && !_focusId;
-    const scopes = !_focusOpen() ? ['global'] : handoff ? ['handoff', 'focus'] : ['focus'];
+    // Which surface the key came from: the PiP document, the overlay, or Today.
+    const fromPip = !!(_pipWin && e.target && e.target.ownerDocument === _pipWin.document);
+    const plain = !combo.startsWith('alt+');
+    let scopes;
+    if (fromPip || _focusOpen()) scopes = ['focus'];
+    else if (_focusId) scopes = plain ? ['global'] : ['focus', 'global']; // pop-out session, key on Today
+    else scopes = ['global'];
     let sc = null;
     for (const scope of scopes) { sc = SHORTCUTS.find(s => s.scope === scope && s.keys.includes(combo)); if (sc) break; }
     if (!sc || (sc.pip && !_pipSupported)) return;
@@ -2343,6 +2507,7 @@ const App = (() => {
     switch (action) {
       case 'today': case 'everything': case 'log': olGo(action); break;
       case 'start': { const first = Data.todayList()[0]; if (first) olStart(first.id); break; }
+      case 'startFlow': { const first = Data.todayList()[0]; if (first) startTask(first.id, { flow: true }); break; }
       case 'help': toggleShortcuts(); break;
       case 'playPause': {
         if (handoff || !_focusId) break;
@@ -2351,10 +2516,10 @@ const App = (() => {
         else timerTogglePlay();
         break;
       }
-      case 'back': handoff ? focusBackToToday() : removeFromDoing(_focusId); break;
-      case 'done': if (!handoff && _focusId) markDoingDone(_focusId); break;
-      case 'float': if (!handoff) (_pipWin ? closeFocusPip() : openFocusPip()); break;
-      case 'startNext': { const next = Data.todayList()[0]; if (next) startTask(next.id); break; }
+      case 'back': handoff ? focusBackToToday() : removeFromDoing(); break;
+      case 'done': if (!handoff && _focusId) markDoingDone(); break;
+      case 'flow': if (!handoff && _focusId) toggleFlow(); break;
+      case 'float': if (!handoff) focusRaise(); break;
     }
   }
 
@@ -2394,7 +2559,7 @@ const App = (() => {
         <p class="ks-head">Keyboard shortcuts</p>
         ${rows(['global'])}
         <p class="ks-sub">In Focus</p>
-        ${rows(['focus'])}${rows(['handoff'])}
+        ${rows(['focus'])}
         <p class="ks-foot">${_IS_MAC ? '⌥' : 'Alt'} shortcuts work while you're typing. In the entry bar: Tab steps · Enter saves · Shift+Enter → Today · Esc clears.</p>
       </div>`;
     el.addEventListener('mousedown', ev => { if (ev.target === el) toggleShortcuts(false); });
@@ -2434,8 +2599,8 @@ const App = (() => {
     _showDelConfirm, _resetDelZone, _deleteItem,
     // Focus
     toggleShortcuts,
-    startTask, activateTask, timerTogglePlay, startNextSegment, skipSegment,
-    openFocusPip, closeFocusPip, removeFromDoing, markDoingDone, focusBackToToday,
+    startTask, activateTask, timerTogglePlay, startNextSegment, skipSegment, toggleFlow,
+    openFocusPip, closeFocusPip, focusRaise, removeFromDoing, markDoingDone, focusBackToToday,
     // One List (desktop)
     olGo, olDone, olSendBack, olPull, olStart, olOpenDetail, olCloseDetail, olHideOffer, olShowOffer, olOfferAll,
     _olDragStart, _olDragEnd, _olListDragOver, _olDrop, _olKey, _olInput, _olChip, _olDupKeep, _olDupOpen,

@@ -44,6 +44,9 @@ All four app tables exist in the `public` schema with RLS enabled:
 ## nth-weekday recurrence migration (2026-11-26)
 - Migration `add_recurrence_nth_to_tasks`: `tasks.recurrence_nth` jsonb nullable (int[] of 1–5 / -1 = last). `archive` unchanged.
 
+## Focus seconds migration (2026-11-27)
+- Migration `task_events_seconds`: `task_events.seconds` int nullable — exact Focus work seconds for a session (on its `started` row if it ended with Back to Today, else its `done` row). `minutes` keeps the rounded value; older rows have only `minutes`. `tasks.time_spent` / `archive.time_spent` stay minutes.
+
 ## Gotchas
 
 - `archive.blocked`, `archive.tags`, and `archive.subtasks` are stored as `text` (not `boolean`/`jsonb`) — inconsistent with the `projects` and `tasks` tables. Keep this in mind if querying or inserting archive rows directly.

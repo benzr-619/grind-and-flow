@@ -1,6 +1,7 @@
 // Keyboard shortcuts — ⌥T / ⌥E / ⌥L / ⌥S / ⌥/ (matched on e.code, work while the entry bar
-// has focus); detail-popover guard; Focus: Space, Esc, ⌥Enter (Done), handoff ⌥Enter (start
-// up-next). ⌥F/PiP needs a real window + user gesture, so it isn't driven here.
+// has focus); detail-popover guard; Focus (overlay fallback — PiP off): Space, Esc, ⌥Enter
+// (Done → "✓ title" card, nothing starts next), ⌥W flow, ⌥⇧S start in flow. The pop-out
+// path (incl. ⌥F) is covered by flow-mode.cjs with a stubbed PiP.
 // Run with --mobile too: keys do nothing there.
 const UID = '00000000-0000-0000-0000-000000000001';
 const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
@@ -15,13 +16,13 @@ module.exports = {
     const focusVisible = () => page.evaluate(() => getComputedStyle(document.getElementById('focus-zone')).display !== 'none');
     // Synthetic keydown with the code + altKey, and the `key` a Mac really reports for ⌥+key
     // (special characters / 'Dead') — proves matching is on e.code, not e.key.
-    const MAC_KEY = { KeyT: '†', KeyE: 'Dead', KeyL: '¬', KeyS: 'ß', Slash: '÷', KeyF: 'ƒ', Enter: 'Enter' };
-    const alt = async (code) => {
-      const prevented = await page.evaluate(({ code, key }) => {
-        const ev = new KeyboardEvent('keydown', { code, key, altKey: true, bubbles: true, cancelable: true });
+    const MAC_KEY = { KeyT: '†', KeyE: 'Dead', KeyL: '¬', KeyS: 'ß', Slash: '÷', KeyF: 'ƒ', KeyW: '∑', Enter: 'Enter' };
+    const alt = async (code, shift = false) => {
+      const prevented = await page.evaluate(({ code, key, shift }) => {
+        const ev = new KeyboardEvent('keydown', { code, key, altKey: true, shiftKey: shift, bubbles: true, cancelable: true });
         (document.activeElement || document.body).dispatchEvent(ev);
         return ev.defaultPrevented;
-      }, { code, key: MAC_KEY[code] || code });
+      }, { code, key: shift && code === 'KeyS' ? 'Í' : (MAC_KEY[code] || code), shift });
       await wait();
       return prevented;
     };
@@ -164,23 +165,37 @@ module.exports = {
     await page.keyboard.press('Escape'); await wait(300);
     expect(!(await focusVisible()), 'Esc → back to today');
     expect((await page.$$('.ol-li')).length === 3, 'still 3 on today');
-    // ⌥Enter → Done → handoff; ⌥Enter again → start up-next
+    // ⌥Enter → Done → "✓ title" card only; ⌥Enter again does nothing (no start-next)
     await alt('KeyS'); await wait(100);
     await page.keyboard.press('Alt+Enter'); await wait(300);
-    expect(await focusVisible(), 'handoff showing');
-    expect((await page.textContent('#focus-orb-controls')).includes('Second thing'), 'up next = second');
+    expect(await focusVisible(), 'done card showing');
+    const card = (await page.textContent('#focus-zone')).replace(/\s+/g, ' ');
+    expect(card.includes('✓ First thing') && !card.includes('Second thing') && !card.includes('Start ›'), 'done card: ' + card);
     expect(await page.evaluate(() => Data.get().archive.length) === 1, 'first archived');
-    expect(await active() !== 'ol-input-today', 'bar not refocused under handoff');
-    await alt('Enter'); await wait(100);
-    expect((await page.textContent('#focus-meta')).includes('Second thing'), '⌥Enter in handoff started second');
-    await alt('Enter'); await wait(100);
-    // Esc in handoff → back to Today
+    expect(await active() !== 'ol-input-today', 'bar not refocused under the card');
+    await alt('Enter'); // no handoff start-next any more: this must not start anything
+    expect(await page.evaluate(() => Data.events().filter(e => e.event === 'started').length) === 2, 'nothing started from the card');
+    // Esc on the card → back to Today
     await page.keyboard.press('Escape'); await wait(300);
-    expect(!(await focusVisible()), 'Esc closes handoff');
-    expect((await page.$$('.ol-li')).length === 1, 'one left on today');
+    expect(!(await focusVisible()), 'Esc closes the card');
+    // ⌥⇧S → item 1 straight into flow; ⌥W toggles flow off (→ 5-min segment) and on
+    await alt('KeyS', true); await wait(150);
+    expect(await focusVisible(), '⌥⇧S opens focus');
+    expect((await page.textContent('#focus-meta')).includes('Second thing'), '⌥⇧S started item 1');
+    expect((await page.textContent('.fmeta-sub')).trim() === 'flow', 'starts in flow');
+    expect(!(await page.$('#focus-orb-controls >> text=Skip')), 'no Skip in flow');
+    expect(await page.evaluate(() => Data.events().filter(e => e.event === 'started').pop().meta?.flow === true), 'started meta.flow');
+    expect(await alt('KeyW'), '⌥W handled');
+    expect((await page.textContent('.fmeta-sub')).includes('work'), '⌥W → flow off');
+    const clk = (await page.textContent('#focus-clock-time')).replace(/\s/g, '');
+    expect(clk === '05:00' || clk === '04:59', 'flow off → 5-min segment: ' + clk);
+    await alt('KeyW');
+    expect((await page.textContent('.fmeta-sub')).trim() === 'flow', '⌥W → flow on again');
+    await page.keyboard.press('Escape'); await wait(300);
+    expect((await page.$$('.ol-li')).length === 2, 'two left on today');
     expect(await page.evaluate(() => Data.get().tasks.filter(t => t.title === 'Buy milk').length) === 0, 'nothing saved by accident');
     const ev = await page.evaluate(() => Data.events().map(e => e.event).join(','));
-    expect(ev === 'started,started,done,started,done', 'events: ' + ev);
+    expect(ev === 'started,started,done,started', 'events: ' + ev);
     console.log('  shortcuts assertions passed');
   },
 };

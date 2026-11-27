@@ -1,4 +1,46 @@
-# Focus Mode — full-screen breathing orb
+# Focus Mode — breathing orb (pop-out by default)
+
+## Pop-out by default (2026-11-27)
+**This section wins over anything below it.** Superseded below: the "Dock orb" button, the overlay as the default surface, the post-Done "up next" card and its **Start ›**, the handoff ⌥Enter, and "minutes accrue per 60s interval".
+
+- **Surface** = in-memory `_focusSurface`: `'pip'` | `'pending'` (requestWindow in flight) | `'overlay'` (fallback). Set in `startTask`.
+- **Default (Chromium):** `startTask(id, opts)` (from `.ol-start`, ⌥S, ⌥⇧S) calls `_openPip()` **synchronously** inside the click/keydown — `requestWindow()` needs that user activation (keydown counts; verified with a stub that reads `navigator.userActivation.isActive`). Window 260×240. `#focus-zone` stays hidden; the main window stays on Today and fully usable (no blur, entry bar autofocuses — `_focusOpen()` is now true only while the overlay is up).
+- **Fallback:** PiP unsupported (`_pipSupported` false), mobile, or `requestWindow` rejects → `_focusSurface = 'overlay'` and the full-screen overlay works as before. Its controls keep a **Float ↗** (when PiP exists) that tries the pop-out again. No Dock button anywhere.
+- **Today line:** `#ol-focus-line` slot at the top of `.ol-today-main`, filled by `_renderFocusLine()` (from `_renderFocusRow` and `_renderOL`): "in focus: <title> · <clock>" (`#ol-focus-clock`, written by `_renderClock`; "break time" at a boundary). Click → `focusRaise()` (`_pipWin.focus()`, or reopen the PiP if a session is running without one). Pop-out path only.
+- **PiP hover** (`_renderPipExtras`): `.pip-title`, `#pip-clock-time`, `.pip-state` (work / break / flow / "· paused" / work done / break done), controls **Back to Today · Pause/Resume · Skip · Flow · Done**; at a work→break boundary **Start Nm break › · Skip**; at break→work just **Start Nm work ›**.
+- **Close = Back to Today.** `_onPipPagehide` runs `removeFromDoing()` only if `_pipWin` is still set; every app-initiated close (`closeFocusPip`) nulls `_pipWin` first, so Done/close can't double-log. `removeFromDoing()` is a no-op without a session. `closeFocusPip()` no longer re-renders and never ends anything.
+- **Done:** accrue → complete → close the PiP → `_olFlash(view, "✓ <title> · Nm", 3200)` on Today/Everything's entry bar. **Nothing starts next** anywhere. Overlay fallback: the post-Done card shows only "✓ <title> · Nm" + Back to Today (`_focusHandoff` is overlay-only). Ticking the in-focus task off on Today (`olDone`) routes to `markDoingDone`. A task deleted mid-session ends the session in `_renderFocusRow`.
+- `.ol-start` / ⌥S / ⌥⇧S on the task already in Focus just raise the PiP (⌥⇧S also turns flow on) — never restart the segment.
+- The boundary nudge (`_pipBoundaryNudge`) is unchanged.
+
+### Work time = seconds, wall clock
+- `_workSecs` + `_workSince`; `_syncCounters()` closes the open interval and reopens it if the state counts. Called from `_startTimer`, pause, the boundary in `_timerTick`, `toggleFlow`, `_endFocusSession`. Counts while: a work segment runs · flow runs · **waiting at a work→break boundary (overrun)** (`timerSegIdx` has already advanced to the break). Not counted: paused, breaks, waiting at a break→work boundary. (Before this, a 60s interval counted whole minutes, was cleared at every boundary/pause, and dropped the overrun and partial minutes.)
+- `_endFocusSession(item)` → `{secs, mins, flow}` (secs = round(total), mins = round(secs/60)); `item.timeSpent += mins`. Seconds go on `task_events.seconds` (migration `task_events_seconds`), rounded minutes stay in `minutes`; one event per session (started row on Back, done row on Done). The Log sums seconds (`seconds ?? minutes×60`, archive fallback `time_spent×60`) and rounds once per displayed total (`_logFmtMin(secs)`).
+- **Skip at a work→break boundary** = skip the break (straight into the next work segment). Shown in both surfaces; not at break→work.
+
+### Flow mode
+- `_flowMode` / `_flowUsed` / `_flowSecs` + `_flowSince` — in-memory, reset when any session starts or ends (`_endFocusSession`). No schema.
+- `toggleFlow()` (running state only — no-op at a boundary). **On:** the segment never ends (`_timerTick` returns early: no boundary, chime, Notification, nudge), the clock counts **up** from 0 (`_fmtClock`, h:mm:ss past an hour), Skip hidden, orb forced to work classes (persistent nodes, classes swapped), `.fmeta-sub` / `.pip-state` = "flow". Turning it on while paused or in a break starts running work. **Off:** start small — `timerSegIdx = 0` (the first 5-min work segment) and start it.
+- Every flow second is work time. Telemetry: the first flow-on patches the `started` event `meta.flow = true` (`Data.patchEventMeta`); ⌥⇧S logs `started` with `{flow:true}` directly; Done adds `flow: true` to the `done` meta (`completeTask(id, {meta})` merges it over the position meta).
+- Buttons: "Flow" / "End flow" (`.oc-btn.on`), `data-sc="flow"` on the overlay's. Shortcut ⌥W.
+
+### Checks
+`dev/scenarios/flow-mode.cjs` (`pip: 'stub'` + `page.clock`): click → pop-out with activation, Today line, usable bar, flow 6 min with no boundary, flow off → 5:00, 3-min overrun + Skip, Done (15m, seconds, meta.flow, Today note, window closed); real ⌥⇧S keypress → activation + flow; ⌥W from Today; Space only in the PiP; close = Back logged once; `__pipReject` → overlay fallback, 2-min overrun counted, break→work wait not; Log total. `smoke.cjs` takes `scenario.pip` = `'off'` (default — old scenarios test the overlay) | `'stub'` | `'reject'`, and `scenario.before(page)`. The stub popup doesn't load the cloned `<link>` stylesheets (real PiP does), so the screenshot inlines the CSS.
+
+### Manual checklist (real Chrome — can't be automated)
+1. Click **start** on Today item 1 → a small dark always-on-top window with the orb opens; no full-screen overlay; Today shows "in focus: … · mm:ss" ticking.
+2. Hover the window → title, clock, state, Back to Today · Pause · Skip · Flow · Done fit (two rows).
+3. Type in the entry bar, drag-reorder, open zoom out — all work while focusing.
+4. Click the "in focus" line → the window comes forward. Close the window with its native ✕ / back-to-tab → session ends; the Log shows the minutes once.
+5. ⌥S, then ⌥⇧S on the same item → no restart, window raised, flow turns on. ⌥⇧S from scratch → opens straight into flow (if the window doesn't open from a keypress, it falls back to the overlay — tell me).
+6. Flow: clock counts up past 5:00 with no chime/notification/ring; End flow → 05:00 counting down.
+7. Let a work segment end → ring nudge + chime; wait a few minutes; **Skip** → next work segment; Done → window closes, Today flashes "✓ title · Nm" with the overrun included.
+8. With the window focused: Space pauses, Esc = Back to Today, ⌥Enter = Done, ⌥W = flow. From Today: ⌥Enter / ⌥W / ⌥F work; Space/Esc behave normally in the bar.
+9. Recurring anchored task Done from the window → the confirm prompt appears on the main window.
+
+---
+
+# (History) Focus Mode — full-screen breathing orb
 
 Redesign Phase 1 (session 2026-06-15). Replaced the old inline "doing strip + linear timer track" with an immersive full-screen orb overlay. **Timer logic was not changed** — only the rendering layer.
 

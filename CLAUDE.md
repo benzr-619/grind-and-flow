@@ -8,9 +8,9 @@ New area-specific detail is appended directly to a targeted `.claude/rules/<area
 
 - [One List](./.claude/rules/one-list.md) — the desktop app: `_renderOL()` (`olView` today / everything / log); Today + Offered ranking (`RANK_WEIGHTS`), Tab-flow entry bar (`parse.js` / `GFParse`), duplicate hint, Everything clusters + inline detail popover, Log.
 - [Capture capitalization](./.claude/rules/one-list.md#entry-bar-_entrybarhtmlctx-ctx--today--everything) — `GFParse.normalizeCase` (sentence case + `CASE_WORDS` acronyms/names, add-only) on new titles in `_olSave` / `_phSave`; never on detail edits.
-- [Keyboard shortcuts](./.claude/rules/one-list.md#keyboard-shortcuts-2026-11-26--desktop-only) — the `SHORTCUTS` map in app.js, matched on `e.code`: ⌥T ⌥E ⌥L · ⌥S · ⌥/ (work while the entry bar has focus) · Focus: Space, Esc, ⌥Enter (Done / start up-next), ⌥F; one document keydown listener from `init()`; hold ⌥ ~400ms → faint key hints on `[data-sc]` controls.
+- [Keyboard shortcuts](./.claude/rules/one-list.md#keyboard-shortcuts-2026-11-26--desktop-only) — the `SHORTCUTS` map in app.js, matched on `e.code`: ⌥T ⌥E ⌥L · ⌥S · ⌥/ (work while the entry bar has focus) · ⌥⇧S (start in flow) · Focus: Space, Esc, ⌥Enter (Done), ⌥W (flow), ⌥F (raise the pop-out); ⌥ focus combos also work from Today during a pop-out session; one document keydown listener from `init()`; hold ⌥ ~400ms → faint key hints on `[data-sc]` controls.
 - [Phone stopgap](./.claude/rules/mobile.md) — bare ≤640px surface (`_renderPhone`): numbered Today (tap/swipe to complete + undo), due recurring, capture with tap chips. Fuller phone design is future work.
-- [Focus Mode orb](./.claude/rules/focus-mode.md) — full-screen `#focus-zone` overlay (visual language unchanged), PiP float; One List hookup: in-memory `_focusId`, `started`/`done` events with minutes, post-Done "up next on Today" card.
+- [Focus Mode orb](./.claude/rules/focus-mode.md) — **pop-out by default** (Document PiP opened inside the start gesture; Today stays usable with an "in focus" line; closing the window = Back to Today); full-screen `#focus-zone` overlay is the fallback. Flow mode (`_flowMode`, no breaks, clock counts up, off → 5-min segment), work time in seconds incl. the work→break boundary overrun, no start-next after Done.
 - [Recurring tasks](./.claude/rules/recurring-tasks.md) — rolling/anchored data + spawn/due logic (kept); created via `every …` in the entry bar, pinned in Offered when due, edited in `openRecurringModal`. Top of the file says what changed for One List.
 - [nth-weekday recurrence](./.claude/rules/recurring-tasks.md#nth-weekday-recurrence--every-2nd-and-4th-monday-2026-11-26) — `every 2nd and 4th mon` / `every last fri` → `recurrenceNth`; anchored next date starts after the later of completion and due date.
 - [Supabase MCP](./.claude/rules/supabase-mcp.md) — project id, migrations (incl. `one_list_model`), gotchas.
@@ -30,7 +30,7 @@ Grind & Flow is a single-user personal to-do app built around **one list** (rebu
 - **Offered** — a ranked column beside Today (due recurring tasks pinned on top, then transparent points); "I'm set ✓" puts it away for the day.
 - **Entry bar** — one line: title → Tab → priority/date (or idea) → Tab → area. `every …` makes a recurring task; `idea` / `i` in step 2 or an `idea:` prefix makes an idea.
 - **Everything** — "zoom out": every open task, recurring task and idea floating in clusters by area / urgency / date entered.
-- **Focus** — the breathing-orb timer overlay (unchanged look).
+- **Focus** — the breathing-orb timer in a small always-on-top pop-out window (full-screen overlay as the fallback); flow mode for no-break stretches.
 - **Log** — week of finished tasks and focus minutes by area.
 - **Phone** — a bare stopgap: Today, due recurring, capture.
 
@@ -64,7 +64,7 @@ Initializes the Supabase client, resolves the session, renders the sign-in overl
 ### `data.js` — Persistence layer
 All Supabase reads/writes. Optimistic: every mutation updates in-memory `_state` (`tasks`, `archive`, `events`) immediately, then syncs in the background. Field mappers camelCase ↔ snake_case.
 - Generic: `load`, `get`, `findItem`, `upsertTask`, `deleteItem`, `archiveItemWithDate`, `restoreFromArchive`, `deleteFromArchive`.
-- One List: `addTask({title, urgency, dueDate, area, toToday, isIdea, source, notes, recur})` (the single creation path; `recur` = recurrence fields → status `recurring`), `pullToToday(id, meta?)`, `sendBack`, `reorderToday(ids, movedId?)`, `completeTask(id, {minutes, dateStr})` (archives immediately), `logEvent(taskId, event, minutes?, meta?)`, `setEventMinutes(eventId, m)`, `todayPosition(id)` → `{position, todaySize}`, `snapshotPriorDay()` (lazy `day_snapshot` telemetry, called from `init()` and the midnight timer). Selectors: `todayList()`, `openTasks()`, `recurringTasks()`, `ideas()`, `events()`. `localToday()` (local YYYY-MM-DD — never `toISOString`), `AREAS`.
+- One List: `addTask({title, urgency, dueDate, area, toToday, isIdea, source, notes, recur})` (the single creation path; `recur` = recurrence fields → status `recurring`), `pullToToday(id, meta?)`, `sendBack`, `reorderToday(ids, movedId?)`, `completeTask(id, {minutes, seconds, dateStr, meta})` (archives immediately; `meta` merges over the position meta), `logEvent(taskId, event, minutes?, meta?, seconds?)`, `setEventMinutes(eventId, m, seconds?)`, `patchEventMeta(eventId, patch)`, `todayPosition(id)` → `{position, todaySize}`, `snapshotPriorDay()` (lazy `day_snapshot` telemetry, called from `init()` and the midnight timer). Selectors: `todayList()`, `openTasks()`, `recurringTasks()`, `ideas()`, `events()`. `localToday()` (local YYYY-MM-DD — never `toISOString`), `AREAS`.
 **Must not:** render UI, touch the DOM, or know about auth beyond the injected client.
 
 ### `parse.js` — Entry-bar parser (pure)
@@ -120,7 +120,7 @@ Tables in use: `tasks`, `archive`, `task_events` — all scoped by `user_id`, RL
 Same shape as tasks (lean subset) plus `archived_at` (completion date, text YYYY-MM-DD), `original_status`, `time_spent`, `area`, `recurrence`, `recurrence_series_id`. Gotcha: `archive.blocked/tags/subtasks` are `text`, not boolean/jsonb. Old rows include `type = 'project'` (skipped by the Log).
 
 ### `task_events` — activity log
-`id` text PK, `user_id` (default `auth.uid()`), `task_id` text (no FK), `event` check `added`/`offered`/`pulled`/`sent_back`/`started`/`done`/`reordered`/`day_snapshot`, `at` timestamptz, `minutes` int nullable, `meta` jsonb nullable (ranking telemetry — shapes in [one-list rule § Ranking telemetry](./.claude/rules/one-list.md#ranking-telemetry-2026-11-26); migration `task_events_meta`). Index `(user_id, at)`. A Focus session's work minutes live on exactly one event: its `started` row (ended with Back to Today) or its `done` row (ended with Done). `offered` is logged once per task per day.
+`id` text PK, `user_id` (default `auth.uid()`), `task_id` text (no FK), `event` check `added`/`offered`/`pulled`/`sent_back`/`started`/`done`/`reordered`/`day_snapshot`, `at` timestamptz, `minutes` int nullable (rounded), `seconds` int nullable (exact Focus work seconds, 2026-11-27+; migration `task_events_seconds`), `meta` jsonb nullable (ranking telemetry — shapes in [one-list rule § Ranking telemetry](./.claude/rules/one-list.md#ranking-telemetry-2026-11-26); migration `task_events_meta`). Index `(user_id, at)`. A Focus session's work time (seconds + rounded minutes) lives on exactly one event: its `started` row (ended with Back to Today) or its `done` row (ended with Done). `offered` is logged once per task per day.
 
 **Fresh start (2026-11-25, migration `one_list_model`):** all open/recurring tasks were deleted (old list snapshot: `Grind-and-Flow-snapshot-2026-11-25.docx`, kept outside the repo and purged from git history 2026-11-26 — `*.docx` is gitignored); the 1 done task moved into `archive`.
 
@@ -163,7 +163,7 @@ None. (The old `gf-completion-dates` key is no longer used.) All user state live
 - **Offered** — due/overdue recurring pinned (✓ to check off, + to pull); points ranking (`RANK_WEIGHTS`: asap +50; by-date overdue +60 / ≤2d +40 / ≤7d +25 / later +10; on Today in last 3 days +30; added in last 3 days +15; age +1/week max +10; no rush −40); ~12 shown with "+ n more"; one reason per row; *I'm set ✓* hides it for the day.
 - **Entry bar** — Tab flow, Enter → Offered/Everything, Shift+Enter → Today, Backspace steps back, Esc clears; step 2 takes asap / no rush / idea (`i`) / a date — idea wins and goes to Everything (also on Shift+Enter); inline shortcuts (`#amd asap`, `by fri`, `idea:`); `every 5d|2w|month` (rolling) / `every mon|15th|2nd and 4th mon|last fri` (anchored); duplicate hint (keep both / open existing).
 - **Everything** — zoom-out transition; clusters by area / urgency / date entered with glide; drift; solid dot = on Today, hollow = idea; legible at ~60 items (row/sub-column layout search); inline detail popover (title, priority, due, area, notes, add to / take off Today, make a task, delete; recurring → ↻ cadence + edit recurrence).
-- **Focus** — orb overlay + timer + PiP unchanged; in-memory focus task; Back to Today / Done; "up next on Today" handoff card; `started`/`done` events with minutes.
+- **Focus** (reworked 2026-11-27) — pop-out (Document PiP) by default, opened inside the start click/keypress; full-screen overlay fallback; Today stays usable with an "in focus: title · clock" line; closing the window = Back to Today; Done closes it and flashes "✓ title · Nm" (no start-next); flow mode (⌥W, ⌥⇧S); work time tracked in seconds, including waiting at a work→break boundary; Skip at that boundary skips the break; `started`/`done` events with seconds + minutes (+ `meta.flow`).
 - **Recurring** — rolling + anchored, spawn on completion (anchored confirm prompt), backdated completion, alternating pairs; edited via the recurring modal.
 - **Log** — week picker, week total, totals by area, days → finished tasks → minutes (events, falling back to `time_spent`), quiet restore/delete.
 - **Phone stopgap** — numbered Today (tap/swipe to complete, undo), due recurring, capture bar with chips.
@@ -174,5 +174,5 @@ None. (The old `gf-completion-dates` key is no longer used.) All user state live
 - Fuller phone design (native SwiftUI rebuild planned later — see `ONE-LIST-BRIEF.md`).
 - Log redesign (week/month toggles, stacked-by-area chart).
 - Focus does not survive a page reload (session ends; minutes up to the last Back/Done are kept).
-- Not verified on a real iPhone or against the real Supabase session in-browser (checks run against a fake client — see `dev/`).
+- Not verified on a real iPhone or against the real Supabase session in-browser (checks run against a fake client — see `dev/`). The PiP pop-out is only checked with a popup stub headlessly — see the manual checklist in focus-mode.md.
 - Search, export/import: removed with the old UI.
